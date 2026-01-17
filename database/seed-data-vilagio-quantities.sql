@@ -278,7 +278,7 @@ INSERT INTO inventory (product_id, location_id, batch_id, quantity_on_hand, uom)
  NULL, 6, 'piece'),
 
 ((SELECT product_id FROM products WHERE sku = 'SPARE-FM-FLOAT'),
- (SELECT location_id FROM products WHERE sku = 'SPARE-FM-FLOAT'),
+ (SELECT location_id FROM warehouse_locations WHERE location_code = 'A-AISLE-04'),
  NULL, 2, 'piece'),
 
 -- Labeling Machine Spares (key items)
