@@ -1,6 +1,6 @@
 // src/mcp/servers/inventory-server.js
-// Vilagio Inventory MCP Server - Complete with Batch Management
-// Total: 17 tools (5 basic + 6 transaction + 6 batch)
+// Vilagio Inventory MCP Server - Complete with Reporting & Analytics
+// Total: 21 tools (5 basic + 6 transaction + 6 batch + 4 reporting)
 
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
@@ -11,6 +11,7 @@ const {
 
 const db = require('../../utils/db');
 const { BATCH_TOOLS, handleBatchTools } = require('../tools/batch-tools');
+const { REPORTING_TOOLS, handleReportingTools } = require('../tools/reporting-tools');
 const advancedTools = require('../tools/advanced-inventory-tools');
 
 // Import basic tools (from Week 5)
@@ -83,6 +84,7 @@ const TOOLS = [
   ...basicInventoryTools,
   ...advancedTools.TOOLS,
   ...BATCH_TOOLS,
+  ...REPORTING_TOOLS,
 ];
 
 // Create server
@@ -109,6 +111,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     // Route to appropriate handler based on tool name
+    
+    // Reporting Tools
+    if (REPORTING_TOOLS.find(t => t.name === toolName)) {
+      return await handleReportingTools(toolName, args || {});
+    }
     
     // Batch Management Tools
     if (BATCH_TOOLS.find(t => t.name === toolName)) {
@@ -289,6 +296,8 @@ async function main() {
     advancedTools.TOOLS.forEach(t => console.log(`     - ${t.name}`));
     console.log('   Batch Tools (6):');
     BATCH_TOOLS.forEach(t => console.log(`     - ${t.name}`));
+    console.log('   Reporting Tools (4):');
+    REPORTING_TOOLS.forEach(t => console.log(`     - ${t.name}`));
 
     // Display connection pool status
     const poolInfo = await db.query('SELECT COUNT(*) as connections FROM pg_stat_activity WHERE datname = current_database()');
