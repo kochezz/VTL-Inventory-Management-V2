@@ -1,22 +1,27 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
+import { SettingsProvider } from '@/hooks/useSettings';
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: "Vilagio Inventory",
-  description: "Water Bottle Production Management System",
+  title: 'Vilagio Inventory System',
+  description: 'Comprehensive inventory management for Vilagio Technologies Ltd.',
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body className={inter.className} suppressHydrationWarning>
+        <SettingsProvider>
+          {children}
+        </SettingsProvider>
+      </body>
     </html>
   );
 }

@@ -1,0 +1,18 @@
+Folder PATH listing
+Volume serial number is EA06-98B7
+C:.
+|   DatabaseTree.txt
+|   README.md
+|   schema.sql
+|   seed-data-vilagio-actual.sql
+|   seed-data-vilagio-locations.sql
+|   seed-data-vilagio-quantities.sql
+|   seed-data-vilagio-users.sql
+|   seed-data.sql
+|   
++---backups
+|       .gitkeep
+|       
+\---migrations
+        .gitkeep
+        
