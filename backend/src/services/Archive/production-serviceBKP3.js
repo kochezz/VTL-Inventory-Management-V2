@@ -189,72 +189,22 @@ const createBatch = async (batchData, userId) => {
 
     const product = productResult.rows[0];
     
-    console.log('📦 Product details:', product);
-    
-    // ✅ SMART BATCH NUMBERING based on product type
+    // Generate batch number: PROD-DDMMYY-XXX (simple version that works)
     const date = new Date(batchData.production_date);
     const day = date.getDate().toString().padStart(2, '0');
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const year = date.getFullYear().toString().slice(-2);
     const dateStr = `${day}${month}${year}`;
     
-    // Determine product code based on SKU or product name
-    let productCode = 'R500'; // Default: 500ml Regular
-    
-    const skuUpper = (product.sku || '').toUpperCase();
-    const nameUpper = (product.product_name || '').toUpperCase();
-    
-    console.log(`🔍 Analyzing product: SKU="${product.sku}", Name="${product.product_name}"`);
-    
-    // 5 Gallon products
-    if (nameUpper.includes('5 GALLON') || nameUpper.includes('5-GALLON') || nameUpper.includes('5GAL') || skuUpper.includes('5GAL') || skuUpper.includes('5-GAL')) {
-      if (nameUpper.includes('REFILL') || nameUpper.includes('RETURNABLE') || skuUpper.includes('REFILL')) {
-        productCode = '5GB'; // 5 Gallon Refill (Returnable Bottles)
-      } else {
-        productCode = '5GA'; // 5 Gallon New (Blow-from-Preform)
-      }
-    }
-    // 750ml products
-    else if (nameUpper.includes('750ML') || nameUpper.includes('750 ML') || nameUpper.includes('750') || skuUpper.includes('750')) {
-      if (nameUpper.includes('PREMIUM') || nameUpper.includes('PUREFLOW') || skuUpper.includes('PREMIUM') || skuUpper.includes('P')) {
-        productCode = 'P750'; // 750ml Premium
-      } else {
-        productCode = 'R750'; // 750ml Regular
-      }
-    }
-    // 500ml products (most common)
-    else if (nameUpper.includes('500ML') || nameUpper.includes('500 ML') || nameUpper.includes('500') || skuUpper.includes('500')) {
-      if (nameUpper.includes('PREMIUM') || nameUpper.includes('PUREFLOW') || skuUpper.includes('PREMIUM') || skuUpper.includes('P')) {
-        productCode = 'P500'; // 500ml Premium
-      } else {
-        productCode = 'R500'; // 500ml Regular (default)
-      }
-    }
-    // 1L products
-    else if (nameUpper.includes('1L') || nameUpper.includes('1 L') || nameUpper.includes('1000ML') || nameUpper.includes('1LITER') || skuUpper.includes('1L')) {
-      if (nameUpper.includes('PREMIUM') || skuUpper.includes('PREMIUM') || skuUpper.includes('P')) {
-        productCode = 'P1L';
-      } else {
-        productCode = 'R1L';
-      }
-    }
-    
-    console.log(`🏷️ Product: ${product.product_name} (${product.sku}) → Code: ${productCode}`);
-    
-    // Get sequence for this specific product code and date
     const sequenceQuery = `
       SELECT COUNT(*) as count 
       FROM production_batches 
       WHERE DATE(production_date) = DATE($1)
-      AND batch_number LIKE $2
     `;
-    const sequenceResult = await client.query(sequenceQuery, [
-      batchData.production_date,
-      `PROD-${productCode}-${dateStr}-%`
-    ]);
+    const sequenceResult = await client.query(sequenceQuery, [batchData.production_date]);
     const sequence = String(parseInt(sequenceResult.rows[0].count) + 1).padStart(3, '0');
     
-    const batchNumber = `PROD-${productCode}-${dateStr}-${sequence}`;
+    const batchNumber = `PROD-${dateStr}-${sequence}`;
     const batchRecordCode = `QA-PRO-BAT-${dateStr}-${sequence}`;
     
     console.log(`✅ Generated batch number: ${batchNumber}, record code: ${batchRecordCode}`);
@@ -578,11 +528,10 @@ const listBatches = async (filters = {}) => {
         pb.actual_output,
         pb.status,
         pb.created_by,
-        u.full_name as created_by_name,
+        pb.created_by_name,
         pb.created_at
       FROM production_batches pb
       LEFT JOIN products p ON pb.product_id = p.product_id
-      LEFT JOIN users u ON pb.created_by = u.user_id
       WHERE 1=1
     `;
     
