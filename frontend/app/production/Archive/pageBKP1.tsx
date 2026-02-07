@@ -9,7 +9,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import CreateBatchModal from '@/components/production/CreateBatchModal';
 
 interface Batch {
-  batch_id: string;  // ✅ UUID is a string, not number
+  batch_id: number;
   batch_number: string;
   product_name: string;
   sku: string;
@@ -114,7 +114,7 @@ export default function ProductionPage() {
     });
   };
 
-  const handleBatchClick = (batchId: string) => {
+  const handleBatchClick = (batchId: number) => {
     router.push(`/production/${batchId}`);
   };
 

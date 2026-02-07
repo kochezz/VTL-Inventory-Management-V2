@@ -259,7 +259,6 @@ export default function UsersPage() {
     const badges = {
       admin: 'bg-red-500/10 text-red-400 border-red-500/20',
       manager: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-      qa: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
       staff: 'bg-green-500/10 text-green-400 border-green-500/20',
       viewer: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
     };
@@ -394,7 +393,6 @@ export default function UsersPage() {
               <option value="all">All Roles</option>
               <option value="admin">Administrator</option>
               <option value="manager">Manager</option>
-              <option value="qa">QA</option>
               <option value="staff">Staff</option>
               <option value="viewer">Viewer</option>
             </select>
@@ -596,7 +594,6 @@ export default function UsersPage() {
                   className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="viewer">Viewer</option>
-                  <option value="qa">QA</option>
                   <option value="staff">Staff</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Administrator</option>
@@ -733,7 +730,6 @@ export default function UsersPage() {
                 >
                   <option value="viewer">Viewer</option>
                   <option value="staff">Staff</option>
-                  <option value="qa">QA</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Administrator</option>
                 </select>

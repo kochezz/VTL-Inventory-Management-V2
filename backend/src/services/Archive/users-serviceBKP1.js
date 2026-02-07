@@ -71,7 +71,7 @@ const createUser = async (userData) => {
     const { email, full_name, password, role, is_active, is_verified } = userData;
 
     // Validate role
-    const validRoles = ['admin', 'manager', 'qa', 'staff', 'viewer'];
+    const validRoles = ['admin', 'manager', 'staff', 'viewer'];
     if (!validRoles.includes(role)) {
       throw new Error(`Invalid role. Must be one of: ${validRoles.join(', ')}`);
     }
@@ -156,7 +156,7 @@ const updateUser = async (userId, userData) => {
 
     // Validate role if provided
     if (role) {
-      const validRoles = ['admin', 'manager', 'qa', 'staff', 'viewer'];
+      const validRoles = ['admin', 'manager', 'staff', 'viewer'];
       if (!validRoles.includes(role)) {
         throw new Error(`Invalid role. Must be one of: ${validRoles.join(', ')}`);
       }
@@ -374,7 +374,6 @@ const getUserStats = async () => {
         COUNT(*) FILTER (WHERE is_active = false) as inactive,
         COUNT(*) FILTER (WHERE role = 'admin') as admins,
         COUNT(*) FILTER (WHERE role = 'manager') as managers,
-        COUNT(*) FILTER (WHERE role = 'qa') as qa_users,
         COUNT(*) FILTER (WHERE role = 'staff') as staff,
         COUNT(*) FILTER (WHERE role = 'viewer') as viewers,
         COUNT(*) FILTER (WHERE is_verified = true) as verified,

@@ -457,17 +457,14 @@ const getBatchById = async (batchId) => {
         pb.shift,
         pb.planned_quantity,
         pb.actual_output,
-        pb.rejected_bottles,
-        pb.yield_percentage,
         pb.status,
         pb.line_supervisor_id,
         pb.line_supervisor_name,
         pb.created_by,
-        creator.full_name as created_by_name,
+        pb.created_by_name,
         pb.created_at
       FROM production_batches pb
       LEFT JOIN products p ON pb.product_id = p.product_id
-      LEFT JOIN users creator ON pb.created_by = creator.user_id
       WHERE pb.batch_id = $1
     `;
     

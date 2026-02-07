@@ -140,41 +140,6 @@ export default function BatchDetailPage() {
     }
   };
 
-  const handleQAApproval = async (batchId: string, gateId: string, action: 'approve' | 'reject') => {
-    try {
-      setActionLoading(true);
-      setError('');
-
-      const endpoint = action === 'approve' 
-        ? `/production/batches/${batchId}/qa-gates/${gateId}/approve`
-        : `/production/batches/${batchId}/qa-gates/${gateId}/reject`;
-
-      const data = action === 'reject' 
-        ? { reason: 'Rejected during QA review' }
-        : {};
-
-      await axios.post(
-        `${API_URL}${endpoint}`,
-        data,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      // Refresh batch details
-      await fetchBatchDetails();
-    } catch (err: any) {
-      console.error('Error with QA approval:', err);
-      
-      // Handle permission errors specifically
-      if (err.response?.status === 403) {
-        setError('You do not have permission to approve/reject QA gates. Only QA personnel and administrators can perform this action.');
-      } else {
-        setError(err.response?.data?.message || 'QA action failed');
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   const getStatusColor = (status: string) => {
     const colors: { [key: string]: string } = {
       'draft': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
@@ -363,7 +328,7 @@ export default function BatchDetailPage() {
                       key={gate.gate_id}
                       className="bg-dark-900 rounded-lg p-4 border border-dark-700"
                     >
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           {getQAStatusIcon(gate.status)}
                           <div>
@@ -386,31 +351,8 @@ export default function BatchDetailPage() {
                           {gate.status.toUpperCase()}
                         </span>
                       </div>
-                      
                       {gate.rejection_reason && (
                         <p className="text-sm text-red-400 mt-2">Reason: {gate.rejection_reason}</p>
-                      )}
-                      
-                      {/* QA Approval Buttons - Only show for pending gates */}
-                      {gate.status === 'pending' && (
-                        <div className="flex gap-2 mt-3 pt-3 border-t border-dark-700">
-                          <button
-                            onClick={() => handleQAApproval(batch.batch_id, gate.gate_id, 'approve')}
-                            disabled={actionLoading}
-                            className="flex-1 px-3 py-2 bg-green-500 hover:bg-green-600 text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                          >
-                            <CheckCircle2 className="w-4 h-4" />
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleQAApproval(batch.batch_id, gate.gate_id, 'reject')}
-                            disabled={actionLoading}
-                            className="flex-1 px-3 py-2 bg-red-500 hover:bg-red-600 text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            Reject
-                          </button>
-                        </div>
                       )}
                     </div>
                   ))

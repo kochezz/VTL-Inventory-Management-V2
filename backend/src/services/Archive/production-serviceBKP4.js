@@ -438,6 +438,51 @@ const assignComponents = async (batchId, componentAssignments) => {
   }
 };
 
+// Submit batch for QA approval
+const submitForQA = async (batchId, userId) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    console.log(`📦 Submitting batch ${batchId} for QA`);
+    
+    // Update batch status
+    await client.query(
+      'UPDATE production_batches SET status = $1, submitted_for_qa_at = CURRENT_TIMESTAMP, current_gate = 1 WHERE batch_id = $2',
+      ['awaiting_qa', batchId]
+    );
+    
+    // Create QA Gate 1 record (need to verify batch_qa_gates columns)
+    const insertGateQuery = `
+      INSERT INTO batch_qa_gates (
+        batch_id,
+        gate_number,
+        gate_name,
+        status,
+        created_at
+      ) VALUES ($1, 1, 'Pre-Production Check', 'pending', CURRENT_TIMESTAMP)
+    `;
+    await client.query(insertGateQuery, [batchId]);
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Batch submitted for QA`);
+    
+    return {
+      success: true,
+      message: 'Batch submitted for QA approval'
+    };
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error submitting for QA:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 // Get batch by ID
 const getBatchById = async (batchId) => {
   try {
@@ -457,17 +502,14 @@ const getBatchById = async (batchId) => {
         pb.shift,
         pb.planned_quantity,
         pb.actual_output,
-        pb.rejected_bottles,
-        pb.yield_percentage,
         pb.status,
         pb.line_supervisor_id,
         pb.line_supervisor_name,
         pb.created_by,
-        creator.full_name as created_by_name,
+        pb.created_by_name,
         pb.created_at
       FROM production_batches pb
       LEFT JOIN products p ON pb.product_id = p.product_id
-      LEFT JOIN users creator ON pb.created_by = creator.user_id
       WHERE pb.batch_id = $1
     `;
     
@@ -500,31 +542,12 @@ const getBatchById = async (batchId) => {
     const componentsResult = await pool.query(componentsQuery, [batchId]);
     batch.components = componentsResult.rows;
     
-    // Get QA gates
-    const qaGatesQuery = `
-      SELECT 
-        gate_id,
-        gate_number,
-        gate_name,
-        status,
-        approved_by,
-        approved_by_name,
-        approved_at,
-        rejection_reason,
-        created_at
-      FROM qa_gates
-      WHERE batch_id = $1
-      ORDER BY gate_number
-    `;
-    
-    const qaGatesResult = await pool.query(qaGatesQuery, [batchId]);
-    batch.qa_gates = qaGatesResult.rows;
-    
-    // Get counts (placeholders for now - we'll add IPQC and deviation tables later)
+    // Get QA gates (placeholder - need to verify table structure)
+    batch.qa_gates = [];
     batch.ipqc_count = 0;
     batch.deviation_count = 0;
     
-    console.log(`✅ Batch details retrieved with ${batch.components.length} components and ${batch.qa_gates.length} QA gates`);
+    console.log(`✅ Batch details retrieved`);
     
     return {
       batch
@@ -609,258 +632,6 @@ const listBatches = async (filters = {}) => {
   }
 };
 
-// ============================================================================
-// STATUS TRANSITION FUNCTIONS
-// ============================================================================
-
-// Submit batch for QA (draft → awaiting_qa)
-const submitForQA = async (batchId, userId) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    console.log(`📋 Submitting batch ${batchId} for QA`);
-    
-    // Update batch status
-    await client.query(
-      `UPDATE production_batches 
-       SET status = 'awaiting_qa', 
-           submitted_for_qa_at = CURRENT_TIMESTAMP
-       WHERE batch_id = $1`,
-      [batchId]
-    );
-    
-    // Create QA Gate 1 (Pre-Production Check)
-    await client.query(
-      `INSERT INTO qa_gates (
-        batch_id, gate_number, gate_name, status, created_at
-      ) VALUES ($1, 1, 'Pre-Production Check', 'pending', CURRENT_TIMESTAMP)`,
-      [batchId]
-    );
-    
-    await client.query('COMMIT');
-    
-    console.log(`✅ Batch ${batchId} submitted for QA`);
-    
-    return { success: true, message: 'Batch submitted for QA approval' };
-    
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error submitting for QA:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-};
-
-// Approve QA gate
-const approveQAGate = async (batchId, gateId, userId) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    console.log(`✅ Approving QA gate ${gateId} for batch ${batchId}`);
-    
-    // Get gate info and user name
-    const gateResult = await client.query(
-      'SELECT gate_number FROM qa_gates WHERE gate_id = $1',
-      [gateId]
-    );
-    
-    if (gateResult.rows.length === 0) {
-      throw new Error('QA gate not found');
-    }
-    
-    const gateNumber = gateResult.rows[0].gate_number;
-    
-    // Get user name
-    const userResult = await client.query(
-      'SELECT full_name FROM users WHERE user_id = $1',
-      [userId]
-    );
-    const userName = userResult.rows[0]?.full_name || 'Unknown';
-    
-    // Update gate status
-    await client.query(
-      `UPDATE qa_gates 
-       SET status = 'approved', 
-           approved_by = $1,
-           approved_by_name = $2,
-           approved_at = CURRENT_TIMESTAMP
-       WHERE gate_id = $3`,
-      [userId, userName, gateId]
-    );
-    
-    // Update batch status based on gate
-    let newStatus = '';
-    if (gateNumber === 1) {
-      newStatus = 'ready_for_setup';
-    } else if (gateNumber === 4) {
-      newStatus = 'released';
-      // TODO: Update finished goods inventory here
-    }
-    
-    if (newStatus) {
-      await client.query(
-        'UPDATE production_batches SET status = $1, qa_approved_at = CURRENT_TIMESTAMP WHERE batch_id = $2',
-        [newStatus, batchId]
-      );
-    }
-    
-    await client.query('COMMIT');
-    
-    console.log(`✅ QA Gate ${gateNumber} approved for batch ${batchId}`);
-    
-    return { success: true, message: 'QA gate approved' };
-    
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error approving QA gate:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-};
-
-// Reject QA gate
-const rejectQAGate = async (batchId, gateId, userId, reason) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    console.log(`❌ Rejecting QA gate ${gateId} for batch ${batchId}`);
-    
-    // Get user name
-    const userResult = await client.query(
-      'SELECT full_name FROM users WHERE user_id = $1',
-      [userId]
-    );
-    const userName = userResult.rows[0]?.full_name || 'Unknown';
-    
-    // Update gate status
-    await client.query(
-      `UPDATE qa_gates 
-       SET status = 'rejected', 
-           approved_by = $1,
-           approved_by_name = $2,
-           approved_at = CURRENT_TIMESTAMP,
-           rejection_reason = $3
-       WHERE gate_id = $4`,
-      [userId, userName, reason, gateId]
-    );
-    
-    // Update batch status to rejected
-    await client.query(
-      'UPDATE production_batches SET status = $1, rejection_reason = $2 WHERE batch_id = $3',
-      ['rejected', reason, batchId]
-    );
-    
-    await client.query('COMMIT');
-    
-    console.log(`❌ Batch ${batchId} rejected at QA gate`);
-    
-    return { success: true, message: 'QA gate rejected' };
-    
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error rejecting QA gate:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-};
-
-// Start production (ready_for_setup → in_progress)
-const startProduction = async (batchId, userId) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    console.log(`▶️ Starting production for batch ${batchId}`);
-    
-    // Get user name for supervisor
-    const userResult = await client.query(
-      'SELECT full_name FROM users WHERE user_id = $1',
-      [userId]
-    );
-    const userName = userResult.rows[0]?.full_name || 'Unknown';
-    
-    await client.query(
-      `UPDATE production_batches 
-       SET status = 'in_progress',
-           line_supervisor_id = $1,
-           line_supervisor_name = $2,
-           production_started_at = CURRENT_TIMESTAMP
-       WHERE batch_id = $3`,
-      [userId, userName, batchId]
-    );
-    
-    await client.query('COMMIT');
-    
-    console.log(`✅ Production started for batch ${batchId}`);
-    
-    return { success: true, message: 'Production started' };
-    
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error starting production:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-};
-
-// Complete production (in_progress → completed)
-const completeProduction = async (batchId, productionData) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-    
-    console.log(`⏹️ Completing production for batch ${batchId}`);
-    
-    const { actual_output, rejected_bottles } = productionData;
-    const totalProduced = actual_output + (rejected_bottles || 0);
-    const yield_percentage = totalProduced > 0 ? (actual_output / totalProduced) * 100 : 0;
-    
-    await client.query(
-      `UPDATE production_batches 
-       SET status = 'completed',
-           actual_output = $1,
-           rejected_bottles = $2,
-           yield_percentage = $3,
-           production_completed_at = CURRENT_TIMESTAMP
-       WHERE batch_id = $4`,
-      [actual_output, rejected_bottles || 0, yield_percentage, batchId]
-    );
-    
-    // Create QA Gate 4 (Final Release)
-    await client.query(
-      `INSERT INTO qa_gates (
-        batch_id, gate_number, gate_name, status, created_at
-      ) VALUES ($1, 4, 'Final Release', 'pending', CURRENT_TIMESTAMP)`,
-      [batchId]
-    );
-    
-    await client.query('COMMIT');
-    
-    console.log(`✅ Production completed for batch ${batchId}`);
-    
-    return { success: true, message: 'Production completed successfully' };
-    
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Error completing production:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-};
-
 module.exports = {
   getFinishedProducts,
   getAvailableComponents,
@@ -868,10 +639,6 @@ module.exports = {
   createBatch,
   assignComponents,
   submitForQA,
-  approveQAGate,
-  rejectQAGate,
-  startProduction,
-  completeProduction,
   getBatchById,
   listBatches
 };

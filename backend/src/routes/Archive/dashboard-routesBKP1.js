@@ -1,14 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../services/auth-service');
-const { authenticate, authorize } = require('../middleware/auth-middleware');
+const { authenticate } = require('../middleware/auth-middleware');
 
 // All dashboard routes require authentication
-// QA, Manager, and Admin can access dashboard
-// Staff and Viewer have limited access
+router.use(authenticate);
 
 // GET /api/dashboard/stats - Get dashboard statistics
-router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
     console.log('📊 Fetching dashboard statistics...');
 
@@ -107,7 +106,7 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
 });
 
 // GET /api/dashboard/recent-transactions - Get recent transactions
-router.get('/recent-transactions', authenticate, authorize(['admin', 'manager', 'qa', 'staff']), async (req, res) => {
+router.get('/recent-transactions', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
 
@@ -149,7 +148,7 @@ router.get('/recent-transactions', authenticate, authorize(['admin', 'manager', 
 });
 
 // GET /api/dashboard/low-stock-alerts - Get low stock products
-router.get('/low-stock-alerts', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/low-stock-alerts', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
 
@@ -201,7 +200,7 @@ router.get('/low-stock-alerts', authenticate, authorize(['admin', 'manager', 'qa
 
 // GET /api/dashboard/locations - Get stock distribution by location
 // This is an alias for /stock-by-location to match frontend expectations
-router.get('/locations', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/locations', async (req, res) => {
   try {
     console.log('📍 Fetching stock distribution by location...');
 
@@ -233,7 +232,7 @@ router.get('/locations', authenticate, authorize(['admin', 'manager', 'qa', 'sta
 });
 
 // GET /api/dashboard/stock-by-location - Alias for backward compatibility
-router.get('/stock-by-location', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/stock-by-location', async (req, res) => {
   // Redirect to /locations endpoint
   req.url = '/locations';
   return router.handle(req, res);

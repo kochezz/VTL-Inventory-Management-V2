@@ -1,219 +1,201 @@
 'use client';
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import {
-  LayoutDashboard,
-  Package,
-  Warehouse,
-  BarChart3,
-  FileText,
-  Settings,
-  Users,
-  Menu,
-  X,
+import { useRouter, usePathname } from 'next/navigation';
+import { 
+  LayoutDashboard, 
+  Package, 
+  MapPin, 
+  TrendingUp, 
+  FileText, 
+  Settings, 
   LogOut,
-  Bell,
-  Search,
-  Factory, // NEW - Production icon
+  Users,
+  Factory
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: any;
+  roles: string[]; // Which roles can see this item
+}
+
+const navigation: NavItem[] = [
+  { 
+    name: 'Dashboard', 
+    href: '/dashboard', 
+    icon: LayoutDashboard,
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer']
+  },
+  { 
+    name: 'Products', 
+    href: '/products', 
+    icon: Package,
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer']
+  },
+  { 
+    name: 'Warehouse', 
+    href: '/warehouse', 
+    icon: MapPin,
+    roles: ['admin', 'manager', 'qa', 'staff']
+  },
+  { 
+    name: 'Production', 
+    href: '/production', 
+    icon: Factory,
+    roles: ['admin', 'manager', 'qa', 'staff']
+  },
+  { 
+    name: 'Transactions', 
+    href: '/transactions', 
+    icon: TrendingUp,
+    roles: ['admin', 'manager', 'qa', 'staff']
+  },
+  { 
+    name: 'Reports', 
+    href: '/reports', 
+    icon: FileText,
+    roles: ['admin', 'manager', 'qa']
+  },
+  { 
+    name: 'Users', 
+    href: '/users', 
+    icon: Users,
+    roles: ['admin'] // Only admin can manage users
+  },
+  { 
+    name: 'Settings', 
+    href: '/settings', 
+    icon: Settings,
+    roles: ['admin'] // Only admin can access settings
+  },
+];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const pathname = usePathname();
+  const { isAuthenticated, user, logout } = useAuth();
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const pathname = usePathname();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, router]);
 
   const handleLogout = () => {
     logout();
     router.push('/login');
   };
 
-  // Navigation items with role-based access
-  const navigationItems = [
-    {
-      name: 'Dashboard',
-      href: '/dashboard',
-      icon: LayoutDashboard,
-      roles: ['admin', 'manager', 'staff', 'viewer'], // All roles
-    },
-    {
-      name: 'Production',
-      href: '/production',
-      icon: Factory,
-      roles: ['admin', 'manager', 'staff'], // Admin, Manager, Staff (operators)
-    },
-    {
-      name: 'Products',
-      href: '/products',
-      icon: Package,
-      roles: ['admin', 'manager', 'staff', 'viewer'], // All roles
-    },
-    {
-      name: 'Inventory',
-      href: '/inventory',
-      icon: Warehouse,
-      roles: ['admin', 'manager', 'staff'], // REMOVED 'viewer'
-    },
-    {
-      name: 'Analytics',
-      href: '/analytics',
-      icon: BarChart3,
-      roles: ['admin', 'manager'], // Admin and Manager only
-    },
-    {
-      name: 'Reports',
-      href: '/reports',
-      icon: FileText,
-      roles: ['admin', 'manager', 'staff', 'viewer'], // All roles
-    },
-    {
-      name: 'Settings',
-      href: '/settings',
-      icon: Settings,
-      roles: ['admin', 'manager'], // Admin and Manager only
-    },
-    {
-      name: 'Users',
-      href: '/users',
-      icon: Users,
-      roles: ['admin'], // Admin only
-    },
-  ];
-
   // Filter navigation items based on user role
-  const allowedNavItems = navigationItems.filter((item) =>
-    item.roles.includes(user?.role || '')
+  const allowedNavItems = navigation.filter(item => 
+    user?.role && item.roles.includes(user.role)
   );
 
-  return (
-    <div className="min-h-screen bg-dark-950">
-      {/* Mobile sidebar backdrop */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+  if (!isAuthenticated) {
+    return null;
+  }
 
+  return (
+    <div className="min-h-screen bg-dark-950 flex">
       {/* Sidebar */}
-      <aside
-        className={`
-          fixed top-0 left-0 z-50 h-full w-64 bg-dark-900 border-r border-dark-700
-          transform transition-transform duration-200 ease-in-out
-          lg:translate-x-0
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}
-      >
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-dark-900 border-r border-dark-800 transform transition-transform duration-200 ease-in-out ${
+        isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-6 border-b border-dark-700">
-            <div className="flex items-center gap-3">
-              <img
-                src="/logo-white.png"
-                alt="Vilagio"
-                className="h-8 w-8"
-              />
-              <span className="text-xl font-bold text-white">Vilagio</span>
-            </div>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="lg:hidden text-gray-400 hover:text-white"
-            >
-              <X className="w-6 h-6" />
-            </button>
+          <div className="flex items-center justify-center h-16 px-6 border-b border-dark-800">
+            <img
+              src="/logo-white.png"
+              alt="Vilagio"
+              className="h-12 w-auto"
+            />
           </div>
 
-          {/* Navigation */}
-          <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-            {allowedNavItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = pathname === item.href;
-
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  className={`
-                    flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
-                    transition-colors duration-150
-                    ${
-                      isActive
-                        ? 'bg-primary-500 text-white'
-                        : 'text-gray-400 hover:bg-dark-800 hover:text-white'
-                    }
-                  `}
-                  onClick={() => setSidebarOpen(false)}
-                >
-                  <Icon className="w-5 h-5" />
-                  {item.name}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* User profile */}
-          <div className="p-4 border-t border-dark-700">
-            <div className="flex items-center gap-3 px-3 py-2 mb-2">
-              <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white font-medium">
-                {user?.full_name?.charAt(0) || 'U'}
+          {/* User Info */}
+          <div className="px-6 py-4 border-b border-dark-800">
+            <div className="flex items-center">
+              <div className="w-10 h-10 bg-primary-500/10 rounded-full flex items-center justify-center">
+                <span className="text-primary-400 font-medium text-sm">
+                  {user?.full_name?.charAt(0).toUpperCase() || 'U'}
+                </span>
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="ml-3 flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">
                   {user?.full_name || 'User'}
                 </p>
                 <p className="text-xs text-gray-400 capitalize">
-                  {user?.role || 'viewer'}
+                  {user?.role || 'Role'}
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+            {allowedNavItems.map((item) => {
+              const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
+              return (
+                <button
+                  key={item.name}
+                  onClick={() => router.push(item.href)}
+                  className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-primary-500 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-dark-800'
+                  }`}
+                >
+                  <item.icon className="w-5 h-5 mr-3" />
+                  {item.name}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Logout Button */}
+          <div className="p-4 border-t border-dark-800">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:bg-dark-800 hover:text-white transition-colors"
+              className="w-full flex items-center px-4 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 rounded-lg transition-colors"
             >
-              <LogOut className="w-5 h-5" />
+              <LogOut className="w-5 h-5 mr-3" />
               Logout
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="lg:pl-64">
-        {/* Top bar */}
-        <header className="sticky top-0 z-30 bg-dark-900 border-b border-dark-700">
-          <div className="flex items-center justify-between h-16 px-4 sm:px-6">
-            {/* Mobile menu button */}
+      {/* Main Content */}
+      <div className={`flex-1 transition-all duration-200 ${isSidebarOpen ? 'ml-64' : 'ml-0'}`}>
+        {/* Top Bar */}
+        <header className="sticky top-0 z-40 bg-dark-900 border-b border-dark-800">
+          <div className="flex items-center justify-between h-16 px-6">
             <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden text-gray-400 hover:text-white"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-dark-800 transition-colors"
             >
-              <Menu className="w-6 h-6" />
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
             </button>
 
-            {/* Search bar */}
-            <div className="flex-1 max-w-2xl mx-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search products, transactions..."
-                  className="w-full pl-10 pr-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-400">
+                {new Date().toLocaleDateString('en-US', { 
+                  weekday: 'long', 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </span>
             </div>
-
-            {/* Notifications */}
-            <button className="relative p-2 text-gray-400 hover:text-white">
-              <Bell className="w-6 h-6" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-            </button>
           </div>
         </header>
 
-        {/* Page content */}
+        {/* Page Content */}
         <main className="p-6">
           {children}
         </main>

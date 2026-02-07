@@ -8,7 +8,6 @@ const router = express.Router();
 // Import authentication middleware - handles different export formats
 const authMiddleware = require('../middleware/auth-middleware');
 const authenticate = authMiddleware.authenticate || authMiddleware;
-const canApproveQA = authMiddleware.canApproveQA;
 
 // Import production service
 const productionService = require('../services/production-service');
@@ -258,79 +257,6 @@ router.get('/dashboard/active', authenticate, async (req, res) => {
       error: 'Failed to fetch active batches',
       message: error.message 
     });
-  }
-});
-
-// ============================================================================
-// STATUS TRANSITION ENDPOINTS
-// ============================================================================
-
-// Submit batch for QA
-router.post('/batches/:id/submit-qa', authenticate, async (req, res) => {
-  try {
-    const result = await productionService.submitForQA(req.params.id, req.user.user_id);
-    res.json(result);
-  } catch (error) {
-    console.error('Error submitting for QA:', error);
-    res.status(500).json({ error: 'Failed to submit for QA', message: error.message });
-  }
-});
-
-// Approve QA gate - Only QA and Admin can approve
-router.post('/batches/:batchId/qa-gates/:gateId/approve', authenticate, canApproveQA, async (req, res) => {
-  try {
-    const result = await productionService.approveQAGate(
-      req.params.batchId,
-      req.params.gateId,
-      req.user.user_id
-    );
-    res.json(result);
-  } catch (error) {
-    console.error('Error approving QA gate:', error);
-    res.status(500).json({ error: 'Failed to approve QA gate', message: error.message });
-  }
-});
-
-// Reject QA gate - Only QA and Admin can reject
-router.post('/batches/:batchId/qa-gates/:gateId/reject', authenticate, canApproveQA, async (req, res) => {
-  try {
-    const { reason } = req.body;
-    const result = await productionService.rejectQAGate(
-      req.params.batchId,
-      req.params.gateId,
-      req.user.user_id,
-      reason || 'Rejected by QA'
-    );
-    res.json(result);
-  } catch (error) {
-    console.error('Error rejecting QA gate:', error);
-    res.status(500).json({ error: 'Failed to reject QA gate', message: error.message });
-  }
-});
-
-// Start production
-router.post('/batches/:id/start', authenticate, async (req, res) => {
-  try {
-    const result = await productionService.startProduction(req.params.id, req.user.user_id);
-    res.json(result);
-  } catch (error) {
-    console.error('Error starting production:', error);
-    res.status(500).json({ error: 'Failed to start production', message: error.message });
-  }
-});
-
-// Complete production
-router.post('/batches/:id/complete', authenticate, async (req, res) => {
-  try {
-    const { actual_output, rejected_bottles } = req.body;
-    const result = await productionService.completeProduction(req.params.id, {
-      actual_output: actual_output || 0,
-      rejected_bottles: rejected_bottles || 0
-    });
-    res.json(result);
-  } catch (error) {
-    console.error('Error completing production:', error);
-    res.status(500).json({ error: 'Failed to complete production', message: error.message });
   }
 });
 

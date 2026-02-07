@@ -8,7 +8,6 @@ const router = express.Router();
 // Import authentication middleware - handles different export formats
 const authMiddleware = require('../middleware/auth-middleware');
 const authenticate = authMiddleware.authenticate || authMiddleware;
-const canApproveQA = authMiddleware.canApproveQA;
 
 // Import production service
 const productionService = require('../services/production-service');
@@ -276,8 +275,8 @@ router.post('/batches/:id/submit-qa', authenticate, async (req, res) => {
   }
 });
 
-// Approve QA gate - Only QA and Admin can approve
-router.post('/batches/:batchId/qa-gates/:gateId/approve', authenticate, canApproveQA, async (req, res) => {
+// Approve QA gate
+router.post('/batches/:batchId/qa-gates/:gateId/approve', authenticate, async (req, res) => {
   try {
     const result = await productionService.approveQAGate(
       req.params.batchId,
@@ -291,8 +290,8 @@ router.post('/batches/:batchId/qa-gates/:gateId/approve', authenticate, canAppro
   }
 });
 
-// Reject QA gate - Only QA and Admin can reject
-router.post('/batches/:batchId/qa-gates/:gateId/reject', authenticate, canApproveQA, async (req, res) => {
+// Reject QA gate
+router.post('/batches/:batchId/qa-gates/:gateId/reject', authenticate, async (req, res) => {
   try {
     const { reason } = req.body;
     const result = await productionService.rejectQAGate(

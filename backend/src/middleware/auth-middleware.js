@@ -1,66 +1,112 @@
 const jwt = require('jsonwebtoken');
 
-// Authenticate middleware - verifies JWT token
+const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
+
+/**
+ * Authentication middleware - verifies JWT token
+ */
 const authenticate = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     
     if (!authHeader) {
+      return res.status(401).json({ message: 'No authorization header provided' });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    
+    if (!token) {
       return res.status(401).json({ message: 'No token provided' });
     }
 
-    // Extract token from "Bearer TOKEN" format
-    const token = authHeader.split(' ')[1];
-
-    if (!token) {
-      return res.status(401).json({ message: 'Invalid token format' });
-    }
-
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Attach user info to request
     req.user = decoded;
-    
-    console.log(`✅ Authenticated user: ${decoded.email} (${decoded.role})`);
-    
     next();
   } catch (error) {
+    console.error('Authentication error:', error.message);
+    
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
-        message: 'Token expired',
-        code: 'TOKEN_EXPIRED'
-      });
+      return res.status(401).json({ message: 'Token expired' });
     }
-    return res.status(401).json({ 
-      message: 'Invalid token',
-      code: 'INVALID_TOKEN'
-    });
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    
+    return res.status(401).json({ message: 'Authentication failed' });
   }
 };
 
-// Authorize middleware - checks user role
-const authorize = (...roles) => {
+/**
+ * Authorization middleware - checks user role
+ * Can accept single role or array of roles
+ * 
+ * Usage:
+ * - authorize('admin') - only admin
+ * - authorize(['admin', 'qa']) - admin OR qa
+ */
+const authorize = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ message: 'Unauthorized' });
+      return res.status(401).json({ message: 'User not authenticated' });
     }
 
-    if (!roles.includes(req.user.role)) {
-      console.log(`❌ Forbidden: User ${req.user.email} (${req.user.role}) attempted to access ${roles.join(', ')} only route`);
+    const userRole = req.user.role;
+    
+    // Flatten array if roles passed as array
+    const roles = allowedRoles.flat();
+    
+    if (!roles.includes(userRole)) {
       return res.status(403).json({ 
-        message: 'Forbidden: Insufficient permissions',
-        required_roles: roles,
-        user_role: req.user.role
+        message: `Access denied. Required role(s): ${roles.join(' or ')}. Your role: ${userRole}` 
       });
     }
 
-    console.log(`✅ Authorized: ${req.user.email} has required role: ${req.user.role}`);
     next();
   };
 };
 
-module.exports = { 
-  authenticate, 
-  authorize 
+/**
+ * Check if user has QA approval permissions
+ * QA and Admin can approve
+ */
+const canApproveQA = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'User not authenticated' });
+  }
+
+  const userRole = req.user.role;
+  
+  if (userRole !== 'admin' && userRole !== 'qa') {
+    return res.status(403).json({ 
+      message: 'Access denied. Only QA personnel and administrators can approve QA gates.' 
+    });
+  }
+
+  next();
+};
+
+/**
+ * Check if user is admin
+ */
+const isAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'User not authenticated' });
+  }
+
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ 
+      message: 'Access denied. Administrator privileges required.' 
+    });
+  }
+
+  next();
+};
+
+module.exports = {
+  authenticate,
+  authorize,
+  canApproveQA,
+  isAdmin
 };
