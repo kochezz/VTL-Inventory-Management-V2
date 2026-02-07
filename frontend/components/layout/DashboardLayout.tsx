@@ -17,6 +17,7 @@ import {
   LogOut,
   Bell,
   Search,
+  Factory, // NEW - Production icon
 } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -37,6 +38,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       href: '/dashboard',
       icon: LayoutDashboard,
       roles: ['admin', 'manager', 'staff', 'viewer'], // All roles
+    },
+    {
+      name: 'Production',
+      href: '/production',
+      icon: Factory,
+      roles: ['admin', 'manager', 'staff'], // Admin, Manager, Staff (operators)
     },
     {
       name: 'Products',

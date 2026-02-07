@@ -1,0 +1,149 @@
+C:.
+|   .env.local
+|   .gitignore
+|   eslint.config.mjs
+|   folder_structure.txt
+|   frontend.txt
+|   FrontendTree.txt
+|   next-env.d.ts
+|   next.config.js
+|   package-lock.json
+|   package.json
+|   postcss.config.mjs
+|   README.md
+|   tailwind.config.js
+|   tsconfig.json
+|   
++---app
+|   |   favicon.ico
+|   |   globals.css
+|   |   layout.tsx
+|   |   page.tsx
+|   |   
+|   +---analytics
+|   |       page.tsx
+|   |       
+|   +---dashboard
+|   |       page.tsx
+|   |       
+|   +---inventory
+|   |       page.tsx
+|   |       
+|   +---inventory-test
+|   |       page.tsx
+|   |       
+|   +---login
+|   |       page.tsx
+|   |       
+|   +---production
+|   |       page.tsx
+|   |       
+|   +---products
+|   |   |   page.tsx
+|   |   |   pagev1.tsx
+|   |   |   
+|   |   \---[id]
+|   |           page.tsx
+|   |           
+|   +---reports
+|   |       page.tsx
+|   |       
+|   +---settings
+|   |       page.tsx
+|   |       
+|   +---test-scanner
+|   |       page.tsx
+|   |       
+|   \---users
+|           page.tsx
+|           
++---components
+|   +---barcode
+|   |       BarcodeScanner.tsx
+|   |       
+|   +---inventory
+|   |       AdjustmentForm.tsx
+|   |       IssueForm.tsx
+|   |       ReceiveForm.tsx
+|   |       ReceiveFormWithScanner.tsx
+|   |       TransactionHistory.tsx
+|   |       TransferForm.tsx
+|   |       
+|   +---layout
+|   |       DashboardLayout.tsx
+|   |       
+|   +---production
+|   |       CreateBatchForm.tsx
+|   |       
+|   \---products
+|           AddProductModal.tsx
+|           ProductDetailModal.tsx
+|           
++---dashboard
+|   |   package.json
+|   |   README.md
+|   |   
+|   +---assets
+|   +---public
+|   \---src
+|       +---components
+|       |   +---admin
+|       |   +---common
+|       |   +---inventory
+|       |   \---reports
+|       +---contexts
+|       +---hooks
+|       +---pages
+|       |   +---admin
+|       |   +---auth
+|       |   +---inventory
+|       |   +---production
+|       |   \---reports
+|       +---services
+|       +---styles
+|       \---utils
++---hooks
+|       useAuth.ts
+|       useSettings.tsx
+|
++---public
+|       file.svg
+|       globe.svg
+|       logo-black.png
+|       logo-white.png
+|       next.svg
+|       vercel.svg
+|       window.svg
+|       
++---scanner-app
+|   |   index.html
+|   |   package.json
+|   |   README.md
+|   |   
+|   +---assets
+|   |   +---icons
+|   |   \---images
+|   \---src
+|       |   App.tsx
+|       |   main.tsx
+|       |   vite-env.d.ts
+|       |   
+|       +---components
+|       +---hooks
+|       +---services
+|       \---types
++---services
+|       api.ts
+|       inventoryService.ts
+|       productionService.ts
+|       productService.ts
+|       
++---types
+|       inventory.ts
+|       production.ts
+|       product.ts
+|       user.ts
+|       
+\---utils
+        formatters.ts
+        validation.ts

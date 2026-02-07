@@ -1,0 +1,11 @@
+Folder PATH listing
+Volume serial number is EA06-98B7
+C:.
+|   auth.config.js
+|   configTree.txt
+|   database.config.js
+|   scanner.config.js
+|   
++---development
++---production
+\---staging

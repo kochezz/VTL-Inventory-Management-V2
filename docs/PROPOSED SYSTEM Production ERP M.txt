@@ -1,0 +1,714 @@
+🎯 PROPOSED SYSTEM: Production ERP Module
+Core Capabilities
+
+Component Assignment - Auto-link inventory items to batch records
+QA Gate System - Step-by-step approvals with role-based access
+Real-time Tracking - Live batch status and inventory consumption
+Digital Signatures - Paperless verification at each checkpoint
+Auto Export - Generate completed batch records (PDF/Excel)
+Traceability - Full component tracking from inventory to finished goods
+
+
+📊 IMPROVED BATCH WORKFLOW
+Based on water production facility best practices, here's an optimized workflow:
+Phase 1: Pre-Production (Planning Office)
+NO PRODUCTION DISRUPTION - All done before line start
+
+✅ Batch Planning (Production Planner)
+
+Create batch record
+Assign components from inventory
+Reserve materials (soft lock)
+Set production date/shift
+
+
+✅ Pre-Production QA Check (QA - Remote)
+
+Verify component availability
+Check material certificates
+Approve batch plan
+GATE 1 OPENS → Ready for production
+
+
+
+Phase 2: Production Setup (15 min before start)
+MINIMAL DISRUPTION - Quick checks only
+
+✅ Water Treatment Verification (Operator)
+
+Log RO conductivity
+Log ozone residual
+Upload filter status photos
+
+
+✅ Line Setup Verification (Operator)
+
+Scan bottle batch QR code
+Scan cap batch QR code
+Scan label batch QR code
+System auto-fills material details
+
+
+✅ Setup Approval (QA - Remote)
+
+Review logged parameters
+Approve via mobile device
+GATE 2 OPENS → Start production
+
+
+
+Phase 3: Production Run (No Stops)
+ZERO DISRUPTION - Continuous operation
+
+✅ Auto IPQC Logging (Operator - Every 30 min)
+
+Tablet/mobile form appears automatically
+Fill volume, cap torque, visual checks
+Takes 60 seconds to complete
+No production stop needed
+
+
+✅ Real-time Monitoring (QA - Dashboard)
+
+Live IPQC data stream
+Auto-alerts if parameters drift
+Can intervene remotely if needed
+
+
+
+Phase 4: Post-Production (After line stop)
+NO PRODUCTION DISRUPTION - Done after shift
+
+✅ Yield Reconciliation (Operator)
+
+Log final counts
+System auto-calculates yield
+Flag deviations
+
+
+✅ Cleaning Verification (Operator)
+
+Upload cleaning checklist photos
+Log sanitization complete
+
+
+✅ Final QA Release (QA Manager)
+
+Review complete batch data
+Digital signature release
+GATE 3 OPENS → Batch released to warehouse
+System auto-generates finished goods inventory
+
+
+
+
+🏗️ DATABASE SCHEMA ADDITIONS
+I'll show you the new tables needed alongside your existing inventory system:
+sql-- Production Batches Table
+CREATE TABLE production_batches (
+    batch_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_number VARCHAR(50) UNIQUE NOT NULL, -- e.g., FD-500-20250205-001
+    batch_record_code VARCHAR(50) UNIQUE NOT NULL, -- QA-PRO-BAT-LOG-001
+    product_id UUID REFERENCES products(product_id),
+    production_date DATE NOT NULL,
+    production_line VARCHAR(100),
+    shift VARCHAR(20), -- 'day' or 'night'
+    planned_quantity INTEGER NOT NULL,
+    actual_output INTEGER,
+    yield_percentage DECIMAL(5,2),
+    
+    -- Status tracking
+    status VARCHAR(50) NOT NULL, -- 'planned', 'setup', 'in_progress', 'completed', 'released', 'rejected', 'on_hold'
+    current_gate INTEGER DEFAULT 0, -- 0=planning, 1=pre-prod, 2=production, 3=complete
+    
+    -- Personnel
+    line_supervisor_id UUID REFERENCES users(user_id),
+    qa_approved_by UUID REFERENCES users(user_id),
+    created_by UUID REFERENCES users(user_id),
+    
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT NOW(),
+    setup_started_at TIMESTAMP,
+    production_started_at TIMESTAMP,
+    production_completed_at TIMESTAMP,
+    qa_released_at TIMESTAMP,
+    
+    -- Metadata
+    notes TEXT,
+    rejection_reason TEXT
+);
+
+-- Batch Components (Links inventory to batches)
+CREATE TABLE batch_components (
+    component_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    inventory_id UUID REFERENCES inventory(inventory_id),
+    component_type VARCHAR(50), -- 'bottle', 'cap', 'label', 'water'
+    
+    -- Quantity tracking
+    planned_quantity INTEGER NOT NULL,
+    actual_consumed INTEGER,
+    wastage INTEGER DEFAULT 0,
+    
+    -- Material details
+    supplier_batch_lot VARCHAR(100),
+    material_status VARCHAR(20) DEFAULT 'reserved', -- 'reserved', 'consumed', 'returned'
+    
+    assigned_at TIMESTAMP DEFAULT NOW(),
+    consumed_at TIMESTAMP
+);
+
+-- QA Gates (Checkpoint tracking)
+CREATE TABLE batch_qa_gates (
+    gate_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    gate_number INTEGER NOT NULL, -- 1, 2, 3
+    gate_name VARCHAR(100), -- 'Pre-Production Check', 'Line Setup Approval', 'Final Release'
+    
+    status VARCHAR(20) DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    required_by_role VARCHAR(50), -- 'qa', 'qa_manager', 'supervisor'
+    
+    approved_by UUID REFERENCES users(user_id),
+    approved_at TIMESTAMP,
+    rejection_reason TEXT,
+    
+    -- Checklist data (JSON for flexibility)
+    checklist_data JSONB,
+    
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- IPQC Records (In-Process Quality Control)
+CREATE TABLE batch_ipqc_records (
+    ipqc_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    
+    check_time TIMESTAMP NOT NULL,
+    checked_by UUID REFERENCES users(user_id),
+    
+    -- Measurements
+    fill_volume_ml DECIMAL(6,2),
+    cap_torque_nm DECIMAL(4,2),
+    visual_inspection BOOLEAN,
+    label_position_ok BOOLEAN,
+    coding_legibility_ok BOOLEAN,
+    
+    -- Status
+    all_checks_passed BOOLEAN,
+    notes TEXT,
+    
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Water Treatment Logs
+CREATE TABLE batch_water_treatment_logs (
+    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    
+    -- Parameters
+    ro_conductivity_us_cm DECIMAL(6,2), -- μS/cm
+    ozone_residual_ppm DECIMAL(4,2),
+    sand_filter_status BOOLEAN,
+    carbon_filter_status BOOLEAN,
+    uv_system_status BOOLEAN,
+    ozone_injection_active BOOLEAN,
+    
+    verified_by UUID REFERENCES users(user_id),
+    logged_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Line Setup Parameters
+CREATE TABLE batch_line_setup (
+    setup_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    
+    -- Equipment parameters
+    rinsing_pressure_mpa DECIMAL(4,2),
+    fill_volume_target_ml DECIMAL(6,2),
+    fill_volume_actual_ml DECIMAL(6,2),
+    cap_torque_target_nm DECIMAL(4,2),
+    cap_torque_actual_nm DECIMAL(4,2),
+    line_speed_bph INTEGER, -- Bottles per hour
+    
+    verified_by UUID REFERENCES users(user_id),
+    setup_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Batch Coding & Traceability
+CREATE TABLE batch_coding (
+    coding_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    
+    batch_code_format VARCHAR(100),
+    batch_code_printed VARCHAR(100),
+    expiry_date DATE,
+    best_before_date DATE,
+    coding_verified BOOLEAN,
+    
+    verified_by UUID REFERENCES users(user_id),
+    verified_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Post-Production Cleaning
+CREATE TABLE batch_cleaning_logs (
+    cleaning_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    
+    line_flush_completed BOOLEAN DEFAULT FALSE,
+    equipment_cleaning_completed BOOLEAN DEFAULT FALSE,
+    area_sanitation_completed BOOLEAN DEFAULT FALSE,
+    
+    -- Photo evidence
+    photo_urls TEXT[], -- Array of URLs to uploaded photos
+    
+    completed_by UUID REFERENCES users(user_id),
+    completed_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Deviations/Incidents
+CREATE TABLE batch_deviations (
+    deviation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(batch_id),
+    
+    incident_time TIMESTAMP NOT NULL,
+    description TEXT NOT NULL,
+    action_taken TEXT,
+    ncr_number VARCHAR(50), -- Non-Conformance Report reference
+    
+    reported_by UUID REFERENCES users(user_id),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Indexes for performance
+CREATE INDEX idx_batches_status ON production_batches(status);
+CREATE INDEX idx_batches_date ON production_batches(production_date);
+CREATE INDEX idx_batches_product ON production_batches(product_id);
+CREATE INDEX idx_components_batch ON batch_components(batch_id);
+CREATE INDEX idx_components_inventory ON batch_components(inventory_id);
+CREATE INDEX idx_qa_gates_batch ON batch_qa_gates(batch_id);
+CREATE INDEX idx_ipqc_batch ON batch_ipqc_records(batch_id);
+```
+
+---
+
+## 🎨 **USER INTERFACE DESIGN**
+
+### **1. Production Planner Dashboard**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  📋 PRODUCTION PLANNING                                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  [+ New Batch Record]                                       │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ 🏭 Create New Production Batch                       │  │
+│  ├──────────────────────────────────────────────────────┤  │
+│  │                                                       │  │
+│  │  Product: [FreshDrip 500ml ▼]                       │  │
+│  │  Production Date: [2025-02-05]                       │  │
+│  │  Shift: ○ Day  ● Night                              │  │
+│  │  Line: [Victory Star 3-in-1 ▼]                      │  │
+│  │  Planned Quantity: [10,000] units                   │  │
+│  │                                                       │  │
+│  │  ─── ASSIGN COMPONENTS ───                           │  │
+│  │                                                       │  │
+│  │  🍾 Bottles (PET Preforms)                          │  │
+│  │  Available: 15,000 units in WH-A                    │  │
+│  │  Supplier: ABC Plastics | Lot: LOT-2025-001        │  │
+│  │  [✓ Assign 10,500 units] (includes 5% buffer)      │  │
+│  │                                                       │  │
+│  │  🔘 Caps (28mm Screw)                               │  │
+│  │  Available: 20,000 units in WH-A                    │  │
+│  │  Supplier: Cap Solutions | Lot: CAP-2025-045       │  │
+│  │  [✓ Assign 10,500 units]                           │  │
+│  │                                                       │  │
+│  │  🏷️ Labels (FreshDrip 500ml)                       │  │
+│  │  Available: 12,000 units in WH-B                    │  │
+│  │  Supplier: PrintPro | Lot: LBL-2025-089            │  │
+│  │  [✓ Assign 10,500 units]                           │  │
+│  │                                                       │  │
+│  │  💧 Water Source                                    │  │
+│  │  [✓ Borehole BH-01 - Approved]                     │  │
+│  │                                                       │  │
+│  │  [Cancel]  [Save Draft]  [Submit for QA Approval]  │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ─── PENDING BATCHES ───                                   │
+│                                                             │
+│  Batch FD-500-20250205-001  📊 Planning  [View]           │
+│  Batch FD-500-20250204-003  ⏸️ On Hold   [View]           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **2. Production Operator Interface (Tablet/Mobile)**
+```
+┌────────────────────────────────────────┐
+│  🏭 BATCH: FD-500-20250205-001        │
+├────────────────────────────────────────┤
+│                                        │
+│  Status: 🟢 Production In Progress    │
+│  Started: 08:00 AM                    │
+│  Elapsed: 2h 15m                      │
+│                                        │
+│  ─── CURRENT STEP ───                 │
+│                                        │
+│  ⏰ IPQC Check Due in 5 minutes       │
+│                                        │
+│  [START IPQC CHECK]                   │
+│                                        │
+│  ─── BATCH INFO ───                   │
+│                                        │
+│  Product: FreshDrip 500ml             │
+│  Target: 10,000 units                 │
+│  Produced: 4,250 units                │
+│  Progress: [████████░░░░] 42%        │
+│                                        │
+│  ─── MATERIALS ───                    │
+│                                        │
+│  🍾 Bottles: LOT-2025-001 ✓          │
+│  🔘 Caps: CAP-2025-045 ✓             │
+│  🏷️ Labels: LBL-2025-089 ✓          │
+│                                        │
+│  [View Full Batch Record]             │
+│  [Report Issue]                       │
+│                                        │
+└────────────────────────────────────────┘
+```
+
+**IPQC Check Modal (30-second completion):**
+```
+┌────────────────────────────────────────┐
+│  ⏱️ IPQC CHECK - 10:30 AM             │
+├────────────────────────────────────────┤
+│                                        │
+│  Fill Volume                          │
+│  [502] ml     ✓ Within spec          │
+│                                        │
+│  Cap Torque                           │
+│  [1.0] Nm     ✓ Within spec          │
+│                                        │
+│  Visual Inspection                    │
+│  ○ Pass  ○ Fail                      │
+│                                        │
+│  Label Position                       │
+│  ○ Correct  ○ Incorrect              │
+│                                        │
+│  Coding Legibility                    │
+│  ○ Clear  ○ Unclear                  │
+│                                        │
+│  [Cancel]  [SUBMIT]                   │
+│                                        │
+│  Next check in: 30 minutes            │
+└────────────────────────────────────────┘
+```
+
+### **3. QA Dashboard (Real-time Monitoring)**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  🔬 QA MONITORING DASHBOARD                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ─── PENDING APPROVALS ───                                     │
+│                                                                 │
+│  🔴 2 URGENT | 🟡 5 PENDING | 🟢 12 IN PROGRESS               │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────┐    │
+│  │ 🔴 Batch FD-500-20250205-001                         │    │
+│  │ GATE 1: Pre-Production Check                         │    │
+│  │ Submitted: 5 minutes ago                             │    │
+│  │ [REVIEW & APPROVE]                                   │    │
+│  └───────────────────────────────────────────────────────┘    │
+│                                                                 │
+│  ─── LIVE PRODUCTION MONITORING ───                            │
+│                                                                 │
+│  Batch FD-500-20250205-002  🟢 IN PROGRESS                    │
+│  Last IPQC: 10:30 AM - All checks passed ✓                   │
+│  [View Live Data]                                              │
+│                                                                 │
+│  ─── IPQC TRENDS (Last Hour) ───                              │
+│                                                                 │
+│  Fill Volume:  [██████████] 500ml ± 2ml ✓                    │
+│  Cap Torque:   [██████████] 1.0Nm ± 0.2 ✓                    │
+│  Pass Rate:    [██████████] 100% ✓                           │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**QA Approval Modal:**
+```
+┌────────────────────────────────────────────────┐
+│  📋 GATE 1: PRE-PRODUCTION CHECK              │
+├────────────────────────────────────────────────┤
+│                                                │
+│  Batch: FD-500-20250205-001                   │
+│  Product: FreshDrip 500ml                     │
+│  Planner: John Mensah                         │
+│                                                │
+│  ─── COMPONENT VERIFICATION ───               │
+│                                                │
+│  ✓ Bottles: LOT-2025-001 (Valid cert)        │
+│  ✓ Caps: CAP-2025-045 (Valid cert)           │
+│  ✓ Labels: LBL-2025-089 (Valid cert)         │
+│  ✓ Inventory sufficient                       │
+│                                                │
+│  ─── QUALITY CHECKS ───                       │
+│                                                │
+│  ☑ Material certificates reviewed             │
+│  ☑ Supplier approved                          │
+│  ☑ No conflicting batches scheduled           │
+│  ☑ Equipment maintenance up to date           │
+│                                                │
+│  Comments (optional):                         │
+│  [____________________________________]        │
+│                                                │
+│  [✗ REJECT]  [✓ APPROVE & OPEN GATE 1]       │
+│                                                │
+└────────────────────────────────────────────────┘
+
+🔄 WORKFLOW AUTOMATION
+Auto-Triggers & Notifications
+javascript// Pseudo-code for automated workflows
+
+// 1. When batch is submitted for approval
+ON batch.status = 'awaiting_qa_approval':
+    NOTIFY qa_team via email & mobile
+    CREATE qa_gate record (gate_number=1)
+    RESERVE inventory components (soft lock)
+
+// 2. When QA approves Gate 1
+ON qa_gate.gate_number = 1 AND status = 'approved':
+    UPDATE batch.status = 'ready_for_setup'
+    UPDATE batch.current_gate = 1
+    NOTIFY line_supervisor via mobile
+    HARD LOCK inventory components
+
+// 3. When operator starts setup
+ON batch.status = 'setup':
+    START timer for setup duration
+    ENABLE water treatment logging
+    ENABLE material scanning
+
+// 4. When all setup data logged
+ON batch has all setup_data:
+    CREATE qa_gate record (gate_number=2)
+    NOTIFY qa_team for approval
+
+// 5. When QA approves Gate 2
+ON qa_gate.gate_number = 2 AND status = 'approved':
+    UPDATE batch.status = 'in_progress'
+    UPDATE batch.current_gate = 2
+    UPDATE batch.production_started_at = NOW()
+    START IPQC timer (every 30 min)
+
+// 6. IPQC Auto-Reminders
+EVERY 30 minutes WHILE batch.status = 'in_progress':
+    SEND mobile notification to operator
+    IF missed 2 checks:
+        ESCALATE to supervisor
+        SEND alert to QA
+
+// 7. IPQC Auto-Analysis
+ON new ipqc_record:
+    IF fill_volume OUT OF RANGE:
+        SEND immediate alert to QA & supervisor
+        FLAG batch for review
+    IF 3 consecutive failures:
+        AUTO PAUSE batch
+        REQUIRE supervisor override
+
+// 8. When operator completes production
+ON batch.status = 'completed':
+    AUTO CALCULATE yield
+    DEDUCT consumed materials from inventory
+    CREATE finished goods inventory entry
+    CREATE qa_gate record (gate_number=3)
+    NOTIFY qa_manager for final release
+
+// 9. When QA releases batch
+ON qa_gate.gate_number = 3 AND status = 'approved':
+    UPDATE batch.status = 'released'
+    UPDATE inventory.available_quantity (finished goods)
+    AUTO GENERATE batch report PDF
+    EMAIL batch report to stakeholders
+    ARCHIVE batch record
+```
+
+---
+
+## 📱 **API ENDPOINTS DESIGN**
+
+### **Production Batch Endpoints**
+```
+POST   /api/production/batches              # Create new batch
+GET    /api/production/batches              # List all batches (filtered)
+GET    /api/production/batches/:id          # Get batch details
+PUT    /api/production/batches/:id          # Update batch
+DELETE /api/production/batches/:id          # Cancel/delete batch
+
+POST   /api/production/batches/:id/assign-components   # Assign inventory
+POST   /api/production/batches/:id/start-setup         # Begin setup
+POST   /api/production/batches/:id/start-production    # Begin production
+POST   /api/production/batches/:id/complete            # Complete batch
+
+GET    /api/production/batches/:id/components          # Get assigned components
+GET    /api/production/batches/:id/qa-gates            # Get QA gate status
+GET    /api/production/batches/:id/ipqc                # Get IPQC records
+GET    /api/production/batches/:id/export              # Export batch record PDF
+```
+
+### **QA Gate Endpoints**
+```
+GET    /api/production/qa-gates/pending     # Get pending approvals
+POST   /api/production/qa-gates/:id/approve # Approve gate
+POST   /api/production/qa-gates/:id/reject  # Reject gate
+GET    /api/production/qa-gates/:id         # Get gate details
+```
+
+### **IPQC Endpoints**
+```
+POST   /api/production/ipqc                 # Log IPQC check
+GET    /api/production/ipqc/:batchId        # Get batch IPQC history
+GET    /api/production/ipqc/:batchId/latest # Get latest IPQC
+GET    /api/production/ipqc/trends          # Get trend data
+```
+
+### **Water Treatment Endpoints**
+```
+POST   /api/production/water-treatment      # Log water parameters
+GET    /api/production/water-treatment/:batchId  # Get batch water logs
+```
+
+### **Component Assignment Endpoints**
+```
+GET    /api/production/available-components?productId=X  # Get available inventory
+POST   /api/production/reserve-components   # Reserve materials for batch
+POST   /api/production/consume-components   # Mark as consumed
+POST   /api/production/return-components    # Return unused to inventory
+
+🎯 BENEFITS OF THIS SYSTEM
+For Production Planners:
+✅ Visual inventory availability during planning
+✅ One-click component assignment
+✅ Auto-calculation of material requirements
+✅ No manual data entry or spreadsheets
+✅ Real-time batch status tracking
+For Production Operators:
+✅ Mobile-first interface (tablet/phone)
+✅ Scan QR codes instead of typing batch numbers
+✅ 30-second IPQC checks (no disruption)
+✅ Auto-reminders for checks
+✅ No paperwork or manual logs
+For QA Team:
+✅ Remote approvals from dashboard or mobile
+✅ Real-time production monitoring
+✅ Auto-alerts for out-of-spec parameters
+✅ No need to physically visit production floor
+✅ Digital signatures with full audit trail
+For Management:
+✅ Real-time production visibility
+✅ Automatic yield calculations
+✅ Traceability from raw materials to finished goods
+✅ Instant batch record exports
+✅ Data-driven decision making
+
+📊 EXPORT FUNCTIONALITY
+Auto-Generated Batch Record PDF
+When QA releases a batch, system auto-generates a PDF matching your template:
+javascript// Export endpoint
+GET /api/production/batches/:id/export?format=pdf
+
+// Returns PDF with:
+// - All sections from your template
+// - Auto-filled data from database
+// - Digital signatures with timestamps
+// - Embedded QR code for verification
+// - NCR references (if any)
+PDF Features:
+
+✅ Matches your exact template layout
+✅ Includes all logged parameters
+✅ IPQC trend charts
+✅ Component traceability table
+✅ Digital signature blocks
+✅ QR code linking to online batch record
+✅ Watermark: "RELEASED" / "REJECTED" / "ON HOLD"
+
+
+🚀 IMPLEMENTATION ROADMAP
+Phase 3B: Production Module (Weeks 8-12)
+Week 8-9: Database & Backend
+
+ Add production tables to database
+ Create batch management API endpoints
+ Implement QA gate logic
+ Build component assignment service
+ Create IPQC recording endpoints
+
+Week 10: Production Planner UI
+
+ Batch planning form
+ Component assignment interface
+ Inventory availability display
+ Batch list and filtering
+ Batch detail view
+
+Week 11: Operator Interface
+
+ Mobile-responsive design
+ Setup logging forms
+ IPQC quick-check modal
+ QR code scanning
+ Real-time batch status
+
+Week 12: QA Dashboard
+
+ Approval queue interface
+ Live monitoring dashboard
+ IPQC trend charts
+ Gate approval modals
+ Alert system
+
+Week 13: Export & Automation
+
+ PDF generation service
+ Auto-notification system
+ Auto-inventory updates
+ Finished goods creation
+ Email reports
+
+
+💡 NEXT STEPS
+Would you like me to:
+
+Start building the production module right away?
+
+Create the database schema
+Build the backend APIs
+Design the UI components
+
+
+Focus on a specific workflow first?
+
+Batch planning interface
+Operator mobile interface
+QA approval dashboard
+
+
+Generate sample data and demo?
+
+Create test batches
+Mock production scenarios
+Show complete workflow
+
+
+Design the PDF export template?
+
+Build exact replica of your template
+Add auto-fill logic
+Include digital signatures
+
+
+
+Let me know which direction you'd like to proceed, and I'll immediately start building! 

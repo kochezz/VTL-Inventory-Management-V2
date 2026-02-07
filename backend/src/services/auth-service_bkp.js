@@ -97,10 +97,9 @@ const login = async (email, password, ipAddress, userAgent) => {
     
     console.log(`🎉 Login successful for: ${email}`);
     
-    // ✅ FIX: Return "token" instead of "accessToken" to match frontend expectations
     return {
       user: userData,
-      token: accessToken,        // ✅ Changed from "accessToken" to "token"
+      accessToken,
       refreshToken
     };
   } catch (error) {
@@ -112,7 +111,7 @@ const login = async (email, password, ipAddress, userAgent) => {
 // Logout function
 const logout = async (refreshToken) => {
   try {
-    console.log('🔓 Logout attempt');
+    console.log('🔐 Logout attempt');
     
     await pool.query(
       'UPDATE user_sessions SET is_revoked = true WHERE refresh_token = $1',
@@ -130,7 +129,7 @@ const logout = async (refreshToken) => {
 // Refresh token function
 const refreshAccessToken = async (refreshToken) => {
   try {
-    console.log('🔄 Token refresh attempt');
+    console.log('🔐 Token refresh attempt');
     
     // Verify refresh token
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
@@ -169,9 +168,8 @@ const refreshAccessToken = async (refreshToken) => {
 
     console.log(`✅ Token refreshed for: ${user.email}`);
 
-    // ✅ FIX: Return "token" instead of "accessToken" to match frontend expectations
     return {
-      token: newAccessToken,     // ✅ Changed from "accessToken" to "token"
+      accessToken: newAccessToken,
       user: userData
     };
   } catch (error) {
