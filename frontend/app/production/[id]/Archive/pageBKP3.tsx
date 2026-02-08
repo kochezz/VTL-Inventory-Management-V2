@@ -10,8 +10,6 @@ import {
   TrendingUp, Activity
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import CompleteProductionModal, { ProductionCompletionData } from '@/components/production/CompleteProductionModal';
-import IPQCCheckModal from '@/components/production/IPQCCheckModal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -50,7 +48,7 @@ interface Batch {
   planned_quantity: number;
   actual_output?: number;
   rejected_bottles?: number;
-  yield_percentage?: number | string;
+  yield_percentage?: number;
   status: string;
   line_supervisor_id?: string;
   line_supervisor_name?: string;
@@ -72,19 +70,13 @@ export default function BatchDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
-  const [showCompleteModal, setShowCompleteModal] = useState(false);
-  // IPQC state
-const [showIPQCModal, setShowIPQCModal] = useState(false);
-const [ipqcHistory, setIpqcHistory] = useState<any[]>([]);
-const [ipqcSummary, setIpqcSummary] = useState<any>(null);
-const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
 
   useEffect(() => {
-  if (isAuthenticated && token && params.id) {
-    fetchBatchDetails();
-    fetchIPQCData();
-  }
-}, [isAuthenticated, token, params.id]);
+    if (isAuthenticated && token && params.id) {
+      fetchBatchDetails();
+    }
+  }, [isAuthenticated, token, params.id]);
+
   const fetchBatchDetails = async () => {
     try {
       setLoading(true);
@@ -101,27 +93,6 @@ const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
     }
   };
 
-  const fetchIPQCData = async () => {
-  try {
-    const response = await axios.get(
-      `${API_URL}/production/batches/${params.id}/ipqc`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    setIpqcHistory(response.data.checks);
-    setIpqcSummary(response.data.summary);
-    
-    // Get next check due if in progress
-    if (batch?.status === 'in_progress') {
-      const dueResponse = await axios.get(
-        `${API_URL}/production/batches/${params.id}/ipqc/next-due`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      setNextIPQCDue(dueResponse.data);
-    }
-  } catch (err) {
-    console.error('Error fetching IPQC data:', err);
-  }
-};
   const handleStatusTransition = async (action: string) => {
     try {
       setActionLoading(true);
@@ -145,9 +116,12 @@ const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
           endpoint = `/production/batches/${params.id}/start`;
           break;
         case 'complete_production':
-          // Show modal instead of direct API call
-          setShowCompleteModal(true);
-          return; // Don't proceed with API call
+          endpoint = `/production/batches/${params.id}/complete`;
+          data = { 
+            actual_output: batch?.planned_quantity || 0,
+            rejected_bottles: 0 
+          };
+          break;
       }
 
       await axios.post(
@@ -196,48 +170,6 @@ const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
       } else {
         setError(err.response?.data?.message || 'QA action failed');
       }
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleCompleteProduction = async (completionData: ProductionCompletionData) => {
-    try {
-      setActionLoading(true);
-      setError('');
-
-      console.log('🔄 BatchDetailPage: Completing production for batch:', params.id);
-      console.log('📦 Completion data:', completionData);
-
-      const response = await axios.post(
-        `${API_URL}/production/batches/${params.id}/complete`,
-        completionData,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      console.log('✅ Backend response:', response.data);
-
-      // Refresh batch details
-      console.log('🔄 Refreshing batch details...');
-      await fetchBatchDetails();
-      
-      console.log('✅ Batch details refreshed, closing modal');
-      setShowCompleteModal(false);
-    } catch (err: any) {
-      console.error('❌ Error completing production:', err);
-      console.error('Error response:', err.response?.data);
-      console.error('Error status:', err.response?.status);
-      
-      // Set error in page (not just modal)
-      if (err.response?.status === 403) {
-        setError('Permission denied. You do not have permission to complete production.');
-      } else if (err.response?.status === 404) {
-        setError('Batch not found.');
-      } else {
-        setError(err.response?.data?.message || err.message || 'Failed to complete production');
-      }
-      
-      throw err; // Re-throw so modal can also handle it
     } finally {
       setActionLoading(false);
     }
@@ -379,9 +311,7 @@ const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
                     </div>
                     <div>
                       <label className="text-sm text-gray-400">Yield</label>
-                      <p className="text-white font-semibold">
-                        {batch.yield_percentage ? parseFloat(batch.yield_percentage).toFixed(1) : '0.0'}%
-                      </p>
+                      <p className="text-white font-semibold">{batch.yield_percentage?.toFixed(1)}%</p>
                     </div>
                   </>
                 )}
@@ -488,147 +418,7 @@ const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
               </div>
             </div>
           </div>
-{/* IPQC Records Section - Only show when in production */}
-          {batch.status === 'in_progress' && (
-            <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="w-6 h-6 text-blue-400" />
-                  <div>
-                    <h3 className="text-lg font-semibold text-white">
-                      IPQC Records
-                    </h3>
-                    <p className="text-sm text-gray-400">
-                      In-process quality checks every 30 minutes
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowIPQCModal(true)}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
-                >
-                  <Clock className="w-4 h-4" />
-                  Record IPQC Check
-                </button>
-              </div>
 
-              {/* Next Check Due Indicator */}
-              {nextIPQCDue && (
-                <div className={`p-4 rounded-lg mb-4 ${
-                  nextIPQCDue.is_due
-                    ? 'bg-red-500/10 border border-red-500/20'
-                    : 'bg-blue-500/10 border border-blue-500/20'
-                }`}>
-                  <div className="flex items-center gap-3">
-                    {nextIPQCDue.is_due ? (
-                      <AlertCircle className="w-5 h-5 text-red-400" />
-                    ) : (
-                      <Clock className="w-5 h-5 text-blue-400" />
-                    )}
-                    <p className={nextIPQCDue.is_due ? 'text-red-400' : 'text-blue-400'}>
-                      {nextIPQCDue.message}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Compliance Summary */}
-              {ipqcSummary && ipqcSummary.total_checks > 0 && (
-                <div className="grid grid-cols-3 gap-4 mb-4">
-                  <div className="bg-dark-900 rounded-lg p-3 border border-dark-700">
-                    <p className="text-sm text-gray-400">Total Checks</p>
-                    <p className="text-2xl font-bold text-white">{ipqcSummary.total_checks}</p>
-                  </div>
-                  <div className="bg-green-500/10 rounded-lg p-3 border border-green-500/20">
-                    <p className="text-sm text-green-400">Passed</p>
-                    <p className="text-2xl font-bold text-green-400">{ipqcSummary.passed_checks}</p>
-                  </div>
-                  <div className="bg-red-500/10 rounded-lg p-3 border border-red-500/20">
-                    <p className="text-sm text-red-400">Failed</p>
-                    <p className="text-2xl font-bold text-red-400">{ipqcSummary.failed_checks}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* IPQC History Table */}
-              {ipqcHistory.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-dark-700">
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Check #</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Time</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Fill</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Torque</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Visual</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Label</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Code</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Status</th>
-                        <th className="text-left text-sm font-medium text-gray-400 pb-3">Operator</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ipqcHistory.map((check) => (
-                        <tr key={check.ipqc_id} className="border-b border-dark-700/50">
-                          <td className="py-3 text-white font-medium">#{check.check_sequence}</td>
-                          <td className="py-3 text-gray-300 text-sm">
-                            {new Date(check.check_time).toLocaleTimeString()}
-                          </td>
-                          <td className={`py-3 text-sm ${
-                            check.fill_volume_within_spec ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {check.fill_volume_ml}ml
-                          </td>
-                          <td className={`py-3 text-sm ${
-                            check.cap_torque_within_spec ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {check.cap_torque_nm}Nm
-                          </td>
-                          <td className="py-3">
-                            {check.visual_inspection_pass ? (
-                              <CheckCircle2 className="w-4 h-4 text-green-400" />
-                            ) : (
-                              <AlertCircle className="w-4 h-4 text-red-400" />
-                            )}
-                          </td>
-                          <td className="py-3">
-                            {check.label_position_correct ? (
-                              <CheckCircle2 className="w-4 h-4 text-green-400" />
-                            ) : (
-                              <AlertCircle className="w-4 h-4 text-red-400" />
-                            )}
-                          </td>
-                          <td className="py-3">
-                            {check.coding_legible ? (
-                              <CheckCircle2 className="w-4 h-4 text-green-400" />
-                            ) : (
-                              <AlertCircle className="w-4 h-4 text-red-400" />
-                            )}
-                          </td>
-                          <td className="py-3">
-                            {check.all_checks_passed ? (
-                              <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded text-xs">
-                                PASS
-                              </span>
-                            ) : (
-                              <span className="px-2 py-1 bg-red-500/10 text-red-400 rounded text-xs">
-                                FAIL
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 text-gray-300 text-sm">{check.operator_name}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-gray-400 text-center py-8">
-                  No IPQC checks recorded yet. Click "Record IPQC Check" to begin quality monitoring.
-                </p>
-              )}
-            </div>
-          )}
           {/* Sidebar */}
           <div className="space-y-6">
             {/* Quick Actions */}
@@ -716,33 +506,6 @@ const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
           </div>
         </div>
       </div>
-
-      {/* Complete Production Modal */}
-      {batch && (
-        <CompleteProductionModal
-          isOpen={showCompleteModal}
-          onClose={() => setShowCompleteModal(false)}
-          batch={{
-            batch_id: batch.batch_id,
-            batch_number: batch.batch_number,
-            product_name: batch.product_name,
-            planned_quantity: batch.planned_quantity
-          }}
-          onComplete={handleCompleteProduction}
-        />
-      )}
-      {/* IPQC Modal */}
-      <IPQCCheckModal
-        batchId={params.id as string}
-        batchNumber={batch?.batch_number || ''}
-        productName={batch?.product_name || ''}
-        isOpen={showIPQCModal}
-        onClose={() => setShowIPQCModal(false)}
-        onSuccess={() => {
-          fetchIPQCData();
-          fetchBatchDetails();
-        }}
-      />
     </DashboardLayout>
   );
 }
