@@ -36,8 +36,8 @@ const navigation: NavItem[] = [
     roles: ['admin', 'manager', 'qa', 'staff', 'viewer']
   },
   { 
-    name: 'Warehouse', 
-    href: '/warehouse', 
+    name: 'Inventory', 
+    href: '/inventory', 
     icon: MapPin,
     roles: ['admin', 'manager', 'qa', 'staff']
   },
@@ -48,8 +48,8 @@ const navigation: NavItem[] = [
     roles: ['admin', 'manager', 'qa', 'staff']
   },
   { 
-    name: 'Transactions', 
-    href: '/transactions', 
+    name: 'Analytics', 
+    href: '/analytics', 
     icon: TrendingUp,
     roles: ['admin', 'manager', 'qa', 'staff']
   },

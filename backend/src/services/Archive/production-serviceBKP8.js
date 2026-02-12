@@ -521,37 +521,11 @@ const getBatchById = async (batchId) => {
     const qaGatesResult = await pool.query(qaGatesQuery, [batchId]);
     batch.qa_gates = qaGatesResult.rows;
     
-    // Get IPQC checks (SAME PATTERN AS QA GATES)
-    const ipqcQuery = `
-      SELECT 
-        ipqc_id,
-        check_sequence,
-        check_time,
-        fill_volume_ml,
-        fill_volume_within_spec,
-        cap_torque_nm,
-        cap_torque_within_spec,
-        visual_inspection_pass,
-        label_position_correct,
-        coding_legible,
-        all_checks_passed,
-        operator_name,
-        qa_status,
-        created_at
-      FROM batch_ipqc_records
-      WHERE batch_id = $1
-      ORDER BY check_sequence ASC
-    `;
-    
-    const ipqcResult = await pool.query(ipqcQuery, [batchId]);
-    batch.ipqc_checks = ipqcResult.rows;
-    
-    // Get counts
-    batch.ipqc_count = ipqcResult.rows.length;
+    // Get counts (placeholders for now - we'll add IPQC and deviation tables later)
+    batch.ipqc_count = 0;
     batch.deviation_count = 0;
     
-    console.log(`✅ Batch details retrieved with ${batch.components.length} components, ${batch.qa_gates.length} QA gates, and ${batch.ipqc_checks.length} IPQC checks`);
-    
+    console.log(`✅ Batch details retrieved with ${batch.components.length} components and ${batch.qa_gates.length} QA gates`);
     
     return {
       batch
@@ -960,10 +934,9 @@ const recordIPQC = async (batchId, ipqcData, userId) => {
         all_checks_passed,
         operator_id,
         operator_name,
-        notes,
-        qa_status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-      RETURNING ipqc_id, check_sequence, check_time, all_checks_passed, qa_status
+        notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      RETURNING ipqc_id, check_sequence, check_time, all_checks_passed
     `;
     
     const result = await client.query(insertQuery, [
@@ -983,8 +956,7 @@ const recordIPQC = async (batchId, ipqcData, userId) => {
       allChecksPassed,
       userId,
       operatorName,
-      ipqcData.notes || null,
-      'draft_check'  // Explicitly set to draft_check status
+      ipqcData.notes || null
     ]);
     
     await client.query('COMMIT');
@@ -1036,7 +1008,6 @@ const getIPQCHistory = async (batchId) => {
         all_checks_passed,
         operator_name,
         notes,
-        qa_status,
         created_at
       FROM batch_ipqc_records
       WHERE batch_id = $1
@@ -1234,6 +1205,7 @@ async function getIPQCForReview(ipqcId) {
         ipqc.*,
         batch.batch_number,
         batch.product_name,
+        batch.product_code,
         batch.planned_quantity,
         batch.status as batch_status,
         batch.production_started_at
@@ -1428,70 +1400,6 @@ async function getIPQCQAStatistics(filters = {}) {
   }
 }
 
-// ============================================================================
-// DRAFT CHECK WORKFLOW - Submit IPQC for QA Review
-// ============================================================================
-
-/**
- * Submit draft IPQC checks for QA review
- * Changes status from 'draft_check' to 'pending_qa_review'
- */
-async function submitIPQCForQAReview(batchId, userId) {
-  try {
-    console.log(`📤 Submitting draft IPQC checks for QA review - Batch: ${batchId}`);
-    
-    // Update all draft checks for this batch to pending_qa_review
-    const result = await pool.query(
-      `UPDATE batch_ipqc_records
-       SET qa_status = 'pending_qa_review',
-           updated_at = CURRENT_TIMESTAMP
-       WHERE batch_id = $1
-       AND qa_status = 'draft_check'
-       RETURNING ipqc_id, check_sequence`,
-      [batchId]
-    );
-
-    if (result.rows.length === 0) {
-      console.log('⚠️  No draft IPQC checks found to submit');
-      return {
-        success: false,
-        message: 'No draft IPQC checks found to submit'
-      };
-    }
-
-    console.log(`✅ Submitted ${result.rows.length} IPQC check(s) for QA review`);
-    
-    return {
-      success: true,
-      message: `${result.rows.length} IPQC check(s) submitted for QA review`,
-      submitted_checks: result.rows
-    };
-  } catch (error) {
-    console.error('❌ Error submitting IPQC for QA review:', error);
-    throw error;
-  }
-}
-
-/**
- * Get count of draft IPQC checks for a batch
- */
-async function getDraftIPQCCount(batchId) {
-  try {
-    const result = await pool.query(
-      `SELECT COUNT(*) as draft_count
-       FROM batch_ipqc_records
-       WHERE batch_id = $1
-       AND qa_status = 'draft_check'`,
-      [batchId]
-    );
-
-    return parseInt(result.rows[0].draft_count);
-  } catch (error) {
-    console.error('Error getting draft IPQC count:', error);
-    throw error;
-  }
-}
-
 module.exports = {
   getFinishedProducts,
   getAvailableComponents,
@@ -1515,6 +1423,4 @@ module.exports = {
   rejectIPQC,
   getPendingIPQCCount,
   getIPQCQAStatistics,
-  submitIPQCForQAReview,
-  getDraftIPQCCount,
 };

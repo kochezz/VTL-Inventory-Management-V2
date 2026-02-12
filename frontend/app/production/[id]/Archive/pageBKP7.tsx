@@ -61,66 +61,36 @@ interface Batch {
   components: Component[];
   qa_gates: QAGate[];
   ipqc_count: number;
-  ipqc_checks?: any[]; // Added to support IPQC data embedded in batch
   deviation_count: number;
 }
 
 export default function BatchDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { isAuthenticated, token, loading: authLoading } = useAuth();
+  const { isAuthenticated, token } = useAuth();
   
   const [batch, setBatch] = useState<Batch | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
-  
-  // IPQC state - Reduced as per MD instructions
-  const [showIPQCModal, setShowIPQCModal] = useState(false);
-  const [showQAReviewModal, setShowQAReviewModal] = useState(false);
-  const [selectedIPQCId, setSelectedIPQCId] = useState<string | null>(null);
-
-  // Helper variables - computed from batch data (QA Gates Pattern)
-  const ipqcChecks = batch?.ipqc_checks || [];
-  const draftChecks = ipqcChecks.filter((c: any) => c.qa_status === 'draft_check');
-  const pendingChecks = ipqcChecks.filter((c: any) => c.qa_status === 'pending_qa_review');
-  const approvedChecks = ipqcChecks.filter((c: any) => c.qa_status === 'qa_approved');
-  const rejectedChecks = ipqcChecks.filter((c: any) => c.qa_status === 'qa_rejected');
+  // IPQC state
+const [showIPQCModal, setShowIPQCModal] = useState(false);
+const [ipqcHistory, setIpqcHistory] = useState<any[]>([]);
+const [ipqcSummary, setIpqcSummary] = useState<any>(null);
+const [nextIPQCDue, setNextIPQCDue] = useState<any>(null);
+const [showQAReviewModal, setShowQAReviewModal] = useState(false);
+const [selectedIPQCId, setSelectedIPQCId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isAuthenticated && token && params.id) {
-      fetchBatchDetails();
-      // fetchIPQCData removed as per instructions
-    }
-  }, [isAuthenticated, token, params.id]);
-
-  // Global 401 error handler - redirects to login when token expires
-  useEffect(() => {
-    const interceptor = axios.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        if (error.response?.status === 401 && !authLoading && isAuthenticated === false) {
-          console.log('🔒 Token expired or invalid - redirecting to login...');
-          localStorage.removeItem('token');
-          router.push('/login');
-        }
-        return Promise.reject(error);
-      }
-    );
-
-    return () => axios.interceptors.response.eject(interceptor);
-  }, [router, authLoading, isAuthenticated]);
-
+  if (isAuthenticated && token && params.id) {
+    fetchBatchDetails();
+    fetchIPQCData();
+  }
+}, [isAuthenticated, token, params.id]);
   const fetchBatchDetails = async () => {
     try {
       setLoading(true);
-      
-      if (!token) {
-        setError('No authentication token available');
-        return;
-      }
-      
       const response = await axios.get(
         `${API_URL}/production/batches/${params.id}`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -128,28 +98,42 @@ export default function BatchDetailPage() {
       setBatch(response.data.batch);
     } catch (err: any) {
       console.error('Error fetching batch:', err);
-      
-      if (err.response?.status === 401) {
-        setError('Session expired. Please log in again.');
-      } else {
-        setError(err.response?.data?.message || 'Failed to load batch details');
-      }
+      setError(err.response?.data?.message || 'Failed to load batch details');
     } finally {
       setLoading(false);
     }
   };
 
-  // fetchIPQCData function removed as per instructions
-
+  const fetchIPQCData = async () => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/production/batches/${params.id}/ipqc`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    setIpqcHistory(response.data.checks);
+    setIpqcSummary(response.data.summary);
+    
+    // Get next check due if in progress
+    if (batch?.status === 'in_progress') {
+      const dueResponse = await axios.get(
+        `${API_URL}/production/batches/${params.id}/ipqc/next-due`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setNextIPQCDue(dueResponse.data);
+    }
+  } catch (err) {
+    console.error('Error fetching IPQC data:', err);
+  }
+};
   const handleOpenQAReview = (ipqcId: string) => {
      setSelectedIPQCId(ipqcId);
      setShowQAReviewModal(true);
    };
    
    const handleQAReviewSuccess = () => {
-     fetchBatchDetails(); // Only need to fetch batch now
+     fetchIPQCData();
+     fetchBatchDetails();
    };
-
 const handleStatusTransition = async (action: string) => {
     try {
       setActionLoading(true);
@@ -173,8 +157,9 @@ const handleStatusTransition = async (action: string) => {
           endpoint = `/production/batches/${params.id}/start`;
           break;
         case 'complete_production':
+          // Show modal instead of direct API call
           setShowCompleteModal(true);
-          return;
+          return; // Don't proceed with API call
       }
 
       await axios.post(
@@ -183,6 +168,7 @@ const handleStatusTransition = async (action: string) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
+      // Refresh batch details
       await fetchBatchDetails();
     } catch (err: any) {
       console.error('Error performing action:', err);
@@ -211,10 +197,12 @@ const handleStatusTransition = async (action: string) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
+      // Refresh batch details
       await fetchBatchDetails();
     } catch (err: any) {
       console.error('Error with QA approval:', err);
       
+      // Handle permission errors specifically
       if (err.response?.status === 403) {
         setError('You do not have permission to approve/reject QA gates. Only QA personnel and administrators can perform this action.');
       } else {
@@ -241,13 +229,16 @@ const handleStatusTransition = async (action: string) => {
 
       console.log('✅ BatchDetailPage: Production completion response:', response.data);
 
+      // Close modal
       setShowCompleteModal(false);
+      
+      // Refresh batch details to show completed status
       await fetchBatchDetails();
     } catch (err: any) {
       console.error('❌ BatchDetailPage: Production completion error:', err);
       console.error('Response:', err.response?.data);
       setError(err.response?.data?.message || 'Failed to complete production');
-      throw err; 
+      throw err; // Re-throw to let modal handle it
     } finally {
       setActionLoading(false);
     }
@@ -497,7 +488,7 @@ const handleStatusTransition = async (action: string) => {
               </div>
             </div>
 
-            {/* IPQC Records - Refactored based on MD */}
+            {/* IPQC Records - Phase 2 Enhanced */}
             {batch.status === 'in_progress' && (
             <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
               <div className="flex items-center justify-between mb-6">
@@ -514,38 +505,28 @@ const handleStatusTransition = async (action: string) => {
                 </button>
               </div>
 
-              {/* IPQC Statistics - Replaced as per MD */}
-              <div className="grid grid-cols-4 gap-4 mb-6">
-                <div className="p-4 bg-dark-900 rounded-lg border border-dark-700">
-                  <p className="text-sm text-gray-400">Draft</p>
-                  <p className="text-2xl font-bold text-blue-400">
-                    {draftChecks.length}
-                  </p>
+              {/* IPQC Summary Cards */}
+              {ipqcSummary && (
+                <div className="grid grid-cols-3 gap-4 mb-6">
+                  <div className="bg-dark-900 rounded-lg p-3 border border-dark-700">
+                    <p className="text-sm text-gray-400">Total Checks</p>
+                    <p className="text-2xl font-bold text-white">{ipqcSummary.total_checks}</p>
+                  </div>
+                  <div className="bg-green-500/10 rounded-lg p-3 border border-green-500/20">
+                    <p className="text-sm text-green-400">Passed</p>
+                    <p className="text-2xl font-bold text-green-400">{ipqcSummary.passed_checks}</p>
+                  </div>
+                  <div className="bg-red-500/10 rounded-lg p-3 border border-red-500/20">
+                    <p className="text-sm text-red-400">Failed</p>
+                    <p className="text-2xl font-bold text-red-400">{ipqcSummary.failed_checks}</p>
+                  </div>
                 </div>
-                <div className="p-4 bg-dark-900 rounded-lg border border-dark-700">
-                  <p className="text-sm text-gray-400">Pending QA</p>
-                  <p className="text-2xl font-bold text-yellow-400">
-                    {pendingChecks.length}
-                  </p>
-                </div>
-                <div className="p-4 bg-dark-900 rounded-lg border border-dark-700">
-                  <p className="text-sm text-gray-400">Approved</p>
-                  <p className="text-2xl font-bold text-green-400">
-                    {approvedChecks.length}
-                  </p>
-                </div>
-                <div className="p-4 bg-dark-900 rounded-lg border border-dark-700">
-                  <p className="text-sm text-gray-400">Rejected</p>
-                  <p className={`text-2xl font-bold ${rejectedChecks.length > 0 ? 'text-red-400' : 'text-gray-600'}`}>
-                    {rejectedChecks.length}
-                  </p>
-                </div>
-              </div>
+              )}
 
-              {/* IPQC History - Using derived variable ipqcChecks */}
-              {ipqcChecks.length > 0 ? (
+              {/* IPQC History - Card Grid Layout (No Horizontal Scroll) */}
+              {ipqcHistory.length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {ipqcChecks.map((check: any, index: number) => (
+                  {ipqcHistory.map((check, index) => (
                     <div 
                       key={check.ipqc_id}
                       className="bg-dark-900 border border-dark-700 rounded-lg p-4 hover:border-primary-500/30 transition-colors"
@@ -672,15 +653,7 @@ const handleStatusTransition = async (action: string) => {
                       <div className="flex items-center justify-between pt-3 border-t border-dark-700">
                         {/* Left: QA Status */}
                         <div className="flex items-center gap-4">
-                          {check.qa_status === 'draft_check' ? (
-                            <div className="inline-flex items-center gap-2 px-3 py-2 bg-blue-500/20 border border-blue-500/40 rounded-lg">
-                              <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                              <div className="flex flex-col items-start">
-                                <span className="text-xs font-bold text-blue-400 uppercase tracking-wide">Draft</span>
-                                <span className="text-[10px] text-blue-400/70">Not Submitted</span>
-                              </div>
-                            </div>
-                          ) : check.qa_status === 'qa_approved' ? (
+                          {check.qa_status === 'qa_approved' ? (
                             <div className="inline-flex items-center gap-2 px-3 py-2 bg-green-500/20 border border-green-500/40 rounded-lg">
                               <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" />
                               <div className="flex flex-col items-start">
@@ -715,11 +688,6 @@ const handleStatusTransition = async (action: string) => {
 
                         {/* Right: Action Button */}
                         <div>
-                          {check.qa_status === 'draft_check' && (
-                            <span className="px-4 py-2 text-gray-500 text-xs italic">
-                              Awaiting submission
-                            </span>
-                          )}
                           {check.qa_status === 'pending_qa_review' && (
                             <button
                               onClick={() => handleOpenQAReview(check.ipqc_id)}
@@ -794,82 +762,17 @@ const handleStatusTransition = async (action: string) => {
 
                 {batch.status === 'in_progress' && (
                   <>
-                    {/* Submit for QA if there are DRAFT checks - REFACTORED */}
-                    {draftChecks.length > 0 && (
-                      <>
-                        <div className="w-full p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg mb-3">
-                          <p className="text-blue-400 text-sm font-semibold">
-                            {draftChecks.length} IPQC check(s) ready to submit
-                          </p>
-                        </div>
-                        
-                        <button
-                          onClick={async () => {
-                            try {
-                              setActionLoading(true);
-                              
-                              if (!token) {
-                                setError('No authentication token available');
-                                return;
-                              }
-                              
-                              const response = await axios.post(
-                                `${API_URL}/production/batches/${batch.batch_id}/ipqc/submit-for-qa`,
-                                {},
-                                { headers: { Authorization: `Bearer ${token}` } }
-                              );
-                              
-                              // Refresh batch data (SAME AS QA APPROVAL)
-                              await fetchBatchDetails();
-                              
-                            } catch (err: any) {
-                              console.error('Error submitting IPQC for QA:', err);
-                              if (err.response?.status === 401) {
-                                setError('Session expired. Please log in again.');
-                              } else {
-                                setError(err.response?.data?.message || 'Failed to submit IPQC checks');
-                              }
-                            } finally {
-                              setActionLoading(false);
-                            }
-                          }}
-                          disabled={actionLoading}
-                          className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2 mb-3"
-                        >
-                          <FileText className="w-4 h-4" />
-                          Submit Check for QA Review
-                        </button>
-                      </>
-                    )}
-
-                    {/* Show alert if there are PENDING QA checks */}
-                    {pendingChecks.length > 0 && (
-                      <div className="w-full p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg mb-3">
-                        <div className="flex items-start gap-2">
+                    {/* Show Submit for QA if there are pending IPQC checks */}
+                    {ipqcHistory.some(check => check.qa_status === 'pending_qa_review') && (
+                      <div className="w-full p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                        <div className="flex items-start gap-2 mb-2">
                           <AlertCircle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
                           <div className="flex-1">
                             <p className="text-yellow-400 text-sm font-semibold">
-                              {pendingChecks.length} IPQC check(s) awaiting QA approval
+                              {ipqcHistory.filter(c => c.qa_status === 'pending_qa_review').length} IPQC check(s) pending QA review
                             </p>
                             <p className="text-yellow-400/70 text-xs mt-1">
-                              Quality checks require QA approval before production can be completed
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Show alert if NO IPQC checks recorded yet */}
-                    {ipqcChecks.length === 0 && (
-                      <div className="w-full p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg mb-3">
-                        <div className="flex items-start gap-2">
-                          <AlertCircle className="w-4 h-4 text-orange-400 flex-shrink-0 mt-0.5" />
-                          <div className="flex-1">
-                            <p className="text-orange-400 text-sm font-semibold">
-                              No IPQC checks recorded
-                            </p>
-                            <p className="text-orange-400/70 text-xs mt-1">
-                              GMP requires at least one quality check before production completion
+                              Quality checks require QA approval before production can continue
                             </p>
                           </div>
                         </div>
@@ -878,35 +781,16 @@ const handleStatusTransition = async (action: string) => {
 
                     <button
                       onClick={() => handleStatusTransition('complete_production')}
-                      disabled={
-                        actionLoading || 
-                        draftChecks.length > 0 ||
-                        pendingChecks.length > 0 ||
-                        approvedChecks.length === 0
-                      }
+                      disabled={actionLoading || ipqcHistory.some(check => check.qa_status === 'pending_qa_review')}
                       className="w-full px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                      title={
-                        draftChecks.length > 0 
-                          ? 'Submit IPQC checks for QA review first' 
-                          : pendingChecks.length > 0
-                          ? 'Wait for QA to approve IPQC checks'
-                          : approvedChecks.length === 0
-                          ? 'At least one IPQC check must be QA approved'
-                          : ''
-                      }
+                      title={ipqcHistory.some(check => check.qa_status === 'pending_qa_review') ? 'Cannot complete production while IPQC checks are pending QA review' : ''}
                     >
                       <StopCircle className="w-4 h-4" />
                       Complete Production
                     </button>
-                    {(draftChecks.length > 0 || 
-                      pendingChecks.length > 0 ||
-                      approvedChecks.length === 0) && (
-                      <p className="text-xs text-gray-500 text-center mt-1">
-                        {draftChecks.length > 0
-                          ? 'Submit IPQC checks for QA review'
-                          : pendingChecks.length > 0
-                          ? 'Waiting for QA approval'
-                          : 'At least one check must be QA approved'}
+                    {ipqcHistory.some(check => check.qa_status === 'pending_qa_review') && (
+                      <p className="text-xs text-gray-500 text-center -mt-1">
+                        All IPQC checks must be QA approved
                       </p>
                     )}
                   </>
@@ -947,35 +831,22 @@ const handleStatusTransition = async (action: string) => {
                 </div>
                 
                 {/* IPQC QA Status Breakdown */}
-                {batch.status === 'in_progress' && ipqcChecks.length > 0 && (
+                {batch.status === 'in_progress' && ipqcHistory.length > 0 && (
                   <>
                     <div className="pt-2 border-t border-dark-700">
                       <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">IPQC QA Status</p>
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-gray-400 text-sm flex items-center gap-1">
-                            <FileText className="w-3 h-3 text-blue-400" />
-                            Draft (Not Submitted)
-                          </span>
-                          <span className={`font-semibold ${
-                            draftChecks.length > 0 
-                              ? 'text-blue-400' 
-                              : 'text-gray-500'
-                          }`}>
-                            {draftChecks.length}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-400 text-sm flex items-center gap-1">
                             <Clock className="w-3 h-3 text-yellow-400" />
                             Pending QA
                           </span>
                           <span className={`font-semibold ${
-                            pendingChecks.length > 0 
+                            ipqcHistory.filter(c => c.qa_status === 'pending_qa_review').length > 0 
                               ? 'text-yellow-400' 
                               : 'text-gray-500'
                           }`}>
-                            {pendingChecks.length}
+                            {ipqcHistory.filter(c => c.qa_status === 'pending_qa_review').length}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
@@ -984,7 +855,7 @@ const handleStatusTransition = async (action: string) => {
                             QA Approved
                           </span>
                           <span className="text-green-400 font-semibold">
-                            {approvedChecks.length}
+                            {ipqcHistory.filter(c => c.qa_status === 'qa_approved').length}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
@@ -993,11 +864,11 @@ const handleStatusTransition = async (action: string) => {
                             QA Rejected
                           </span>
                           <span className={`font-semibold ${
-                            rejectedChecks.length > 0 
+                            ipqcHistory.filter(c => c.qa_status === 'qa_rejected').length > 0 
                               ? 'text-red-400' 
                               : 'text-gray-500'
                           }`}>
-                            {rejectedChecks.length}
+                            {ipqcHistory.filter(c => c.qa_status === 'qa_rejected').length}
                           </span>
                         </div>
                       </div>
@@ -1042,10 +913,9 @@ const handleStatusTransition = async (action: string) => {
         productName={batch?.product_name || ''}
         isOpen={showIPQCModal}
         onClose={() => setShowIPQCModal(false)}
-        onSuccess={async () => {
-          console.log('✅ IPQC recorded successfully');
-          setShowIPQCModal(false);
-          await fetchBatchDetails(); // Refreshes batch and new IPQC checks embedded in it
+        onSuccess={() => {
+          fetchIPQCData();
+          fetchBatchDetails();
         }}
       />
       {/* QA Review Modal */}
