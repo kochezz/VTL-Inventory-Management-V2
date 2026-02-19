@@ -8,8 +8,9 @@ const inventoryRoutes = require('./src/routes/inventory-routes');
 const productsRoutes = require('./src/routes/products-routes');
 const usersRoutes = require('./src/routes/users-routes');
 const dashboardRoutes = require('./src/routes/dashboard-routes');
-const reportsRoutes = require('./src/routes/reports-routes'); // NEW - Reports routes
-const barcodeRoutes = require('./src/routes/barcode-routes'); // NEW - Barcode scanning routes
+const reportsRoutes = require('./src/routes/reports-routes');
+const barcodeRoutes = require('./src/routes/barcode-routes');
+const productionReportsRoutes = require('./src/routes/production-reports-routes'); // NEW - Production Reports
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -52,8 +53,9 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/users', usersRoutes);
-app.use('/api/reports', reportsRoutes); // NEW - Reports endpoints
-app.use('/api/barcode', barcodeRoutes); // NEW - Barcode scanning endpoints
+app.use('/api/reports', reportsRoutes);
+app.use('/api/barcode', barcodeRoutes);
+app.use('/api/production/reports', productionReportsRoutes); // NEW - Production Reports
 
 // Health check
 app.get('/health', (req, res) => {
@@ -72,18 +74,19 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Vilagio Inventory API Server`);
-  console.log(`📍 Running on: http://localhost:${PORT}`);
-  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+  console.log(`🔗 Running on: http://localhost:${PORT}`);
+  console.log(`💚 Health check: http://localhost:${PORT}/health`);
   console.log(`\n📋 Available Routes:`);
   console.log(`   /api/auth         - Authentication`);
-  console.log(`   /api/production   - Production management 🏭 (NEW)`);
+  console.log(`   /api/production   - Production management 🏭`);
   console.log(`   /api/dashboard    - Dashboard stats & data`);
   console.log(`   /api/inventory    - Inventory management`);
   console.log(`   /api/products     - Product catalog`);
   console.log(`   /api/users        - User management`);
   console.log(`   /api/reports      - Reports & analytics`);
   console.log(`   /api/barcode      - Barcode scanning`);
-  console.log(`\n🏭 Production Endpoints (NEW):`);
+  console.log(`   /api/production/reports - Production Reports 📊 (NEW)`);
+  console.log(`\n🏭 Production Endpoints:`);
   console.log(`   POST /api/production/batches                    - Create new batch`);
   console.log(`   GET  /api/production/batches                    - List batches`);
   console.log(`   GET  /api/production/batches/:id                - Get batch details`);
@@ -98,13 +101,18 @@ app.listen(PORT, () => {
   console.log(`   POST /api/production/water-treatment            - Log water parameters`);
   console.log(`   POST /api/production/line-setup                 - Log line setup`);
   console.log(`   GET  /api/production/dashboard/active           - Active batches`);
-  console.log(`\n📊 Report Endpoints:`);
+  console.log(`\n📊 Inventory Report Endpoints:`);
   console.log(`   GET /api/reports/stock-levels`);
   console.log(`   GET /api/reports/low-stock`);
   console.log(`   GET /api/reports/valuation`);
   console.log(`   GET /api/reports/movement`);
   console.log(`   GET /api/reports/transaction-summary`);
   console.log(`   GET /api/reports/location-summary`);
+  console.log(`\n📊 Production Report Endpoints (NEW):`);
+  console.log(`   GET  /api/production/reports/batches            - List batches for reports`);
+  console.log(`   GET  /api/production/reports/batch/:id/preview  - Preview batch report`);
+  console.log(`   GET  /api/production/reports/batch/:id/pdf      - Download batch PDF`);
+  console.log(`   POST /api/production/reports/summary            - Production summary`);
   console.log(`\n📷 Barcode Endpoints:`);
   console.log(`   POST /api/barcode/scan/product        - Scan & lookup product`);
   console.log(`   POST /api/barcode/scan/location       - Scan & lookup location`);

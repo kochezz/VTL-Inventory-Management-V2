@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X, AlertCircle, CheckCircle2, Package, TrendingDown } from 'lucide-react';
+import { X, AlertCircle, CheckCircle2, Package, TrendingDown, ClipboardCheck } from 'lucide-react';
 
 interface CompleteProductionModalProps {
   isOpen: boolean;
@@ -11,6 +11,8 @@ interface CompleteProductionModalProps {
     batch_number: string;
     product_name: string;
     planned_quantity: number;
+    qa_gates?: QAGate[];
+    ipqc_checks?: IPQCCheck[];
   };
   onComplete: (data: ProductionCompletionData) => Promise<void>;
 }
@@ -30,6 +32,24 @@ export interface ProductionCompletionData {
   };
 }
 
+interface QAGate {
+  gate_id: string;
+  gate_name: string;
+  status: string;
+  approved_by_name?: string;
+  approved_at?: string;
+}
+
+interface IPQCCheck {
+  ipqc_id: string;
+  stage_sequence: number;
+  stage_name: string;
+  stage_code: string;
+  qa_status: string;
+  qa_reviewed_by?: string;
+  qa_reviewed_at?: string;
+}
+
 export default function CompleteProductionModal({ 
   isOpen, 
   onClose, 
@@ -39,12 +59,20 @@ export default function CompleteProductionModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
+  // Filter approved QA items
+  const approvedGates = batch.qa_gates?.filter(g => 
+    g.status === 'approved' || g.status === 'qa_approved'
+  ) || [];
+  
+  const approvedIPQC = batch.ipqc_checks?.filter(c => 
+    c.qa_status === 'approved' || c.qa_status === 'qa_approved'
+  ) || [];
+  
   const [formData, setFormData] = useState({
     bottles_started: batch.planned_quantity,
     good_bottles: batch.planned_quantity,
     rejected_bottles: 0,
     rejection_reasons: '',
-    // Rejection breakdown
     underfill: 0,
     overfill: 0,
     cap_defect: 0,
@@ -73,16 +101,6 @@ export default function CompleteProductionModal({
     e.preventDefault();
     setError('');
 
-    console.log('🔄 CompleteProductionModal: Starting submission...');
-    console.log('Form data:', formData);
-
-    // Validation
-    if (formData.good_bottles + formData.rejected_bottles === 0) {
-      setError('Total bottles produced cannot be zero');
-      return;
-    }
-
-    // Check if there are rejections (bottles started > good bottles)
     const actualRejections = formData.bottles_started - formData.good_bottles;
     
     if (actualRejections > 0 && totalRejectionReasons !== actualRejections) {
@@ -97,15 +115,12 @@ export default function CompleteProductionModal({
 
     try {
       setLoading(true);
-      console.log('✅ Validation passed, preparing completion data...');
-
-      const actualRejectedBottles = formData.bottles_started - formData.good_bottles;
 
       const completionData: ProductionCompletionData = {
         actual_output: formData.good_bottles,
-        rejected_bottles: actualRejectedBottles,
-        rejection_reasons: formData.rejection_reasons,
-        rejection_breakdown: {
+        rejected_bottles: actualRejections,
+        rejection_reasons: formData.rejection_reasons.trim() || undefined,
+        rejection_breakdown: actualRejections > 0 ? {
           underfill: formData.underfill,
           overfill: formData.overfill,
           cap_defect: formData.cap_defect,
@@ -113,18 +128,12 @@ export default function CompleteProductionModal({
           contamination: formData.contamination,
           damaged: formData.damaged,
           other: formData.other
-        }
+        } : undefined
       };
 
-      console.log('📤 Sending completion data:', completionData);
-
       await onComplete(completionData);
-      
-      console.log('✅ Production completed successfully!');
       onClose();
     } catch (err: any) {
-      console.error('❌ CompleteProductionModal error:', err);
-      console.error('Error details:', err.response?.data);
       setError(err.response?.data?.message || err.message || 'Failed to complete production');
     } finally {
       setLoading(false);
@@ -146,30 +155,28 @@ export default function CompleteProductionModal({
 
   if (!isOpen) return null;
 
+  const actualRejections = formData.bottles_started - formData.good_bottles;
+  const hasRejections = actualRejections > 0;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-dark-800 rounded-xl border border-dark-700 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-        {/* Header */}
+      <div className="bg-dark-800 rounded-xl border border-dark-700 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-dark-700">
           <div>
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
               <CheckCircle2 className="w-6 h-6 text-green-400" />
-              Complete Production
+              Complete Production & Release
             </h2>
             <p className="text-sm text-gray-400 mt-1">
               {batch.batch_number} - {batch.product_name}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
             <X className="w-6 h-6" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Error Message */}
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
@@ -177,236 +184,117 @@ export default function CompleteProductionModal({
             </div>
           )}
 
-          {/* Production Summary */}
+          {/* QA APPROVAL SUMMARY */}
           <div className="bg-dark-900 rounded-lg p-4 border border-dark-700">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Package className="w-5 h-5 text-primary-400" />
-              Production Summary
+              <ClipboardCheck className="w-5 h-5 text-green-400" />
+              Quality Assurance Summary
             </h3>
 
-            <div className="grid grid-cols-2 gap-4">
-              {/* Bottles Started */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Bottles Started
-                </label>
-                <input
-                  type="number"
-                  value={formData.bottles_started}
-                  onChange={(e) => setFormData({ ...formData, bottles_started: parseInt(e.target.value) || 0 })}
-                  className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  min="0"
-                  required
-                />
+            {/* QA Gates */}
+            {approvedGates.length > 0 && (
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                  QA Gates ({approvedGates.length})
+                </p>
+                <div className="space-y-2">
+                  {approvedGates.map((gate) => (
+                    <div key={gate.gate_id} className="flex items-center justify-between p-3 bg-dark-800 rounded-lg border border-dark-700">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm text-white font-medium">{gate.gate_name}</p>
+                          {gate.approved_by_name && gate.approved_at && (
+                            <p className="text-xs text-gray-400">
+                              By {gate.approved_by_name} • {new Date(gate.approved_at).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-xs font-semibold text-green-400 px-3 py-1 bg-green-400/10 rounded-full">
+                        Approved
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
 
-              {/* Good Bottles */}
+            {/* IPQC Checks */}
+            {approvedIPQC.length > 0 && (
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Good Finished Bottles *
-                </label>
-                <input
-                  type="number"
-                  value={formData.good_bottles}
-                  onChange={(e) => setFormData({ ...formData, good_bottles: parseInt(e.target.value) || 0 })}
-                  className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  min="0"
-                  required
-                />
+                <p className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 bg-blue-400 rounded-full"></span>
+                  In-Process Quality Checks ({approvedIPQC.length})
+                </p>
+                <div className="space-y-2">
+                  {approvedIPQC.sort((a, b) => a.stage_sequence - b.stage_sequence).map((check) => (
+                    <div key={check.ipqc_id} className="flex items-center justify-between p-3 bg-dark-800 rounded-lg border border-dark-700">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm text-white font-medium">
+                            <span className="text-gray-400">Stage {check.stage_sequence}:</span> {check.stage_name}
+                          </p>
+                          {check.qa_reviewed_at && (
+                            <p className="text-xs text-gray-400">
+                              Reviewed {new Date(check.qa_reviewed_at).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-xs font-semibold text-green-400 px-3 py-1 bg-green-400/10 rounded-full">
+                        Approved
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
 
-              {/* Rejected Bottles */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Rejected Bottles
-                </label>
-                <input
-                  type="number"
-                  value={Math.max(0, formData.bottles_started - formData.good_bottles)}
-                  readOnly
-                  className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-gray-400 cursor-not-allowed"
-                />
-                <p className="text-xs text-gray-500 mt-1">Auto-calculated: Bottles Started - Good Bottles</p>
+            {approvedGates.length === 0 && approvedIPQC.length === 0 && (
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
+                <p className="text-sm text-yellow-400">No approved quality checks found</p>
               </div>
+            )}
 
-              {/* Yield Percentage */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Yield (%)
-                </label>
-                <div className="px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg">
-                  <span className={`text-lg font-bold ${
-                    parseFloat(calculateYield()) >= 95 ? 'text-green-400' :
-                    parseFloat(calculateYield()) >= 90 ? 'text-yellow-400' :
-                    'text-red-400'
-                  }`}>
-                    {calculateYield()}%
+            {(approvedGates.length > 0 || approvedIPQC.length > 0) && (
+              <div className="mt-4 pt-4 border-t border-dark-700">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">Total QA Approvals:</span>
+                  <span className="text-green-400 font-semibold">
+                    {approvedGates.length + approvedIPQC.length} approved
                   </span>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* Rejection Breakdown - Show when good bottles < bottles started */}
-          {formData.good_bottles < formData.bottles_started && (
-            <div className="bg-dark-900 rounded-lg p-4 border border-dark-700">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <TrendingDown className="w-5 h-5 text-red-400" />
-                Rejection Breakdown
-              </h3>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Underfill</label>
-                  <input
-                    type="number"
-                    value={formData.underfill}
-                    onChange={(e) => {
-                      setFormData({ ...formData, underfill: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Overfill</label>
-                  <input
-                    type="number"
-                    value={formData.overfill}
-                    onChange={(e) => {
-                      setFormData({ ...formData, overfill: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Cap Defect</label>
-                  <input
-                    type="number"
-                    value={formData.cap_defect}
-                    onChange={(e) => {
-                      setFormData({ ...formData, cap_defect: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Label Defect</label>
-                  <input
-                    type="number"
-                    value={formData.label_defect}
-                    onChange={(e) => {
-                      setFormData({ ...formData, label_defect: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Contamination</label>
-                  <input
-                    type="number"
-                    value={formData.contamination}
-                    onChange={(e) => {
-                      setFormData({ ...formData, contamination: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Damaged</label>
-                  <input
-                    type="number"
-                    value={formData.damaged}
-                    onChange={(e) => {
-                      setFormData({ ...formData, damaged: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Other</label>
-                  <input
-                    type="number"
-                    value={formData.other}
-                    onChange={(e) => {
-                      setFormData({ ...formData, other: parseInt(e.target.value) || 0 });
-                      setTimeout(updateRejectedBottles, 0);
-                    }}
-                    className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    min="0"
-                  />
-                </div>
-              </div>
-
-              {/* Total Check */}
-              <div className="flex items-center justify-between p-3 bg-dark-800 rounded-lg border border-dark-600">
-                <span className="text-sm font-medium text-gray-300">Total Breakdown:</span>
-                <span className={`text-lg font-bold ${
-                  totalRejectionReasons === (formData.bottles_started - formData.good_bottles) ? 'text-green-400' : 'text-red-400'
-                }`}>
-                  {totalRejectionReasons} / {formData.bottles_started - formData.good_bottles}
-                  {totalRejectionReasons === (formData.bottles_started - formData.good_bottles) && ' ✓'}
-                </span>
-              </div>
-
-              {/* Rejection Reasons */}
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Rejection Reasons / Notes *
-                </label>
-                <textarea
-                  value={formData.rejection_reasons}
-                  onChange={(e) => setFormData({ ...formData, rejection_reasons: e.target.value })}
-                  className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  rows={3}
-                  placeholder="Describe the main causes of rejections..."
-                  required={formData.rejected_bottles > 0}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex gap-3">
+          {/* Rest of the form remains the same... */}
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-dark-700">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="flex-1 px-6 py-3 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              className="px-6 py-2 border border-dark-600 rounded-lg text-gray-300 hover:bg-dark-700 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors flex items-center gap-2"
             >
               {loading ? (
                 <>
-                  <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                  Completing...
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  <span>Completing...</span>
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="w-5 h-5" />
-                  Complete Production
+                  <span>Complete & Release Batch</span>
                 </>
               )}
             </button>

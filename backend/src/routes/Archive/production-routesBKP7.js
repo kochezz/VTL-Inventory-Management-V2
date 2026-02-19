@@ -239,12 +239,10 @@ router.post('/batches/:id/submit-qa', authenticate, async (req, res) => {
 // Approve QA gate - Only QA and Admin can approve
 router.post('/batches/:batchId/qa-gates/:gateId/approve', authenticate, canApproveQA, async (req, res) => {
   try {
-    const { location_id } = req.body;
     const result = await productionService.approveQAGate(
       req.params.batchId,
       req.params.gateId,
-      req.user.user_id,
-      location_id
+      req.user.user_id
     );
     res.json(result);
   } catch (error) {

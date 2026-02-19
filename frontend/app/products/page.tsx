@@ -202,8 +202,8 @@ export default function ProductsPage() {
     const Icon = badge.icon;
 
     return (
-      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${badge.class}`}>
-        <Icon className="w-3 h-3" />
+      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${badge.class}`}>
+        <Icon className="w-3.5 h-3.5" />
         {badge.text}
       </span>
     );
@@ -249,7 +249,7 @@ export default function ProductsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 hover:border-green-500/50 transition-all">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">In Stock</span>
+              <span className="text-sm font-medium text-gray-400">In Stock</span>
               <CheckCircle className="w-5 h-5 text-green-400" />
             </div>
             <p className="text-3xl font-bold text-white">{stockStats.inStock}</p>
@@ -257,7 +257,7 @@ export default function ProductsPage() {
 
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 hover:border-yellow-500/50 transition-all">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">Low Stock</span>
+              <span className="text-sm font-medium text-gray-400">Low Stock</span>
               <AlertCircle className="w-5 h-5 text-yellow-400" />
             </div>
             <p className="text-3xl font-bold text-white">{stockStats.lowStock}</p>
@@ -265,7 +265,7 @@ export default function ProductsPage() {
 
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 hover:border-red-500/50 transition-all">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">Out of Stock</span>
+              <span className="text-sm font-medium text-gray-400">Out of Stock</span>
               <XCircle className="w-5 h-5 text-red-400" />
             </div>
             <p className="text-3xl font-bold text-white">{stockStats.outOfStock}</p>
@@ -322,12 +322,12 @@ export default function ProductsPage() {
 
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-dark-700">
             <p className="text-sm text-gray-400">
-              Showing {filteredProducts.length} of {products.length} products
+              Showing <span className="text-white font-medium">{filteredProducts.length}</span> of {products.length} products
             </p>
             <button 
               onClick={handleExport}
               disabled={filteredProducts.length === 0}
-              className="px-4 py-2 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" />
               Export CSV
@@ -342,43 +342,43 @@ export default function ProductsPage() {
         )}
 
         {/* Products Table */}
-        <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+        <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-dark-900">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-dark-900 border-b border-dark-700">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     SKU
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Product Name
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Category
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Stock
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Price
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Cost
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-4 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-dark-700">
+              <tbody className="divide-y divide-dark-700/50">
                 {filteredProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center">
+                    <td colSpan={8} className="px-6 py-12 text-center bg-dark-800">
                       <Package className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                      <p className="text-gray-400">No products found</p>
+                      <p className="text-gray-300 font-medium text-lg">No products found</p>
                       <p className="text-sm text-gray-500 mt-1">
                         {searchTerm || selectedCategory || stockStatusFilter
                           ? 'Try adjusting your filters'
@@ -390,40 +390,44 @@ export default function ProductsPage() {
                   filteredProducts.map((product) => (
                     <tr 
                       key={product.product_id} 
-                      className="hover:bg-dark-700 transition-colors cursor-pointer group"
+                      /* ZEBRA STRIPING ADDED HERE (even:bg-dark-900/40) */
+                      className="even:bg-dark-900/40 hover:bg-dark-700/80 transition-colors cursor-pointer group"
                       onClick={() => handleProductClick(product.product_id)}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm font-mono text-primary-400 group-hover:text-primary-300">
+                        <span className="text-sm font-mono font-semibold text-primary-400 group-hover:text-primary-300 transition-colors">
                           {product.sku}
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="text-sm">
-                          <p className="text-white font-medium group-hover:text-primary-300">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-semibold text-gray-200 group-hover:text-white transition-colors">
                             {product.product_name}
-                          </p>
-                          <p className="text-gray-400 text-xs">{product.category_name}</p>
+                          </span>
+                          <span className="text-xs text-gray-500 mt-0.5">{product.description || 'No description'}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-300">{product.category_name}</span>
+                        <span className="text-sm text-gray-400">{product.category_name}</span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-white font-medium">
-                          {product.total_stock?.toLocaleString() || 0} {product.base_uom}
-                        </span>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-sm font-bold text-gray-200">
+                            {product.total_stock?.toLocaleString() || 0}
+                          </span>
+                          <span className="text-xs text-gray-500 uppercase">{product.base_uom}</span>
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {getStockStatusBadge(product.stock_status)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-white">
+                        <span className="text-sm font-medium text-gray-300">
                           {formatCurrency(parsePrice(product.selling_price), 'USD')}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-300">
+                        <span className="text-sm font-medium text-gray-400">
                           {formatCurrency(parsePrice(product.standard_cost), 'USD')}
                         </span>
                       </td>
@@ -433,7 +437,7 @@ export default function ProductsPage() {
                             e.stopPropagation();
                             handleProductClick(product.product_id);
                           }}
-                          className="text-primary-400 hover:text-primary-300 transition-colors"
+                          className="p-2 text-gray-400 hover:text-primary-400 hover:bg-primary-400/10 rounded-lg transition-all"
                           title="View Details"
                         >
                           <Eye className="w-5 h-5" />

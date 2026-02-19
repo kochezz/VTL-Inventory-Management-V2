@@ -239,12 +239,10 @@ router.post('/batches/:id/submit-qa', authenticate, async (req, res) => {
 // Approve QA gate - Only QA and Admin can approve
 router.post('/batches/:batchId/qa-gates/:gateId/approve', authenticate, canApproveQA, async (req, res) => {
   try {
-    const { location_id } = req.body;
     const result = await productionService.approveQAGate(
       req.params.batchId,
       req.params.gateId,
-      req.user.user_id,
-      location_id
+      req.user.user_id
     );
     res.json(result);
   } catch (error) {
@@ -597,93 +595,6 @@ router.get('/ipqc/qa-statistics', authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
-    });
-  }
-});
-
-// ============================================================================
-// MULTI-STAGE IPQC ENDPOINTS (NEW)
-// ============================================================================
-
-// 1. Get IPQC stages for a product
-router.get('/products/:productId/ipqc-stages', authenticate, async (req, res) => {
-  try {
-    const { productId } = req.params;
-    const result = await productionService.getIPQCStagesForProduct(productId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error getting IPQC stages:', error);
-    res.status(500).json({ 
-      success: false,
-      message: error.message 
-    });
-  }
-});
-
-// 2. Get next required IPQC stage for a batch
-router.get('/batches/:batchId/ipqc/next-stage', authenticate, async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const result = await productionService.getNextIPQCStage(batchId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error getting next IPQC stage:', error);
-    res.status(500).json({ 
-      success: false,
-      message: error.message 
-    });
-  }
-});
-
-// 3. Record multi-stage IPQC check
-router.post('/batches/:batchId/ipqc/multi-stage', authenticate, async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const ipqcData = req.body;
-    const user = { 
-      user_id: req.user.user_id, 
-      full_name: req.user.full_name 
-    };
-    
-    const result = await productionService.recordMultiStageIPQC(batchId, ipqcData, user);
-    res.json(result);
-  } catch (error) {
-    console.error('Error recording multi-stage IPQC:', error);
-    res.status(500).json({ 
-      success: false,
-      message: error.message 
-    });
-  }
-});
-
-// 4. Get batch record completion status
-router.get('/batches/:batchId/batch-record/completion', authenticate, async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const result = await productionService.getBatchRecordCompletion(batchId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error getting batch record completion:', error);
-    res.status(500).json({ 
-      success: false,
-      message: error.message 
-    });
-  }
-});
-
-// 5. Initialize batch record metadata
-router.post('/batches/:batchId/batch-record/initialize', authenticate, async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const { productId } = req.body;
-    
-    const result = await productionService.initializeBatchRecordMetadata(batchId, productId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error initializing batch record metadata:', error);
-    res.status(500).json({ 
-      success: false,
-      message: error.message 
     });
   }
 });

@@ -11,7 +11,8 @@ import {
   Settings, 
   LogOut,
   Users,
-  Factory
+  Factory,
+  ClipboardCheck
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -57,6 +58,12 @@ const navigation: NavItem[] = [
     name: 'Reports', 
     href: '/reports', 
     icon: FileText,
+    roles: ['admin', 'manager', 'qa']
+  },
+  { 
+    name: 'Production Reports', 
+    href: '/production-reports', 
+    icon: ClipboardCheck,
     roles: ['admin', 'manager', 'qa']
   },
   { 

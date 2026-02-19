@@ -1,0 +1,965 @@
+# Production Reports System - Complete Session Summary
+
+## 🎯 Project Goal
+Build **audit-ready production reporting system** for Vilagio Trading Limited's water bottling plant in Chingola, Zambia - generating comprehensive PDF reports with complete traceability for regulatory compliance.
+
+---
+
+## 📊 Context: Production System Status
+
+### Working Production System
+- 5 water products configured with 6-stage IPQC workflow
+- Full batch tracking with component assignment
+- QA gates and approvals functional
+- Database: PostgreSQL with comprehensive tables
+
+### Products in Production
+1. **FD-5GAL-NEW** - 6 stages, tamper evidence
+2. **FD-5GAL-REFILL** - 6 stages, tamper evidence
+3. **FD-500ML-PREM** - 6 stages, 23g preform
+4. **FD-500ML-REG** - 6 stages, 18g preform  
+5. **FD-750ML-REG** - 6 stages, 25g preform
+
+---
+
+## 🔍 Critical Discovery: Actual Database Schema
+
+**Key Learning:** We initially guessed at column names (wrong approach for audit reports). Then ran `DISCOVER_PRODUCTION_SCHEMA.sql` to get ACTUAL structure.
+
+### Real Column Names Found:
+
+#### production_batches
+```sql
+batch_id (uuid)
+batch_number (varchar)
+batch_record_code (varchar)
+product_id (uuid)
+product_name (varchar)
+pack_size (varchar)
+product_category (varchar)
+production_date (date)
+production_line (varchar)          -- ✅ Direct column, not FK
+shift (varchar)                    -- ✅ Direct column, not FK
+planned_quantity (integer)
+actual_output (integer)            -- ✅ NOT actual_quantity
+rejected_bottles (integer)
+yield_percentage (numeric)
+status (varchar)
+current_gate (integer)
+line_supervisor_id (uuid)
+line_supervisor_name (varchar)     -- ✅ Stored directly
+qa_approved_by (uuid)
+qa_manager_name (varchar)          -- ✅ Stored directly
+created_by (uuid)
+created_by_name (varchar)
+created_at (timestamp)
+submitted_for_qa_at (timestamp)
+qa_approved_at (timestamp)
+setup_started_at (timestamp)
+setup_completed_at (timestamp)
+production_started_at (timestamp)  -- ✅ Key for audit
+production_completed_at (timestamp) -- ✅ Key for audit
+qa_released_at (timestamp)         -- ✅ Key for audit
+qa_release_status (varchar)
+rejection_reason (text)
+notes (text)
+record_retention_years (integer)
+archive_location (varchar)
+updated_at (timestamp)
+```
+
+#### batch_ipqc_records
+```sql
+ipqc_id (uuid)
+batch_id (uuid)
+check_sequence (integer)
+check_time (timestamp)             -- ✅ When check performed
+operator_id (uuid)
+operator_name (varchar)            -- ✅ Who performed check
+stage_id (uuid)
+stage_sequence (integer)
+stage_name (varchar)
+stage_code (varchar)
+stage_category (varchar)
+
+-- Water Treatment Parameters
+water_source (varchar)
+raw_water_ph (numeric)
+raw_water_conductivity (numeric)
+ro_conductivity (numeric)
+uv_system_status (varchar)
+ozone_system_status (varchar)
+ozone_residual_ppm (numeric)
+water_treatment_approved (boolean)
+water_treatment_notes (text)
+
+-- Fill & Cap Parameters
+fill_volume_ml (numeric)
+fill_volume_within_spec (boolean)
+cap_torque_nm (numeric)
+cap_torque_within_spec (boolean)
+fill_temperature (numeric)
+fill_pressure (numeric)
+rinsing_pressure (numeric)
+
+-- Visual Inspection
+visual_inspection_pass (boolean)
+visual_inspection_notes (text)
+label_position_correct (boolean)
+label_position_notes (text)
+coding_legible (boolean)
+coding_notes (text)
+bottle_integrity (varchar)
+seal_integrity (varchar)
+tamper_evidence (varchar)
+
+-- Equipment & Line
+equipment_cleaned (boolean)
+line_clearance_verified (boolean)
+
+-- Overall Result
+all_checks_passed (boolean)        -- ✅ Critical for compliance
+
+-- QA Review
+qa_status (varchar)
+qa_reviewed_by (uuid)
+qa_reviewed_by_name (varchar)      -- ✅ QA approver
+qa_reviewed_at (timestamp)         -- ✅ Approval time
+qa_rejection_reason (text)
+
+-- Metadata
+stage_custom_data (jsonb)
+notes (text)
+created_at (timestamp)
+updated_at (timestamp)
+```
+
+#### batch_components
+```sql
+component_id (uuid)
+batch_id (uuid)
+inventory_id (uuid)
+product_id (uuid)
+component_type (varchar)
+component_name (varchar)
+planned_quantity (integer)
+actual_consumed (integer)
+wastage (integer)
+returned_to_inventory (integer)
+supplier_name (varchar)            -- ✅ For traceability
+supplier_batch_lot (varchar)       -- ✅ For recalls
+material_certificate_number (varchar) -- ✅ COA reference
+material_status (varchar)
+warehouse_location_id (uuid)
+warehouse_location_name (varchar)
+assigned_at (timestamp)
+committed_at (timestamp)
+consumed_at (timestamp)            -- ✅ Usage timestamp
+returned_at (timestamp)
+quantity_required (numeric)
+notes (text)
+```
+
+#### qa_gates
+```sql
+gate_id (uuid)
+batch_id (uuid)
+gate_number (integer)
+gate_name (varchar)
+status (varchar)
+approved_by (uuid)
+approved_by_name (varchar)         -- ✅ Approver identity
+approved_at (timestamp)            -- ✅ Approval time
+rejection_reason (text)
+notes (text)
+created_at (timestamp)
+updated_at (timestamp)
+```
+
+#### batch_record_metadata
+```sql
+record_id (uuid)
+batch_id (uuid)
+production_flow (varchar)
+line_clearance_completed (boolean)
+line_clearance_verified_by (uuid)
+line_clearance_verified_at (timestamp)
+cip_completed (boolean)
+cip_verified_by (uuid)
+cip_verified_at (timestamp)
+water_system_ready (boolean)
+water_system_verified_by (uuid)
+water_system_verified_at (timestamp)
+equipment_used (jsonb)
+raw_materials (jsonb)
+stages_required (integer)
+stages_completed (integer)
+all_stages_approved (boolean)
+post_production_cleaning (jsonb)
+pdf_generated (boolean)
+pdf_generated_at (timestamp)
+pdf_file_path (text)
+has_deviations (boolean)           -- ✅ Deviation flag
+deviations (jsonb)
+qa_released (boolean)
+qa_released_by (uuid)
+qa_released_at (timestamp)
+qa_release_decision (varchar)
+qa_release_notes (text)
+created_at (timestamp)
+updated_at (timestamp)
+```
+
+### Tables that DON'T Exist
+- ❌ `production_lines` table
+- ❌ `production_shifts` table
+
+These were causing JOIN errors - data is stored directly in `production_batches` as varchar columns.
+
+---
+
+## 📦 Files Created & Delivered
+
+### Backend Files (Working)
+
+#### 1. production-reports-routes-PRODUCTION.js
+**Location:** `backend/src/routes/production-reports-routes.js`
+
+**Endpoints:**
+```javascript
+GET  /api/production/reports/batches              // List batches
+GET  /api/production/reports/batch/:id/preview    // JSON preview
+GET  /api/production/reports/batch/:id/pdf        // Download PDF
+POST /api/production/reports/summary              // Summary report
+```
+
+**Key Features:**
+- Uses `authenticate` middleware from `auth-middleware.js`
+- Uses `pool` from `auth-service` for queries
+- Based on ACTUAL column names from schema discovery
+- No JOINs to non-existent tables
+
+**Integration:** Add to `server.js`:
+```javascript
+const productionReportsRoutes = require('./src/routes/production-reports-routes');
+app.use('/api/production/reports', productionReportsRoutes);
+```
+
+#### 2. production-reporting-service-FIXED.js
+**Location:** `backend/src/services/production-reporting-service.js`
+
+**Functions:**
+```javascript
+generateBatchProductionReport(batchId)
+generateProductionSummaryReport(filters)
+exportBatchProductionReportToPDF(batchId, logoPath)
+```
+
+**Features:**
+- Comprehensive queries for all related data
+- PDF generation with company branding
+- Handles all regulatory sections
+- Uses actual schema column names
+
+#### 3. PRODUCTION_SCHEMA_DOCS.md
+**Complete documentation including:**
+- All table structures with data types
+- SQL queries for each report section
+- Regulatory compliance requirements
+- PDF report layout specifications
+
+#### 4. DISCOVER_PRODUCTION_SCHEMA.sql
+**Schema discovery script that reveals:**
+- All column names and types
+- Foreign key relationships
+- Sample data structure
+- Table existence verification
+
+**Usage:**
+```bash
+psql -U user -d database -f DISCOVER_PRODUCTION_SCHEMA.sql > schema_output.txt
+```
+
+### Frontend Files (Needs Fixes)
+
+#### 1. ProductionReportsPage.tsx
+**Location:** `frontend/app/production-reports/page.tsx`
+**URL:** `http://localhost:3000/production-reports`
+
+**Current Features:**
+- List batches with filters
+- Preview report data
+- Download PDF reports
+- Three report types (only one working)
+
+**Current Issues:**
+- Only fills half screen width
+- Production Summary not implemented
+- Quality Summary not implemented
+- TypeScript interface mismatch
+
+#### 2. DashboardLayout_UPDATED.tsx
+**Location:** `frontend/components/layout/DashboardLayout.tsx`
+
+**Changes Made:**
+```javascript
+import { ClipboardCheck } from 'lucide-react';
+
+navigation.push({
+  name: 'Production Reports',
+  href: '/production-reports',
+  icon: ClipboardCheck,
+  roles: ['admin', 'manager', 'qa']
+});
+```
+
+### Supporting Documentation
+
+#### 1. ROUTES_INTEGRATION_GUIDE.md
+- How inventory reports and production reports work together
+- No conflicts between `/api/reports` and `/api/production/reports`
+- Navigation structure recommendations
+
+#### 2. PRODUCTION_REPORTS_INSTALLATION_GUIDE.md
+- Step-by-step installation instructions
+- Dependencies needed
+- Testing procedures
+- Troubleshooting guide
+
+---
+
+## ⚙️ Integration Steps Completed
+
+### 1. Auth Middleware Fix
+**Problem:** Used wrong middleware import
+```javascript
+// ❌ Wrong:
+const { authenticateToken } = require('../middleware/auth');
+
+// ✅ Correct:
+const { authenticate } = require('../middleware/auth-middleware');
+```
+
+**Solution:** Checked existing `reports-routes.js` to see correct import pattern.
+
+### 2. Database Connection Fix
+**Problem:** Used non-existent `db` object
+```javascript
+// ❌ Wrong:
+const db = require('../utils/db');
+const result = await db.query(query, params);
+
+// ✅ Correct:
+const { pool } = require('../services/auth-service');
+const result = await pool.query(query, params);
+```
+
+**Solution:** Match pattern used in working routes.
+
+### 3. Table JOIN Removal
+**Problem:** JOINed to non-existent tables
+```javascript
+// ❌ Wrong:
+LEFT JOIN production_lines pl ON pb.production_line_id = pl.line_id
+LEFT JOIN production_shifts ps ON pb.shift_id = ps.shift_id
+
+// ✅ Correct:
+pb.production_line,  -- Direct varchar column
+pb.shift            -- Direct varchar column
+```
+
+**Solution:** Schema discovery revealed these are direct columns, not foreign keys.
+
+### 4. Column Name Corrections
+**Problem:** Used assumed column names
+```javascript
+// ❌ Wrong:
+pb.actual_quantity
+pl.line_name
+
+// ✅ Correct:
+pb.actual_output
+pb.production_line
+```
+
+**Solution:** Used exact names from `DISCOVER_PRODUCTION_SCHEMA.sql` results.
+
+### 5. Server Registration
+**File:** `backend/server.js`
+
+**Added:**
+```javascript
+const productionReportsRoutes = require('./src/routes/production-reports-routes');
+app.use('/api/production/reports', productionReportsRoutes);
+```
+
+**Verified:** Console shows new endpoints on server start.
+
+### 6. Dependencies Installed
+```bash
+cd backend
+npm install pdfkit
+```
+
+PDFKit required for PDF generation.
+
+---
+
+## 🐛 Current Issues (Need Fixing)
+
+### 1. Page Layout Problem
+
+**Issue:** Production reports page only fills half the screen width.
+
+**Likely Cause:**
+```javascript
+// In page.tsx - check grid layout:
+<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <div className="lg:col-span-1">...</div>  // Left sidebar
+  <div className="lg:col-span-2">...</div>  // Should be full width when needed
+</div>
+```
+
+**Fix Needed:** Adjust column spans or use conditional layout based on selected report type.
+
+### 2. Status Filter Incomplete
+
+**Current Code:**
+```javascript
+<select value={filters.status} onChange={...}>
+  <option value="">All Statuses</option>
+  <option value="draft">Draft</option>
+  <option value="pending">Pending</option>
+  <option value="in_progress">In Progress</option>
+  <option value="completed">Completed</option>
+</select>
+```
+
+**Missing Status:**
+```javascript
+<option value="released">Released</option>  // ← ADD THIS
+```
+
+**Why Important:** Batches have `qa_release_status` and `qa_released_at` fields - this is the final production state for regulatory compliance.
+
+### 3. Non-Functional Report Types
+
+**Batch Production Report:** ✅ Working
+- Shows batch list
+- Preview works
+- PDF download works
+
+**Production Summary:** ❌ Not implemented
+```javascript
+// When selectedReport === 'production-summary'
+// Should show: aggregate metrics, production trends, efficiency
+// Currently: shows nothing
+```
+
+**Quality Summary:** ❌ Not implemented
+```javascript
+// When selectedReport === 'quality-summary'
+// Should show: QA compliance rates, IPQC pass/fail, deviations
+// Currently: shows nothing
+```
+
+**Fix Needed:** Add conditional rendering:
+```javascript
+{selectedReport === 'batch-production' && (
+  // Current batch list UI
+)}
+{selectedReport === 'production-summary' && (
+  // New: Summary charts and metrics
+)}
+{selectedReport === 'quality-summary' && (
+  // New: QA compliance dashboard
+)}
+```
+
+### 4. TypeScript Interface Mismatch
+
+**Frontend Interface:**
+```typescript
+interface BatchSummary {
+  batch_id: string;
+  batch_number: string;
+  batch_record_code: string;
+  product_name: string;
+  sku: string;              // ❌ Backend doesn't return this
+  planned_quantity: number;
+  actual_quantity: number;  // ❌ Backend returns actual_output
+  status: string;
+  production_date: string;
+  created_at: string;
+  completed_at: string;
+  line_name: string;        // ❌ Backend returns production_line
+  stages_completed: number;
+  stages_required: number;
+}
+```
+
+**Backend Response (Actual):**
+```typescript
+{
+  batch_id: string;
+  batch_number: string;
+  batch_record_code: string;
+  product_name: string;
+  pack_size: string;          // ✅ Additional field
+  product_category: string;   // ✅ Additional field
+  planned_quantity: number;
+  actual_output: number;      // ✅ Not actual_quantity
+  rejected_bottles: number;   // ✅ Additional field
+  yield_percentage: number;   // ✅ Additional field
+  status: string;
+  production_date: string;
+  production_line: string;    // ✅ Not line_name
+  shift: string;              // ✅ Additional field
+  line_supervisor_name: string; // ✅ Additional field
+  qa_manager_name: string;    // ✅ Additional field
+  created_at: string;
+  production_started_at: string;
+  production_completed_at: string;
+  qa_released_at: string;
+  stages_completed: number;
+  stages_required: number;
+  all_stages_approved: boolean;
+  qa_released: boolean;
+  has_deviations: boolean;
+}
+```
+
+**Fix Needed:** Update TypeScript interface to match backend exactly.
+
+### 5. Status Color Mapping Incomplete
+
+**Current Mapping:**
+```javascript
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'completed': return 'text-green-400 bg-green-500/10 border-green-500/20';
+    case 'in_progress': return 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+    case 'pending': return 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20';
+    case 'draft': return 'text-gray-400 bg-gray-500/10 border-gray-500/20';
+    default: return 'text-gray-400 bg-gray-500/10 border-gray-500/20';
+  }
+};
+```
+
+**Missing:**
+```javascript
+case 'released': return 'text-purple-400 bg-purple-500/10 border-purple-500/20';
+case 'rejected': return 'text-red-400 bg-red-500/10 border-red-500/20';
+```
+
+---
+
+## 🏢 Company Information
+
+### Vilagio Trading Limited
+**Address:**
+```
+Plot No. 28441, Gymkhana
+50/50 Kitwe Road
+CHINGOLA, Zambia
+```
+
+**Contact:**
+- Email: quality@vilag.io
+
+**Registration:**
+- Company Reg: 120251031036
+- TPIN: 2003903432
+
+**Branding:**
+- Logo Location: `frontend/public/logo-black.png`
+- Logo Format: PNG (black version for PDF reports)
+- Logo Usage: Top-left of all PDF reports at 100px width
+
+**Operation:**
+- Industry: Water bottling manufacturing
+- Products: 5 SKUs (500ml, 750ml, 5 Gallon)
+- Quality System: 6-stage IPQC workflow
+- Compliance: ISO 22000, HACCP, GMP
+
+---
+
+## 📋 Regulatory Compliance Features
+
+### PDF Report Must Include
+
+#### 1. Batch Identification
+```
+- Batch Number: PROD-R500-170226-001
+- Batch Record Code: QA-PRO-BAT-R500-170226-001
+- Product: FreshDrip 500ml Regular
+- Pack Size: 500ml
+- Production Date: 2026-02-17
+```
+
+#### 2. Personnel Accountability
+```
+- Created By: [Operator Name] at [Timestamp]
+- Line Supervisor: [Supervisor Name]
+- QA Manager: [QA Manager Name]
+- QA Released By: [QA Name] at [Timestamp]
+```
+
+#### 3. Complete Timeline
+```
+- Created: 2026-02-17 08:00:00
+- Setup Started: 2026-02-17 08:15:00
+- Setup Completed: 2026-02-17 09:00:00
+- Production Started: 2026-02-17 09:05:00
+- Production Completed: 2026-02-17 15:30:00
+- Submitted for QA: 2026-02-17 15:35:00
+- QA Approved: 2026-02-17 16:00:00
+- QA Released: 2026-02-17 16:15:00
+```
+
+#### 4. Component Traceability
+For each component:
+```
+Component: 500ml PET Preform 23g
+Supplier: Shanghai Supplier Co.
+Batch/Lot: LOT-2026-02-001
+COA Number: COA-20260201-001
+Planned: 5000 pieces
+Consumed: 4950 pieces
+Wastage: 50 pieces
+Location: RAW-MATERIAL-ZONE-A
+Issued By: [Warehouse Staff Name]
+Issued At: 2026-02-17 09:00:00
+```
+
+#### 5. IPQC Records
+For each stage (all 6):
+```
+Stage 1: Water Treatment Verification
+Check Time: 2026-02-17 09:05:00
+Operator: [Operator Name]
+
+Water Parameters:
+- Raw Water pH: 7.2 ✓
+- Raw Water Conductivity: 450 µS/cm ✓
+- RO Conductivity: 8 µS/cm ✓
+- Ozone Residual: 0.3 ppm ✓
+- Water Treatment Approved: YES
+
+QA Review:
+- Status: Approved
+- Reviewed By: [QA Name]
+- Reviewed At: 2026-02-17 09:10:00
+- Notes: All parameters within specification
+```
+
+#### 6. QA Gates
+```
+Gate 1: Pre-Production Setup
+Status: Approved
+Approved By: [QA Manager Name]
+Approved At: 2026-02-17 09:00:00
+Notes: Line clearance verified, CIP completed
+
+Gate 2: Production Release
+Status: Approved
+Approved By: [QA Manager Name]
+Approved At: 2026-02-17 16:00:00
+Notes: All IPQC checks passed, ready for release
+```
+
+#### 7. Deviation Management
+```
+Has Deviations: NO
+(If YES, list each with:)
+- Deviation ID
+- Description
+- Corrective Action
+- Approved By
+- Closed At
+```
+
+#### 8. Final Attestation
+```
+Production Summary:
+- Planned Quantity: 5,000 bottles
+- Actual Output: 4,950 bottles
+- Rejected: 50 bottles
+- Yield: 99.0%
+
+Quality Release:
+- Release Decision: APPROVED
+- Released By: [QA Manager Name]
+- Released At: 2026-02-17 16:15:00
+- Release Notes: Batch meets all quality standards
+
+Report Generated: 2026-02-19 10:30:00
+Page 1 of 8
+```
+
+### Regulatory Standards Supported
+
+✅ **FDA 21 CFR Part 11** - Electronic Records/Signatures
+- Timestamped actions
+- User identification
+- Audit trail
+- Data integrity
+
+✅ **ISO 22000** - Food Safety Management
+- Hazard analysis
+- Process monitoring
+- Traceability
+- Documentation
+
+✅ **HACCP** - Hazard Analysis Critical Control Points
+- Critical control points monitored
+- Corrective actions documented
+- Verification procedures
+- Record keeping
+
+✅ **GMP** - Good Manufacturing Practice
+- Personnel training records
+- Equipment verification
+- Process validation
+- Quality control
+
+---
+
+## 🚀 To Continue in Next Session
+
+### Priority 1: Fix Frontend Issues (1-2 hours)
+
+#### Task 1.1: Fix Page Layout
+**File:** `frontend/app/production-reports/page.tsx`
+
+**Change grid layout:**
+```javascript
+// Current (broken):
+<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+// Option A - Always full width:
+<div className="space-y-6">
+  <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <div className="lg:col-span-1">...</div>  // Sidebar
+    <div className="lg:col-span-3">...</div>  // Main content
+  </div>
+</div>
+
+// Option B - Conditional width:
+<div className={selectedReport === 'batch-production' 
+  ? "grid grid-cols-1 lg:grid-cols-3 gap-6"
+  : "space-y-6"}>
+```
+
+#### Task 1.2: Add Released Status
+**File:** `frontend/app/production-reports/page.tsx` (line ~277)
+
+```javascript
+<select value={filters.status} ...>
+  <option value="">All Statuses</option>
+  <option value="draft">Draft</option>
+  <option value="pending">Pending</option>
+  <option value="in_progress">In Progress</option>
+  <option value="completed">Completed</option>
+  <option value="released">Released</option>  {/* ← ADD */}
+</select>
+```
+
+And update color mapping:
+```javascript
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'completed': return 'text-green-400 bg-green-500/10 border-green-500/20';
+    case 'released': return 'text-purple-400 bg-purple-500/10 border-purple-500/20';  // ← ADD
+    // ... rest
+  }
+};
+```
+
+#### Task 1.3: Fix TypeScript Interface
+**File:** `frontend/app/production-reports/page.tsx` (line ~27)
+
+```typescript
+interface BatchSummary {
+  batch_id: string;
+  batch_number: string;
+  batch_record_code: string;
+  product_name: string;
+  pack_size: string;              // ← ADD
+  product_category: string;       // ← ADD
+  planned_quantity: number;
+  actual_output: number;          // ← RENAME from actual_quantity
+  rejected_bottles: number;       // ← ADD
+  yield_percentage: number;       // ← ADD
+  status: string;
+  production_date: string;
+  production_line: string;        // ← RENAME from line_name
+  shift: string;                  // ← ADD
+  line_supervisor_name: string;   // ← ADD
+  qa_manager_name: string;        // ← ADD
+  created_at: string;
+  production_started_at: string;  // ← ADD
+  production_completed_at: string; // ← RENAME from completed_at
+  qa_released_at: string;         // ← ADD
+  stages_completed: number;
+  stages_required: number;
+  all_stages_approved: boolean;   // ← ADD
+  qa_released: boolean;           // ← ADD
+  has_deviations: boolean;        // ← ADD
+}
+```
+
+Then update all usages:
+```javascript
+// Change:
+batch.actual_quantity → batch.actual_output
+batch.line_name → batch.production_line
+batch.completed_at → batch.production_completed_at
+```
+
+### Priority 2: Implement Report Types (2-3 hours)
+
+#### Task 2.1: Production Summary Report
+**File:** `frontend/app/production-reports/page.tsx`
+
+Add after existing batch list section:
+```javascript
+{selectedReport === 'production-summary' && (
+  <div className="space-y-6">
+    {/* Summary Cards */}
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <StatCard 
+        title="Total Batches"
+        value={summaryData.total_batches}
+        icon={Package}
+      />
+      <StatCard 
+        title="Total Output"
+        value={summaryData.total_output}
+        icon={Factory}
+      />
+      <StatCard 
+        title="Avg Yield"
+        value={`${summaryData.avg_yield}%`}
+        icon={TrendingUp}
+      />
+      <StatCard 
+        title="QA Released"
+        value={summaryData.released_count}
+        icon={ClipboardCheck}
+      />
+    </div>
+
+    {/* Charts */}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Production by Product */}
+      <ChartCard title="Production by Product">
+        {/* Add chart library - recharts or similar */}
+      </ChartCard>
+      
+      {/* Yield Trend */}
+      <ChartCard title="Yield Trend">
+        {/* Add trend chart */}
+      </ChartCard>
+    </div>
+
+    {/* Detailed Table */}
+    <DataTable data={summaryData.batches} />
+  </div>
+)}
+```
+
+**Backend:** Already has endpoint:
+```javascript
+POST /api/production/reports/summary
+Body: { start_date, end_date, product_id, status }
+```
+
+#### Task 2.2: Quality Summary Report
+**File:** `frontend/app/production-reports/page.tsx`
+
+Add quality metrics section:
+```javascript
+{selectedReport === 'quality-summary' && (
+  <div className="space-y-6">
+    {/* QA Metrics */}
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <MetricCard 
+        title="IPQC Pass Rate"
+        value={`${qaData.ipqc_pass_rate}%`}
+        trend="up"
+      />
+      <MetricCard 
+        title="QA Approval Rate"
+        value={`${qaData.approval_rate}%`}
+        trend="up"
+      />
+      <MetricCard 
+        title="Deviations"
+        value={qaData.deviation_count}
+        trend="down"
+      />
+    </div>
+
+    {/* IPQC Compliance by Stage */}
+    <ComplianceTable data={qaData.stage_compliance} />
+
+    {/* Recent Rejections */}
+    {qaData.rejections.length > 0 && (
+      <RejectionsList rejections={qaData.rejections} />
+    )}
+  </div>
+)}
+```
+
+**Backend:** Need to add endpoint:
+```javascript
+// Add to production-reporting-service.js
+async function generateQualitySummaryReport(filters) {
+  // Query IPQC pass rates
+  // Query QA approval rates
+  // Query deviations
+  // Query rejections
+  return { ... };
+}
+```
+
+### Priority 3: Test Complete Workflow (1 hour)
+
+#### Test Case 1: Generate PDF
+1. Select completed batch
+2. Click "Download PDF"
+3. Verify PDF contains:
+   - Company header with logo
+   - All batch information
+   - Complete component list with COA numbers
+   - All 6 IPQC stages with measurements
+   - QA gate approvals
+   - Personnel names and timestamps
+   - Page numbers
+
+#### Test Case 2: Filter Batches
+1. Filter by status: "released"
+2. Filter by date range: last 7 days
+3. Verify correct batches appear
+
+#### Test Case 3: Preview Report
+1. Select batch
+2. Click "Preview"
+3. Verify all sections load
+4. Check for missing data
+
+#### Test Case 4: Production Summary
+1. Select "Production Summary"
+2. Verify metrics calculate correctly
+3. Check charts display properly
+
+#### Test Case 5: Quality Summary
+1. Select "Quality Summary"
+2. Verify QA metrics accurate
+3. Check compliance percentages
+
+### Priority 4: Production Validation (Before Going Live)
+
+#### Validation Checklist:
+- [ ] Test with actual production batch

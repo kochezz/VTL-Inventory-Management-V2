@@ -218,7 +218,7 @@ export default function BatchDetailPage() {
     }
   };
 
-  const handleQAApproval = async (batchId: string, gateId: string, action: 'approve' | 'reject', locationId?: string) => {
+  const handleQAApproval = async (batchId: string, gateId: string, action: 'approve' | 'reject') => {
     try {
       setActionLoading(true);
       setError('');
@@ -227,13 +227,9 @@ export default function BatchDetailPage() {
         ? `/production/batches/${batchId}/qa-gates/${gateId}/approve`
         : `/production/batches/${batchId}/qa-gates/${gateId}/reject`;
 
-      const data: any = action === 'reject' 
+      const data = action === 'reject' 
         ? { reason: 'Rejected during QA review' }
         : {};
-
-      if (locationId) {
-        data.location_id = locationId;
-      }
 
       await axios.post(
         `${API_URL}${endpoint}`,
@@ -1010,19 +1006,20 @@ export default function BatchDetailPage() {
       {/* Final Release Modal - NEW */}
       {showFinalReleaseModal && selectedGate && batch && (
         <FinalReleaseModal
-          isOpen={showFinalReleaseModal}
-          onClose={() => {
-            setShowFinalReleaseModal(false);
-            setSelectedGate(null);
-          }}
-          batch={batch}
-          gate={selectedGate}
-          onApprove={async (locationId) => {
-            await handleQAApproval(batch.batch_id, selectedGate.gate_id, 'approve', locationId);
-            setShowFinalReleaseModal(false);
-            setSelectedGate(null);
-          }}
-        />
+  isOpen={showFinalReleaseModal}
+  onClose={() => {
+    setShowFinalReleaseModal(false);
+    setSelectedGate(null);
+  }}
+  batch={batch}
+  gate={selectedGate}
+  // UPDATE THIS LINE to receive locationId
+  onApprove={async (locationId) => {
+    await handleQAApproval(batch.batch_id, selectedGate.gate_id, 'approve', locationId);
+    setShowFinalReleaseModal(false);
+    setSelectedGate(null);
+  }}
+/>
       )}
     </DashboardLayout>
   );

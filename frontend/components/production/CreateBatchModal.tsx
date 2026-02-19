@@ -8,14 +8,14 @@ import { X, Plus, Check, AlertCircle, Package, Calendar, Clock } from 'lucide-re
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 interface Product {
-  product_id: string;  // ✅ UUID is a string
+  product_id: string;
   product_name: string;
   sku: string;
   component_count: number;
 }
 
 interface Location {
-  location_id: string;  // ✅ UUID is a string
+  location_id: string;
   location_name: string;
   location_code: string;
   available_quantity: number;
@@ -24,7 +24,7 @@ interface Location {
 }
 
 interface Component {
-  component_id: string;  // ✅ UUID is a string
+  component_id: string;
   component_name: string;
   sku: string;
   quantity_required: number;
@@ -32,8 +32,8 @@ interface Component {
 }
 
 interface ComponentSelection {
-  componentId: string;  // ✅ UUID is a string
-  locationId: string;   // ✅ UUID is a string
+  componentId: string;
+  locationId: string;
   quantityRequired: number;
   quantityAssigned: number;
 }
@@ -66,7 +66,6 @@ const SIZE_CODES: { [key: string]: string } = {
 };
 
 export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateBatchModalProps) {
-  // ✅ EXACT PATTERN FROM PRODUCTS PAGE
   const { isAuthenticated, token } = useAuth();
   
   const [step, setStep] = useState(1);
@@ -140,17 +139,14 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
   const fetchFinishedProducts = async () => {
     try {
       setLoading(true);
-      // ✅ EXACT PATTERN FROM PRODUCTS PAGE
       const response = await axios.get(
         `${API_URL}/production/finished-products`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
-      console.log('✅ Products loaded:', response.data);
       setProducts(Array.isArray(response.data) ? response.data : []);
       setLoading(false);
     } catch (err: any) {
-      console.error('❌ Error fetching products:', err);
       setError(err.response?.data?.message || err.response?.data?.error || 'Failed to load products');
       setLoading(false);
     }
@@ -161,7 +157,6 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
       setLoading(true);
       setError('');
       
-      // ✅ EXACT PATTERN FROM PRODUCTS PAGE
       const response = await axios.get(
         `${API_URL}/production/available-components`,
         {
@@ -170,15 +165,12 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
         }
       );
       
-      console.log('✅ Components loaded:', response.data);
       const componentData = response.data.components || [];
       setComponents(Array.isArray(componentData) ? componentData : []);
 
-      // ✅ FIXED: Validate that each component has locations before mapping
       const autoSelected = componentData
         .filter((comp: Component) => {
           if (!comp.locations || comp.locations.length === 0) {
-            console.warn(`⚠️ Component ${comp.component_name} has no inventory locations`);
             return false;
           }
           return true;
@@ -188,9 +180,10 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
           const locationToUse = firstSufficientLocation || comp.locations?.[0];
           const requiredQty = comp.quantity_required * plannedQuantity;
           const bufferQty = Math.ceil(requiredQty * 0.05);
-          const totalQty = requiredQty + bufferQty;
+          
+          // FIX 1: Use Math.ceil for totalQty
+          const totalQty = Math.ceil(requiredQty + bufferQty);
 
-          // ✅ CRITICAL: Ensure locationId is never undefined
           if (!locationToUse || !locationToUse.location_id) {
             throw new Error(`Component ${comp.component_name} has no valid inventory location`);
           }
@@ -198,26 +191,18 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
           return {
             componentId: comp.component_id,
             locationId: locationToUse.location_id,
-            quantityRequired: requiredQty,
+            quantityRequired: parseFloat(comp.quantity_required.toString()),
             quantityAssigned: totalQty
           };
         });
 
-      console.log('📦 Auto-selected components:', autoSelected);
-      
       if (autoSelected.length === 0) {
         throw new Error('No components have available inventory');
       }
       
-      if (autoSelected.length < componentData.length) {
-        const missing = componentData.length - autoSelected.length;
-        console.warn(`⚠️ ${missing} component(s) skipped due to no inventory`);
-      }
-
       setSelectedComponents(autoSelected);
       setLoading(false);
     } catch (err: any) {
-      console.error('❌ Error fetching components:', err);
       setError(err.response?.data?.message || err.response?.data?.error || 'Failed to load components');
       setLoading(false);
     }
@@ -237,20 +222,37 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
       setError('Please enter a valid quantity');
       return;
     }
+    
+    // Recalculate component quantities with current plannedQuantity
+    setSelectedComponents(prev => prev.map(sc => {
+      // Find the component to get quantity_required
+      const component = components.find(c => c.component_id === sc.componentId);
+      if (!component) return sc;
+      
+      const requiredQty = component.quantity_required * plannedQuantity;
+      const bufferQty = Math.ceil(requiredQty * 0.05);
+      
+      // FIX 2: Use Math.ceil for totalQty
+      const totalQty = Math.ceil(requiredQty + bufferQty);
+      
+      return {
+        ...sc,
+        quantityRequired: parseFloat(component.quantity_required.toString()),
+        quantityAssigned: totalQty
+      };
+    }));
+    
     setError('');
     setStep(2);
   };
 
   const handleComponentLocationChange = (componentId: string, locationId: string) => {
-    console.log('🔄 Location changed:', { componentId, locationId });
-    
     setSelectedComponents(prev => {
       const updated = prev.map(sc =>
         sc.componentId === componentId
           ? { ...sc, locationId }
           : sc
       );
-      console.log('📦 Updated selectedComponents:', updated);
       return updated;
     });
   };
@@ -260,19 +262,14 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
       setLoading(true);
       setError('');
 
-      // ✅ VALIDATE: All components have valid IDs
       const invalidComponents = selectedComponents.filter(
         sc => !sc.locationId || !sc.componentId
       );
       
       if (invalidComponents.length > 0) {
-        console.error('❌ Invalid components:', invalidComponents);
         throw new Error('Some components have invalid location selections');
       }
 
-      console.log('📦 Submitting batch with components:', selectedComponents);
-
-      // ✅ EXACT PATTERN FROM PRODUCTS PAGE
       const batchResponse = await axios.post(
         `${API_URL}/production/batches`,
         {
@@ -285,18 +282,12 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      console.log('📦 Batch creation response:', batchResponse.data);
-      console.log('📦 Batch object:', batchResponse.data.batch);
-      
       const batchId = batchResponse.data.batch?.batch_id;
       
       if (!batchId) {
-        console.error('❌ No batch_id in response!');
         throw new Error('Failed to get batch ID from server response');
       }
       
-      console.log('📦 Using batchId:', batchId);
-
       // Assign components
       await axios.post(
         `${API_URL}/production/batches/${batchId}/assign-components`,
@@ -304,12 +295,10 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      console.log('✅ Batch created successfully');
       setLoading(false);
       onSuccess();
       onClose();
     } catch (err: any) {
-      console.error('❌ Error creating batch:', err);
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to create batch');
       setLoading(false);
     }
@@ -445,7 +434,10 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
                   <input
                     type="number"
                     value={plannedQuantity}
-                    onChange={(e) => setPlannedQuantity(parseInt(e.target.value))}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      setPlannedQuantity(isNaN(value) ? 0 : value);
+                    }}
                     min="1"
                     className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
