@@ -4,7 +4,6 @@
 // ============================================================================
 
 const { pool } = require('../config/database');
-const notificationService = require('./notification-service'); // NEW: Imported Notification Service
 
 // Get finished products (products that have a BOM)
 const getFinishedProducts = async () => {
@@ -750,24 +749,6 @@ const submitForQA = async (batchId, userId) => {
       [batchId]
     );
     
-    // ========================================================================
-    // NEW: TRIGGER EMAIL NOTIFICATION TO QA TEAM
-    // ========================================================================
-    try {
-      const batchData = await client.query('SELECT batch_number, COALESCE(pb.product_name, p.product_name) as product_name FROM production_batches pb LEFT JOIN products p ON pb.product_id = p.product_id WHERE pb.batch_id = $1', [batchId]);
-      const userData = await client.query('SELECT full_name FROM users WHERE user_id = $1', [userId]);
-      
-      if (batchData.rows.length > 0 && userData.rows.length > 0) {
-        notificationService.notifyQAPendingReview(
-          batchData.rows[0].batch_number, 
-          batchData.rows[0].product_name, 
-          userData.rows[0].full_name
-        ).catch(e => console.error('Email trigger failed:', e));
-      }
-    } catch (e) { 
-      console.error('Failed to trigger QA email:', e); 
-    }
-    
     await client.query('COMMIT');
     
     console.log(`✅ Batch ${batchId} submitted for QA`);
@@ -879,29 +860,6 @@ const approveQAGate = async (batchId, gateId, userId, destinationLocationId = nu
                      WHERE inventory_id = $3`,
                     [consumed, comp.planned_quantity, comp.inventory_id]
                 );
-                
-                // ====================================================================
-                // NEW: TRIGGER LOW STOCK EMAIL IF COMPONENT DROPS BELOW REORDER LEVEL
-                // ====================================================================
-                try {
-                  const stockCheck = await client.query(`
-                    SELECT i.quantity_on_hand, p.reorder_level, p.product_name, p.sku 
-                    FROM inventory i JOIN products p ON i.product_id = p.product_id 
-                    WHERE i.inventory_id = $1
-                  `, [comp.inventory_id]);
-                  
-                  const stock = stockCheck.rows[0];
-                  if (stock && stock.quantity_on_hand <= stock.reorder_level) {
-                     notificationService.notifyLowStock(
-                       stock.product_name, 
-                       stock.sku, 
-                       stock.quantity_on_hand, 
-                       stock.reorder_level
-                     ).catch(e => console.error('Low stock email failed:', e));
-                  }
-                } catch(e) { 
-                  console.error('Low stock check failed:', e); 
-                }
             }
         }
       }
@@ -960,23 +918,6 @@ const rejectQAGate = async (batchId, gateId, userId, reason) => {
       ['rejected', reason, batchId]
     );
     
-    // ========================================================================
-    // NEW: TRIGGER EMAIL NOTIFICATION FOR REJECTED BATCH
-    // ========================================================================
-    try {
-      const batchData = await client.query('SELECT batch_number, COALESCE(pb.product_name, p.product_name) as product_name FROM production_batches pb LEFT JOIN products p ON pb.product_id = p.product_id WHERE pb.batch_id = $1', [batchId]);
-      if (batchData.rows.length > 0) {
-        notificationService.notifyBatchRejected(
-          batchData.rows[0].batch_number, 
-          batchData.rows[0].product_name, 
-          userName, 
-          reason
-        ).catch(e => console.error('Email trigger failed:', e));
-      }
-    } catch (e) { 
-      console.error('Failed to trigger rejection email:', e); 
-    }
-
     await client.query('COMMIT');
     
     console.log(`❌ Batch ${batchId} rejected at QA gate`);
@@ -1588,23 +1529,6 @@ async function rejectIPQC(ipqcId, qaUserId, qaUserName, rejectionReason) {
       throw new Error('IPQC check not found');
     }
     
-    // ========================================================================
-    // NEW: TRIGGER EMAIL NOTIFICATION FOR REJECTED IPQC CHECK
-    // ========================================================================
-    try {
-      const batchData = await pool.query('SELECT batch_number, COALESCE(pb.product_name, p.product_name) as product_name FROM production_batches pb LEFT JOIN products p ON pb.product_id = p.product_id WHERE pb.batch_id = $1', [result.rows[0].batch_id]);
-      if (batchData.rows.length > 0) {
-        notificationService.notifyBatchRejected(
-          batchData.rows[0].batch_number, 
-          batchData.rows[0].product_name, 
-          qaUserName, 
-          `IPQC Stage Failed: ${rejectionReason}`
-        ).catch(e => console.error('Email trigger failed:', e));
-      }
-    } catch (e) { 
-      console.error('Failed to trigger rejection email:', e); 
-    }
-
     // Log the rejection
     console.log(`❌ IPQC check ${ipqcId} rejected by ${qaUserName}: ${rejectionReason}`);
     
@@ -1724,24 +1648,6 @@ async function submitIPQCForQAReview(batchId, userId) {
         success: false,
         message: 'No draft IPQC checks found to submit'
       };
-    }
-
-    // ========================================================================
-    // NEW: TRIGGER EMAIL NOTIFICATION TO QA TEAM
-    // ========================================================================
-    try {
-      const batchData = await pool.query('SELECT batch_number, COALESCE(pb.product_name, p.product_name) as product_name FROM production_batches pb LEFT JOIN products p ON pb.product_id = p.product_id WHERE pb.batch_id = $1', [batchId]);
-      const userData = await pool.query('SELECT full_name FROM users WHERE user_id = $1', [userId]);
-      
-      if (batchData.rows.length > 0 && userData.rows.length > 0) {
-        notificationService.notifyQAPendingReview(
-          batchData.rows[0].batch_number, 
-          batchData.rows[0].product_name, 
-          userData.rows[0].full_name
-        ).catch(e => console.error('Email trigger failed:', e));
-      }
-    } catch (e) { 
-      console.error('Failed to trigger QA email:', e); 
     }
 
     console.log(`✅ Submitted ${result.rows.length} IPQC check(s) for QA review`);

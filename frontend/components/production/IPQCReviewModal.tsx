@@ -1,13 +1,14 @@
 // ============================================================================
 // UPDATED: IPQC QA REVIEW MODAL - STAGE-AWARE VERSION
-// Shows only fields relevant to the stage that was recorded
+// With 21 CFR Part 11 Digital Signature & Comprehensive Data View
 // ============================================================================
 
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, AlertCircle, Clock, User, Droplet, Gauge, Package, Eye, FileText, Search } from 'lucide-react';
-import { api } from '@/hooks/useAuth';
+import { X, CheckCircle2, XCircle, AlertCircle, Clock, User, Droplet, Gauge, Package, Eye, FileText, Search, Key } from 'lucide-react';
+import { api, useAuth } from '@/hooks/useAuth';
+import axios from 'axios';
 
 interface IPQCReviewModalProps {
   ipqcId: string | null;
@@ -24,7 +25,7 @@ interface IPQCCheck {
   check_sequence: number;
   check_time: string;
   
-  // Stage info (NEW)
+  // Stage info
   stage_id?: string;
   stage_sequence?: number;
   stage_name?: string;
@@ -84,15 +85,20 @@ export default function IPQCReviewModal({
   onClose,
   onSuccess
 }: IPQCReviewModalProps) {
+  const { token } = useAuth(); // NEW: Needed for Signature Validation
   const [loading, setLoading] = useState(false);
   const [ipqcCheck, setIpqcCheck] = useState<IPQCCheck | null>(null);
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [error, setError] = useState('');
+  
+  // Digital Signature State (NEW)
+  const [signature, setSignature] = useState('');
 
   useEffect(() => {
     if (isOpen && ipqcId) {
       fetchIPQCDetails();
+      setSignature(''); // Reset signature on open
     }
   }, [isOpen, ipqcId]);
 
@@ -100,11 +106,6 @@ export default function IPQCReviewModal({
   try {
     setLoading(true);
     const response = await api.get(`/production/ipqc/${ipqcId}/review`);
-    
-    // Debug logging
-    console.log('📥 RECEIVED:', response.data.ipqc_check?.stage_code, response.data.ipqc_check?.bottle_integrity);
-    console.log('🔍 Full data:', response.data.ipqc_check);
-    
     setIpqcCheck(response.data.ipqc_check);
   } catch (err: any) {
     console.error('Error fetching IPQC details:', err);
@@ -113,10 +114,34 @@ export default function IPQCReviewModal({
     setLoading(false);
   }
 };
+
+  // NEW: Signature Verification Function
+  const verifySignature = async () => {
+    try {
+      await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/signature/verify`,
+        { password: signature },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      return true;
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Invalid digital signature: Incorrect password.');
+      return false;
+    }
+  };
+
   const handleApprove = async () => {
+    if (!signature) { setError('Digital signature required.'); return; }
+
     try {
       setLoading(true);
       setError('');
+
+      if (!(await verifySignature())) {
+        setLoading(false);
+        return;
+      }
+
       await api.post(`/production/ipqc/${ipqcId}/approve`);
       onSuccess();
       onClose();
@@ -130,12 +155,19 @@ export default function IPQCReviewModal({
   };
 
   const handleReject = async () => {
+    if (!signature) { setError('Digital signature required.'); return; }
+
     try {
       setLoading(true);
       setError('');
 
       if (!rejectionReason.trim()) {
         setError('Please provide a reason for rejection');
+        setLoading(false);
+        return;
+      }
+
+      if (!(await verifySignature())) {
         setLoading(false);
         return;
       }
@@ -158,6 +190,7 @@ export default function IPQCReviewModal({
   const resetModal = () => {
     setAction(null);
     setRejectionReason('');
+    setSignature('');
     setError('');
     setIpqcCheck(null);
   };
@@ -507,7 +540,7 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* WASHING - NEW SECTION */}
+              {/* WASHING */}
               {ipqcCheck.stage_code === 'WASHING' && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
@@ -516,7 +549,6 @@ export default function IPQCReviewModal({
                   </h3>
                   
                   <div className="space-y-4">
-                    {/* Parse custom data if it exists */}
                     {(() => {
                       const customData = ipqcCheck.stage_custom_data 
                         ? (typeof ipqcCheck.stage_custom_data === 'string' 
@@ -843,7 +875,6 @@ export default function IPQCReviewModal({
                   
                   <div className="space-y-4">
                     {(() => {
-                      // Parse custom data from JSON
                       const customData = ipqcCheck.stage_custom_data 
                         ? (typeof ipqcCheck.stage_custom_data === 'string' 
                             ? JSON.parse(ipqcCheck.stage_custom_data) 
@@ -993,7 +1024,7 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* Action Selector */}
+              {/* QA ACTIONS & DIGITAL SIGNATURE BLOCK */}
               {!action ? (
                 <div className="flex gap-3">
                   <button
@@ -1002,7 +1033,7 @@ export default function IPQCReviewModal({
                     className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     <CheckCircle2 className="w-5 h-5" />
-                    Approve
+                    Approve Check
                   </button>
                   <button
                     onClick={() => setAction('reject')}
@@ -1010,84 +1041,72 @@ export default function IPQCReviewModal({
                     className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     <XCircle className="w-5 h-5" />
-                    Reject
+                    Reject Check
                   </button>
                 </div>
-              ) : action === 'approve' ? (
-                <div className="space-y-4">
-                  <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
-                    <p className="text-green-400 font-medium">Are you sure you want to approve this check?</p>
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setAction(null)}
-                      disabled={loading}
-                      className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleApprove}
-                      disabled={loading}
-                      className="flex-1 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {loading ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                          Approving...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-4 h-4" />
-                          Confirm Approval
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
               ) : (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Rejection Reason *
-                    </label>
-                    <textarea
-                      value={rejectionReason}
-                      onChange={(e) => setRejectionReason(e.target.value)}
-                      className="w-full px-3 py-2 bg-dark-900 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
-                      rows={4}
-                      placeholder="Explain why this check is being rejected..."
+                <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-200">
+                  
+                  {action === 'reject' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Rejection Reason *
+                      </label>
+                      <textarea
+                        value={rejectionReason}
+                        onChange={(e) => setRejectionReason(e.target.value)}
+                        className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white focus:outline-none focus:border-red-500"
+                        rows={3}
+                        placeholder="Please detail why this check is being rejected..."
+                        required
+                      />
+                    </div>
+                  )}
+
+                  {/* 21 CFR Part 11 Digital Signature Block */}
+                  <div className="bg-dark-900 rounded-lg p-5 border border-dark-700 shadow-inner">
+                    <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                      <Key className="w-4 h-4 text-primary-400" />
+                      QA Electronic Signature Required
+                    </h3>
+                    <p className="text-xs text-gray-400 mb-3">
+                      By entering your password, you electronically sign off on this QA {action === 'approve' ? 'approval' : 'rejection'} per 21 CFR Part 11 guidelines.
+                    </p>
+                    <input
+                      type="password"
+                      value={signature}
+                      onChange={(e) => setSignature(e.target.value)}
+                      placeholder="Enter your login password"
+                      className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono tracking-widest"
                       required
                     />
                   </div>
+
                   <div className="flex gap-3">
                     <button
-                      onClick={() => {
-                        setAction(null);
-                        setRejectionReason('');
-                      }}
+                      onClick={() => { setAction(null); setRejectionReason(''); setSignature(''); }}
                       disabled={loading}
-                      className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors"
+                      className="flex-1 px-4 py-3 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors"
                     >
                       Cancel
                     </button>
-                    <button
-                      onClick={handleReject}
-                      disabled={loading || !rejectionReason.trim()}
-                      className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {loading ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                          Rejecting...
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="w-4 h-4" />
-                          Confirm Rejection
-                        </>
-                      )}
-                    </button>
+                    {action === 'approve' ? (
+                      <button
+                        onClick={handleApprove}
+                        disabled={loading || !signature}
+                        className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {loading ? 'Verifying...' : <><CheckCircle2 className="w-5 h-5"/> Sign & Approve</>}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleReject}
+                        disabled={loading || !signature || !rejectionReason.trim()}
+                        className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {loading ? 'Verifying...' : <><XCircle className="w-5 h-5"/> Sign & Reject</>}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

@@ -55,7 +55,8 @@ app.use('/api/products', productsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/barcode', barcodeRoutes);
-app.use('/api/production/reports', productionReportsRoutes); // NEW - Production Reports
+app.use('/api/production/reports', productionReportsRoutes);
+app.use('/api/signature', require('./src/routes/signature-routes'));
 
 // Health check
 app.get('/health', (req, res) => {
