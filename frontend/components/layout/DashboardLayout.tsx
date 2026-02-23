@@ -12,7 +12,8 @@ import {
   LogOut,
   Users,
   Factory,
-  ClipboardCheck
+  ClipboardCheck,
+  Building2 // <-- Added icon for Vendor Management
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -48,6 +49,14 @@ const navigation: NavItem[] = [
     icon: Factory,
     roles: ['admin', 'manager', 'qa', 'staff']
   },
+  // --- NEW VENDOR MANAGEMENT LINK ---
+  { 
+    name: 'Vendor Management', 
+    href: '/vendor-management/suppliers', // Defaulting to the AVL page
+    icon: Building2,
+    roles: ['admin', 'manager', 'qa', 'staff'] // Accessible per your roadmap
+  },
+  // ----------------------------------
   { 
     name: 'Analytics', 
     href: '/analytics', 
@@ -144,7 +153,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {allowedNavItems.map((item) => {
-              const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
+              // Highlight if we are on the exact path OR a sub-path (e.g., /vendor-management/suppliers/new)
+              const isActive = pathname === item.href || pathname?.startsWith(item.href.split('/')[1] ? `/${item.href.split('/')[1]}` : item.href);
+              
               return (
                 <button
                   key={item.name}

@@ -205,7 +205,7 @@ export default function SettingsPage() {
                     </label>
                     <input
                       type="text"
-                      value={settings.company_name}
+                      value={settings.company_name || ''}
                       onChange={(e) => handleInputChange('company_name', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -217,7 +217,7 @@ export default function SettingsPage() {
                     </label>
                     <input
                       type="email"
-                      value={settings.company_email}
+                      value={settings.company_email || ''}
                       onChange={(e) => handleInputChange('company_email', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -229,7 +229,7 @@ export default function SettingsPage() {
                     </label>
                     <input
                       type="tel"
-                      value={settings.company_phone}
+                      value={settings.company_phone || ''}
                       onChange={(e) => handleInputChange('company_phone', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -241,7 +241,7 @@ export default function SettingsPage() {
                     </label>
                     <input
                       type="url"
-                      value={settings.company_website}
+                      value={settings.company_website || ''}
                       onChange={(e) => handleInputChange('company_website', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -252,7 +252,7 @@ export default function SettingsPage() {
                       Company Address
                     </label>
                     <textarea
-                      value={settings.company_address}
+                      value={settings.company_address || ''}
                       onChange={(e) => handleInputChange('company_address', e.target.value)}
                       rows={3}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
@@ -271,7 +271,7 @@ export default function SettingsPage() {
                       Currency
                     </label>
                     <select
-                      value={settings.currency}
+                      value={settings.currency || 'USD'}
                       onChange={(e) => handleInputChange('currency', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     >
@@ -291,7 +291,7 @@ export default function SettingsPage() {
                       Timezone
                     </label>
                     <select
-                      value={settings.timezone}
+                      value={settings.timezone || 'Africa/Lusaka'}
                       onChange={(e) => handleInputChange('timezone', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     >
@@ -308,7 +308,7 @@ export default function SettingsPage() {
                       Date Format
                     </label>
                     <select
-                      value={settings.date_format}
+                      value={settings.date_format || 'DD/MM/YYYY'}
                       onChange={(e) => handleInputChange('date_format', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     >
@@ -325,7 +325,7 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="0"
-                      value={settings.low_stock_threshold}
+                      value={settings.low_stock_threshold ?? 100}
                       onChange={(e) => handleInputChange('low_stock_threshold', parseInt(e.target.value))}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -352,7 +352,7 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={settings.enable_email_notifications}
+                        checked={settings.enable_email_notifications || false}
                         onChange={(e) => handleInputChange('enable_email_notifications', e.target.checked)}
                         className="sr-only peer"
                       />
@@ -371,7 +371,7 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={settings.enable_low_stock_alerts}
+                        checked={settings.enable_low_stock_alerts || false}
                         onChange={(e) => handleInputChange('enable_low_stock_alerts', e.target.checked)}
                         className="sr-only peer"
                       />
@@ -390,7 +390,7 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={settings.enable_transaction_alerts}
+                        checked={settings.enable_transaction_alerts || false}
                         onChange={(e) => handleInputChange('enable_transaction_alerts', e.target.checked)}
                         className="sr-only peer"
                       />
@@ -413,7 +413,7 @@ export default function SettingsPage() {
                       type="number"
                       min="5"
                       max="1440"
-                      value={settings.session_timeout_minutes}
+                      value={settings.session_timeout_minutes ?? 30}
                       onChange={(e) => handleInputChange('session_timeout_minutes', parseInt(e.target.value))}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -430,7 +430,7 @@ export default function SettingsPage() {
                       type="number"
                       min="0"
                       max="365"
-                      value={settings.require_password_change_days}
+                      value={settings.require_password_change_days ?? 90}
                       onChange={(e) => handleInputChange('require_password_change_days', parseInt(e.target.value))}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -447,7 +447,7 @@ export default function SettingsPage() {
                       type="number"
                       min="6"
                       max="32"
-                      value={settings.min_password_length}
+                      value={settings.min_password_length ?? 8}
                       onChange={(e) => handleInputChange('min_password_length', parseInt(e.target.value))}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
@@ -483,7 +483,7 @@ export default function SettingsPage() {
                       Backup Frequency
                     </label>
                     <select
-                      value={settings.backup_frequency}
+                      value={settings.backup_frequency || 'daily'}
                       onChange={(e) => handleInputChange('backup_frequency', e.target.value)}
                       className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     >
@@ -502,7 +502,7 @@ export default function SettingsPage() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={settings.auto_backup_enabled}
+                        checked={settings.auto_backup_enabled || false}
                         onChange={(e) => handleInputChange('auto_backup_enabled', e.target.checked)}
                         className="sr-only peer"
                       />

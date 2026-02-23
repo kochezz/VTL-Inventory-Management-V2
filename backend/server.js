@@ -10,7 +10,9 @@ const usersRoutes = require('./src/routes/users-routes');
 const dashboardRoutes = require('./src/routes/dashboard-routes');
 const reportsRoutes = require('./src/routes/reports-routes');
 const barcodeRoutes = require('./src/routes/barcode-routes');
-const productionReportsRoutes = require('./src/routes/production-reports-routes'); // NEW - Production Reports
+const productionReportsRoutes = require('./src/routes/production-reports-routes');
+const settingsRoutes = require('./src/routes/settings');
+const supplierRoutes = require('./src/routes/supplier-routes'); // NEW - Production Reports
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -57,6 +59,8 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/barcode', barcodeRoutes);
 app.use('/api/production/reports', productionReportsRoutes);
 app.use('/api/signature', require('./src/routes/signature-routes'));
+app.use('/api/settings', settingsRoutes);
+app.use('/api/suppliers', supplierRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

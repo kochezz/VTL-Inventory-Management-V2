@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { useSettings } from '@/hooks/useSettings'; // <-- Added new Settings hook
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
   Package, 
@@ -43,6 +44,8 @@ interface ActiveBatch {
 export default function DashboardPage() {
   const router = useRouter();
   const { isAuthenticated, user, token, isLoading: authLoading } = useAuth();
+  const { formatCurrency } = useSettings(); // <-- Initialized dynamic currency formatter
+  
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   
@@ -90,10 +93,6 @@ export default function DashboardPage() {
     setRefreshing(true);
     await fetchDashboardData();
     setRefreshing(false);
-  };
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(value);
   };
 
   const getTransactionTypeColor = (type: string) => {
@@ -167,7 +166,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           <KPICard 
             title="Total Inventory Value" 
-            value={formatCurrency(stats?.total_inventory_value || 0)} 
+            value={formatCurrency(stats?.total_inventory_value || 0, 'USD')} // <-- Updated to use dynamic currency
             subtext="Current warehouse valuation" 
             icon={TrendingUp} colorClass="green" 
           />
