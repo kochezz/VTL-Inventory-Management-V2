@@ -13,7 +13,9 @@ import {
   Users,
   Factory,
   ClipboardCheck,
-  Building2 // <-- Added icon for Vendor Management
+  Building2,
+  ShoppingCart,
+  PackageCheck // <-- Added icon for Purchase Orders
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -49,14 +51,34 @@ const navigation: NavItem[] = [
     icon: Factory,
     roles: ['admin', 'manager', 'qa', 'staff']
   },
-  // --- NEW VENDOR MANAGEMENT LINK ---
+  // --- VENDOR MANAGEMENT LINK ---
   { 
     name: 'Vendor Management', 
-    href: '/vendor-management/suppliers', // Defaulting to the AVL page
+    href: '/vendor-management/suppliers', 
     icon: Building2,
-    roles: ['admin', 'manager', 'qa', 'staff'] // Accessible per your roadmap
+    roles: ['admin', 'manager', 'qa', 'staff'] 
   },
-  // ----------------------------------
+  // --- NEW CUSTOMERS (CRM) LINK ---
+  { 
+    name: 'Customers (CRM)', 
+    href: '/vendor-management/customers', 
+    icon: Users,
+    roles: ['admin', 'manager', 'sales', 'cfo', 'ceo', 'staff'] 
+  },
+  // --- PURCHASE ORDERS LINK ---
+  { 
+    name: 'Purchase Orders', 
+    href: '/vendor-management/purchase-orders', 
+    icon: ShoppingCart,
+    roles: ['admin', 'manager', 'cfo', 'ceo', 'staff', 'qa'] 
+  },
+  // --- NEW GOODS RECEIPTS LINK ---
+  { 
+    name: 'Goods Receipts', 
+    href: '/vendor-management/goods-receipts', 
+    icon: PackageCheck,
+    roles: ['admin', 'manager', 'warehouse', 'staff', 'cfo'] 
+  },
   { 
     name: 'Analytics', 
     href: '/analytics', 
@@ -153,9 +175,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {allowedNavItems.map((item) => {
-              // Highlight if we are on the exact path OR a sub-path (e.g., /vendor-management/suppliers/new)
-              const isActive = pathname === item.href || pathname?.startsWith(item.href.split('/')[1] ? `/${item.href.split('/')[1]}` : item.href);
-              
+              // Highlight if we are on the exact path OR a sub-path (e.g., /vendor-management/purchase-orders/new)
+              const isActive = pathname === item.href || pathname?.startsWith(item.href);
               return (
                 <button
                   key={item.name}

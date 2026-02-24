@@ -7,7 +7,7 @@ import axios from 'axios';
 import { 
   ArrowLeft, Package, Calendar, User, MapPin, CheckCircle2, 
   XCircle, Clock, PlayCircle, StopCircle, AlertCircle, FileText,
-  TrendingUp, Activity, CheckCircle
+  TrendingUp, Activity, CheckCircle, Printer
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import CompleteProductionModal, { ProductionCompletionData } from '@/components/production/CompleteProductionModal';
@@ -297,8 +297,9 @@ export default function BatchDetailPage() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">
             <button onClick={() => router.back()} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
               <ArrowLeft className="w-5 h-5 text-gray-400" />
@@ -308,10 +309,24 @@ export default function BatchDetailPage() {
               <p className="text-gray-400 text-sm mt-1">{batch.batch_record_code}</p>
             </div>
           </div>
-          <div className={`px-4 py-2 rounded-full border ${getStatusColor(batch.status)}`}>
-            <span className="text-sm font-semibold uppercase tracking-wide">
-              {batch.status.replace('_', ' ')}
-            </span>
+          
+          <div className="flex items-center gap-3">
+            {/* NEW PRINT PICK LIST BUTTON */}
+            {(batch.status === 'ready_for_setup' || batch.status === 'in_progress') && (
+              <button
+                onClick={() => window.open(`/production/${batch.batch_id}/pick-list`, '_blank')}
+                className="px-4 py-2 bg-dark-800 hover:bg-dark-700 border border-dark-600 text-gray-300 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+              >
+                <Printer className="w-4 h-4" />
+                Print Pick List
+              </button>
+            )}
+
+            <div className={`px-4 py-2 rounded-full border ${getStatusColor(batch.status)}`}>
+              <span className="text-sm font-semibold uppercase tracking-wide">
+                {batch.status.replace('_', ' ')}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -456,40 +471,40 @@ export default function BatchDetailPage() {
               <h2 className="text-xl font-bold text-white mb-4">Component Assignments</h2>
               <div className="space-y-3">
                 {batch.components.map((component) => {
-  // Calculate actual usage based on actual output (if available)
-  const actualUsed = batch.actual_output && component.quantity_required
-    ? Math.ceil(component.quantity_required * batch.actual_output * 1.05) // With 5% buffer
-    : component.quantity_assigned;
-  
-  const isCompleted = batch.status === 'completed' || batch.status === 'released';
-  
-  return (
-    <div key={component.component_id} className="flex items-center justify-between p-4 bg-dark-900 rounded-lg border border-dark-700">
-      <div>
-        <p className="text-white font-medium">{component.component_name}</p>
-        <p className="text-sm text-gray-400 font-mono">{component.sku}</p>
-        <p className="text-xs text-gray-500 mt-1">{component.location_code} - {component.location_name}</p>
-      </div>
-      <div className="text-right">
-        {/* Show actual usage if batch is completed */}
-        {isCompleted && batch.actual_output ? (
-          <>
-            <p className="text-white font-semibold">{actualUsed.toLocaleString()} units</p>
-            <p className="text-xs text-gray-500">
-              Assigned: {component.quantity_assigned.toLocaleString()}
-            </p>
-          </>
-        ) : (
-          <p className="text-white font-semibold">{component.quantity_assigned.toLocaleString()} units</p>
-        )}
-        <p className="text-sm text-gray-400">{component.material_status}</p>
-        {component.supplier_batch_lot && (
-          <p className="text-xs text-gray-500 mt-1">Lot: {component.supplier_batch_lot}</p>
-        )}
-      </div>
-    </div>
-  );
-})}
+                  // Calculate actual usage based on actual output (if available)
+                  const actualUsed = batch.actual_output && component.quantity_required
+                    ? Math.ceil(component.quantity_required * batch.actual_output * 1.05) // With 5% buffer
+                    : component.quantity_assigned;
+                  
+                  const isCompleted = batch.status === 'completed' || batch.status === 'released';
+                  
+                  return (
+                    <div key={component.component_id} className="flex items-center justify-between p-4 bg-dark-900 rounded-lg border border-dark-700">
+                      <div>
+                        <p className="text-white font-medium">{component.component_name}</p>
+                        <p className="text-sm text-gray-400 font-mono">{component.sku}</p>
+                        <p className="text-xs text-gray-500 mt-1">{component.location_code} - {component.location_name}</p>
+                      </div>
+                      <div className="text-right">
+                        {/* Show actual usage if batch is completed */}
+                        {isCompleted && batch.actual_output ? (
+                          <>
+                            <p className="text-white font-semibold">{actualUsed.toLocaleString()} units</p>
+                            <p className="text-xs text-gray-500">
+                              Assigned: {component.quantity_assigned.toLocaleString()}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-white font-semibold">{component.quantity_assigned.toLocaleString()} units</p>
+                        )}
+                        <p className="text-sm text-gray-400">{component.material_status}</p>
+                        {component.supplier_batch_lot && (
+                          <p className="text-xs text-gray-500 mt-1">Lot: {component.supplier_batch_lot}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
