@@ -15,7 +15,7 @@ import {
   ClipboardCheck,
   Building2,
   ShoppingCart,
-  PackageCheck // <-- Added icon for Purchase Orders
+  PackageCheck 
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -23,7 +23,7 @@ interface NavItem {
   name: string;
   href: string;
   icon: any;
-  roles: string[]; // Which roles can see this item
+  roles: string[];
 }
 
 const navigation: NavItem[] = [
@@ -51,28 +51,24 @@ const navigation: NavItem[] = [
     icon: Factory,
     roles: ['admin', 'manager', 'qa', 'staff']
   },
-  // --- VENDOR MANAGEMENT LINK ---
   { 
     name: 'Vendor Management', 
     href: '/vendor-management/suppliers', 
     icon: Building2,
     roles: ['admin', 'manager', 'qa', 'staff'] 
   },
-  // --- NEW CUSTOMERS (CRM) LINK ---
   { 
     name: 'Customers (CRM)', 
     href: '/vendor-management/customers', 
     icon: Users,
     roles: ['admin', 'manager', 'sales', 'cfo', 'ceo', 'staff'] 
   },
-  // --- PURCHASE ORDERS LINK ---
   { 
     name: 'Purchase Orders', 
     href: '/vendor-management/purchase-orders', 
     icon: ShoppingCart,
     roles: ['admin', 'manager', 'cfo', 'ceo', 'staff', 'qa'] 
   },
-  // --- NEW GOODS RECEIPTS LINK ---
   { 
     name: 'Goods Receipts', 
     href: '/vendor-management/goods-receipts', 
@@ -101,13 +97,13 @@ const navigation: NavItem[] = [
     name: 'Users', 
     href: '/users', 
     icon: Users,
-    roles: ['admin'] // Only admin can manage users
+    roles: ['admin']
   },
   { 
     name: 'Settings', 
     href: '/settings', 
     icon: Settings,
-    roles: ['admin'] // Only admin can access settings
+    roles: ['admin']
   },
 ];
 
@@ -128,7 +124,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push('/login');
   };
 
-  // Filter navigation items based on user role
   const allowedNavItems = navigation.filter(item => 
     user?.role && item.roles.includes(user.role)
   );
@@ -154,29 +149,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* User Info */}
-          <div className="px-6 py-4 border-b border-dark-800">
+          <div 
+            onClick={() => router.push('/profile')}
+            className="px-6 py-4 border-b border-dark-800 cursor-pointer hover:bg-dark-800 transition-colors group relative"
+          >
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-primary-500/10 rounded-full flex items-center justify-center">
+              <div className="w-10 h-10 bg-primary-500/10 rounded-full flex items-center justify-center group-hover:bg-primary-500/20 transition-colors">
                 <span className="text-primary-400 font-medium text-sm">
                   {user?.full_name?.charAt(0).toUpperCase() || 'U'}
                 </span>
               </div>
               <div className="ml-3 flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">
+                <p className="text-sm font-medium text-white truncate group-hover:text-primary-400 transition-colors">
                   {user?.full_name || 'User'}
                 </p>
                 <p className="text-xs text-gray-400 capitalize">
-                  {user?.role || 'Role'}
+                  {user?.role?.replace('_', ' ') || 'Role'}
                 </p>
               </div>
+            </div>
+            <div className="absolute top-4 right-4 text-xs text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">
+              Edit
             </div>
           </div>
 
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {allowedNavItems.map((item) => {
-              // Highlight if we are on the exact path OR a sub-path (e.g., /vendor-management/purchase-orders/new)
-              const isActive = pathname === item.href || pathname?.startsWith(item.href);
+              // Highlight if we are on the exact path OR a true sub-path (e.g., /production/123)
+              // The addition of the '/' in startsWith prevents /production-reports from triggering /production
+              const isActive = pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false);
+              
               return (
                 <button
                   key={item.name}

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/hooks/useAuth';
 import { 
   Search, Filter, Eye, Clock, 
-  CheckCircle2, XCircle, AlertCircle, ShieldAlert
+  CheckCircle2, XCircle, AlertCircle, ShieldAlert, Edit, PackageCheck
 } from 'lucide-react';
 
 interface PurchaseOrder {
@@ -52,16 +52,25 @@ export default function PurchaseOrderList() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'APPROVED':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Approved</span>;
+      case 'DRAFT':
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-500/10 text-gray-400 border border-gray-500/20 flex items-center gap-1 w-max whitespace-nowrap"><Edit className="w-3 h-3"/> Draft</span>;
       case 'PENDING_CFO':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 w-max"><Clock className="w-3 h-3"/> Pending CFO</span>;
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 w-max whitespace-nowrap"><Clock className="w-3 h-3"/> Pending CFO</span>;
       case 'PENDING_CEO':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1 w-max"><ShieldAlert className="w-3 h-3"/> Pending CEO</span>;
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1 w-max whitespace-nowrap"><ShieldAlert className="w-3 h-3"/> Pending CEO</span>;
+      case 'APPROVED':
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20 flex items-center gap-1 w-max whitespace-nowrap"><CheckCircle2 className="w-3 h-3"/> Approved</span>;
       case 'REJECTED':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1 w-max"><XCircle className="w-3 h-3"/> Rejected</span>;
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1 w-max whitespace-nowrap"><XCircle className="w-3 h-3"/> Rejected</span>;
+      
+      // --- NEW GRN STATUSES ---
+      case 'FULLY_RECEIVED':
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-teal-500/10 text-teal-400 border border-teal-500/20 flex items-center gap-1 w-max whitespace-nowrap"><PackageCheck className="w-3 h-3"/> Fully Received</span>;
+      case 'PARTIALLY_RECEIVED':
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1 w-max whitespace-nowrap"><PackageCheck className="w-3 h-3"/> Partially Received</span>;
+      
       default:
-        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-500/10 text-gray-400 border border-gray-500/20 w-max"><AlertCircle className="w-3 h-3"/> {status}</span>;
+        return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-500/10 text-gray-400 border border-gray-500/20 flex items-center gap-1 w-max whitespace-nowrap"><AlertCircle className="w-3 h-3"/> {status.replace('_', ' ')}</span>;
     }
   };
 
@@ -94,6 +103,8 @@ export default function PurchaseOrderList() {
               <option value="PENDING_CFO">Pending CFO</option>
               <option value="PENDING_CEO">Pending CEO</option>
               <option value="APPROVED">Approved</option>
+              <option value="PARTIALLY_RECEIVED">Partially Received</option>
+              <option value="FULLY_RECEIVED">Fully Received</option>
               <option value="REJECTED">Rejected</option>
             </select>
           </div>

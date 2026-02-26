@@ -1,6 +1,6 @@
 // ============================================================================
 // MULTI-STAGE IPQC MODAL COMPONENT
-// Dynamic forms based on production stage with Digital Signature
+// Dynamic forms based on production stage with Digital Signature & File Uploads
 // ============================================================================
 
 'use client';
@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react';
 import { api, useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
-import { X, Droplet, Gauge, Package, Eye, FileText, CheckCircle, AlertCircle, Search, Key } from 'lucide-react';
+import { X, Droplet, Gauge, Package, Eye, FileText, CheckCircle, AlertCircle, Search, Key, Upload, FileCheck } from 'lucide-react';
 
 interface MultiStageIPQCModalProps {
   isOpen: boolean;
@@ -51,6 +51,7 @@ export default function MultiStageIPQCModal({
     
     // Stage 1: Water Treatment
     water_source: 'Borehole', raw_water_ph: '', raw_water_conductivity: '', ro_conductivity: '', uv_system_status: 'ON', ozone_system_status: 'Active', ozone_residual_ppm: '', water_treatment_approved: true, water_treatment_notes: '', line_clearance_verified: false, equipment_cleaned: false,
+    lab_report_data: '', lab_report_name: '', // NEW LAB REPORT FIELDS
     
     // Bottle Washing fields
     external_wash_complete: false, internal_wash_complete: false, sterilant_wash_complete: false, rinse_temperature: '', temperature_within_spec: true, sterilant_type: 'Chlorine Solution', final_rinse_complete: false, bottles_visually_clean: false, washing_equipment_cleaned: false, washing_notes: '',
@@ -86,6 +87,22 @@ export default function MultiStageIPQCModal({
   }, [nextStage]);
 
   if (!isOpen || !nextStage) return null;
+
+  // Handle File Upload to Base64
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData(prev => ({
+          ...prev,
+          lab_report_data: reader.result as string,
+          lab_report_name: file.name
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,6 +147,9 @@ export default function MultiStageIPQCModal({
         payload.water_treatment_notes = formData.water_treatment_notes;
         payload.line_clearance_verified = formData.line_clearance_verified;
         payload.equipment_cleaned = formData.equipment_cleaned;
+        // Attach File
+        payload.lab_report_data = formData.lab_report_data;
+        payload.lab_report_name = formData.lab_report_name;
       } 
       else if (nextStage.next_stage_code === 'BOTTLE_BLOW') {
         payload.visual_inspection_pass = formData.visual_inspection_pass;
@@ -310,7 +330,7 @@ export default function MultiStageIPQCModal({
 
           {/* STAGE 1: WATER TREATMENT / PRE-PRODUCTION */}
           {(nextStage.next_stage_code === 'WATER_TREATMENT' || nextStage.next_stage_code === 'PRE_PRODUCTION') && (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                 <Droplet className="w-5 h-5 text-blue-400" />
                 Water Treatment Parameters
@@ -355,6 +375,27 @@ export default function MultiStageIPQCModal({
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Ozone Residual (ppm)</label>
                   <input type="number" step="0.01" value={formData.ozone_residual_ppm} onChange={(e) => handleChange('ozone_residual_ppm', e.target.value)} className="w-full px-3 py-2 bg-dark-900 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.1 - 0.3 ppm" required />
+                </div>
+              </div>
+
+              {/* FILE UPLOAD FOR LAB REPORT */}
+              <div className="bg-dark-900 p-4 rounded-lg border border-dark-700 border-dashed">
+                <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-blue-400"/> 
+                  Upload Laboratory Water Analysis COA
+                </label>
+                <p className="text-xs text-gray-400 mb-4">Attach the official laboratory report verifying the microbial and heavy metal profile.</p>
+                
+                <div className="flex items-center gap-4">
+                  <label className="cursor-pointer px-4 py-2 bg-dark-800 hover:bg-dark-700 border border-dark-600 text-white rounded-lg flex items-center gap-2 transition-colors">
+                    <Upload className="w-4 h-4" /> Choose File
+                    <input type="file" accept=".pdf,image/*" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                  {formData.lab_report_name && (
+                    <span className="text-sm text-green-400 flex items-center gap-2">
+                      <FileCheck className="w-4 h-4"/> {formData.lab_report_name} attached
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -407,7 +448,7 @@ export default function MultiStageIPQCModal({
             </div>
           )}
 
-          {/* STAGE 2: RETURNED BOTTLE INSPECTION (Re-Fill) - FULLY RESTORED */}
+          {/* STAGE 2: RETURNED BOTTLE INSPECTION (Re-Fill) */}
           {nextStage.next_stage_code === 'RETURNED_BOTTLE_INSPECTION' && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -467,7 +508,7 @@ export default function MultiStageIPQCModal({
             </div>
           )}
 
-          {/* STAGE 3: BOTTLE WASHING - FULLY RESTORED */}
+          {/* STAGE 3: BOTTLE WASHING */}
           {nextStage.next_stage_code === 'WASHING' && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">

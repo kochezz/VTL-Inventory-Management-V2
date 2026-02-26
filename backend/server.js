@@ -16,6 +16,8 @@ const supplierRoutes = require('./src/routes/supplier-routes');
 const poRoutes = require('./src/routes/po-routes');
 const grnRoutes = require('./src/routes/grn-routes');
 const customerRoutes = require('./src/routes/customer-routes');
+const metricsRoutes = require('./src/routes/metrics-routes');
+const analyticsRoutes = require('./src/routes/analytics-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -68,6 +70,8 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/pos', poRoutes);
 app.use('/api/grns', grnRoutes);
 app.use('/api/customers', customerRoutes);
+app.use('/api/metrics', metricsRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

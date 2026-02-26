@@ -2,402 +2,190 @@ const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('./auth-service');
 
-/**
- * Get all users (excluding password hashes)
- */
+const VALID_ROLES = ['admin', 'ceo', 'cfo', 'manager', 'qa', 'engineering', 'staff', 'super_viewer', 'viewer'];
+
 const getAllUsers = async () => {
   try {
     const query = `
       SELECT 
-        user_id,
-        email,
-        full_name,
-        role,
-        is_active,
-        is_verified,
-        created_at,
-        updated_at,
-        last_login
-      FROM users
-      ORDER BY created_at DESC
+        user_id, email, full_name, preferred_name, photo_url, date_of_birth, gender, nationality, 
+        national_id, home_address, personal_email, phone_number, emergency_contacts,
+        employee_number, job_title, department, reports_to, employment_date, employment_status, employment_type,
+        role, is_active, is_verified, requires_password_change, created_at, updated_at, last_login
+      FROM users ORDER BY created_at DESC
     `;
-
     const result = await pool.query(query);
     return result.rows;
   } catch (error) {
-    console.error('❌ Get all users error:', error.message);
     throw error;
   }
 };
 
-/**
- * Get single user by ID (excluding password hash)
- */
 const getUserById = async (userId) => {
   try {
     const query = `
       SELECT 
-        user_id,
-        email,
-        full_name,
-        role,
-        is_active,
-        is_verified,
-        created_at,
-        updated_at,
-        last_login
-      FROM users
-      WHERE user_id = $1
+        user_id, email, full_name, preferred_name, photo_url, date_of_birth, gender, nationality, 
+        national_id, home_address, personal_email, phone_number, emergency_contacts,
+        employee_number, job_title, department, reports_to, employment_date, employment_status, employment_type,
+        role, is_active, is_verified, requires_password_change, created_at, updated_at, last_login
+      FROM users WHERE user_id = $1
     `;
-
     const result = await pool.query(query, [userId]);
-
-    if (result.rows.length === 0) {
-      throw new Error('User not found');
-    }
-
+    if (result.rows.length === 0) throw new Error('User not found');
     return result.rows[0];
   } catch (error) {
-    console.error('❌ Get user by ID error:', error.message);
     throw error;
   }
 };
 
-/**
- * Create new user
- */
 const createUser = async (userData) => {
   try {
-    const { email, full_name, password, role, is_active, is_verified } = userData;
+    const { 
+      email, full_name, password, role, is_active, is_verified, requires_password_change,
+      preferred_name, photo_url, date_of_birth, gender, nationality, national_id, home_address, 
+      personal_email, phone_number, emergency_contacts,
+      employee_number, job_title, department, reports_to, employment_date, employment_status, employment_type
+    } = userData;
 
-    // Validate role
-    const validRoles = ['admin', 'manager', 'qa', 'staff', 'viewer'];
-    if (!validRoles.includes(role)) {
-      throw new Error(`Invalid role. Must be one of: ${validRoles.join(', ')}`);
-    }
+    if (!VALID_ROLES.includes(role)) throw new Error(`Invalid role.`);
+    
+    const emailCheck = await pool.query('SELECT user_id FROM users WHERE email = $1', [email]);
+    if (emailCheck.rows.length > 0) throw new Error('Email already exists');
 
-    // Check if email already exists
-    const emailCheck = await pool.query(
-      'SELECT user_id FROM users WHERE email = $1',
-      [email]
-    );
-
-    if (emailCheck.rows.length > 0) {
-      throw new Error('Email already exists');
-    }
-
-    // Hash password
-    const saltRounds = 10;
-    const password_hash = await bcrypt.hash(password, saltRounds);
-
-    // Generate UUID
+    const password_hash = await bcrypt.hash(password, 10);
     const user_id = uuidv4();
 
-    // Insert user
     const query = `
       INSERT INTO users (
-        user_id,
-        email,
-        full_name,
-        password_hash,
-        role,
-        is_active,
-        is_verified,
-        created_at,
-        updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-      RETURNING 
-        user_id,
-        email,
-        full_name,
-        role,
-        is_active,
-        is_verified,
-        created_at,
-        updated_at,
-        last_login
+        user_id, email, full_name, password_hash, role, is_active, is_verified, requires_password_change,
+        preferred_name, photo_url, date_of_birth, gender, nationality, national_id, home_address, 
+        personal_email, phone_number, emergency_contacts,
+        employee_number, job_title, department, reports_to, employment_date, employment_status, employment_type,
+        created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, $10, $11, $12, $13, $14, $15, 
+        $16, $17, $18, 
+        $19, $20, $21, $22, $23, $24, $25,
+        NOW(), NOW()
+      ) RETURNING *
     `;
 
     const result = await pool.query(query, [
-      user_id,
-      email,
-      full_name,
-      password_hash,
-      role,
-      is_active,
-      is_verified
+      user_id, email, full_name, password_hash, role, is_active, is_verified, 
+      requires_password_change !== undefined ? requires_password_change : true,
+      preferred_name || null, photo_url || null, date_of_birth || null, gender || null, 
+      nationality || null, national_id || null, home_address || null, personal_email || null, 
+      phone_number || null, JSON.stringify(emergency_contacts || []),
+      employee_number || null, job_title || null, department || null, reports_to || null, 
+      employment_date || null, employment_status || null, employment_type || null
     ]);
 
-    console.log(`✅ User created: ${email} (${role})`);
-
+    delete result.rows[0].password_hash;
     return result.rows[0];
   } catch (error) {
-    console.error('❌ Create user error:', error.message);
     throw error;
   }
 };
 
-/**
- * Update existing user
- */
 const updateUser = async (userId, userData) => {
   try {
-    const { email, full_name, password, role, is_active, is_verified } = userData;
+    // We explicitly extract system-managed fields so they don't get caught in the dynamic SQL loop
+    const { 
+      password, user_id, created_at, updated_at, last_login, password_hash, 
+      ...fieldsToUpdate 
+    } = userData;
 
-    // Check if user exists
-    const userCheck = await pool.query(
-      'SELECT user_id FROM users WHERE user_id = $1',
-      [userId]
-    );
+    const userCheck = await pool.query('SELECT user_id FROM users WHERE user_id = $1', [userId]);
+    if (userCheck.rows.length === 0) throw new Error('User not found');
 
-    if (userCheck.rows.length === 0) {
-      throw new Error('User not found');
+    if (fieldsToUpdate.role && !VALID_ROLES.includes(fieldsToUpdate.role)) throw new Error('Invalid role');
+    if (fieldsToUpdate.email) {
+      const emailCheck = await pool.query('SELECT user_id FROM users WHERE email = $1 AND user_id != $2', [fieldsToUpdate.email, userId]);
+      if (emailCheck.rows.length > 0) throw new Error('Email already exists');
     }
 
-    // Validate role if provided
-    if (role) {
-      const validRoles = ['admin', 'manager', 'qa', 'staff', 'viewer'];
-      if (!validRoles.includes(role)) {
-        throw new Error(`Invalid role. Must be one of: ${validRoles.join(', ')}`);
-      }
-    }
-
-    // Check if email is being changed and already exists
-    if (email) {
-      const emailCheck = await pool.query(
-        'SELECT user_id FROM users WHERE email = $1 AND user_id != $2',
-        [email, userId]
-      );
-
-      if (emailCheck.rows.length > 0) {
-        throw new Error('Email already exists');
-      }
-    }
-
-    // Build update query dynamically
     const updates = [];
     const values = [];
     let paramCount = 1;
 
-    if (email) {
-      updates.push(`email = $${paramCount}`);
-      values.push(email);
-      paramCount++;
+    for (const [key, value] of Object.entries(fieldsToUpdate)) {
+      if (value !== undefined) {
+        updates.push(`${key} = $${paramCount}`);
+        values.push(key === 'emergency_contacts' ? JSON.stringify(value) : value);
+        paramCount++;
+      }
     }
 
-    if (full_name) {
-      updates.push(`full_name = $${paramCount}`);
-      values.push(full_name);
-      paramCount++;
-    }
-
+    // Handle password update separately if provided
     if (password) {
-      const saltRounds = 10;
-      const password_hash = await bcrypt.hash(password, saltRounds);
       updates.push(`password_hash = $${paramCount}`);
-      values.push(password_hash);
+      values.push(await bcrypt.hash(password, 10));
+      paramCount++;
+      updates.push(`requires_password_change = $${paramCount}`);
+      values.push(true);
       paramCount++;
     }
 
-    if (role) {
-      updates.push(`role = $${paramCount}`);
-      values.push(role);
-      paramCount++;
-    }
-
-    if (is_active !== undefined) {
-      updates.push(`is_active = $${paramCount}`);
-      values.push(is_active);
-      paramCount++;
-    }
-
-    if (is_verified !== undefined) {
-      updates.push(`is_verified = $${paramCount}`);
-      values.push(is_verified);
-      paramCount++;
-    }
-
-    // Always update updated_at
+    // Force the updated_at timestamp safely
     updates.push(`updated_at = NOW()`);
-
-    // Add user_id as last parameter
     values.push(userId);
 
-    const query = `
-      UPDATE users
-      SET ${updates.join(', ')}
-      WHERE user_id = $${paramCount}
-      RETURNING 
-        user_id,
-        email,
-        full_name,
-        role,
-        is_active,
-        is_verified,
-        created_at,
-        updated_at,
-        last_login
-    `;
-
+    const query = `UPDATE users SET ${updates.join(', ')} WHERE user_id = $${paramCount} RETURNING *`;
     const result = await pool.query(query, values);
-
-    console.log(`✅ User updated: ${result.rows[0].email}`);
-
+    
+    delete result.rows[0].password_hash;
     return result.rows[0];
   } catch (error) {
-    console.error('❌ Update user error:', error.message);
     throw error;
   }
 };
 
-/**
- * Delete user
- */
 const deleteUser = async (userId) => {
   try {
-    // Check if user exists
-    const userCheck = await pool.query(
-      'SELECT email FROM users WHERE user_id = $1',
-      [userId]
-    );
-
-    if (userCheck.rows.length === 0) {
-      throw new Error('User not found');
-    }
-
-    const email = userCheck.rows[0].email;
-
-    // Delete user (this will cascade delete sessions, etc.)
     await pool.query('DELETE FROM users WHERE user_id = $1', [userId]);
-
-    console.log(`✅ User deleted: ${email}`);
-
     return { message: 'User deleted successfully' };
   } catch (error) {
-    console.error('❌ Delete user error:', error.message);
     throw error;
   }
 };
 
-/**
- * Update user active status
- */
 const updateUserStatus = async (userId, isActive) => {
   try {
-    const query = `
-      UPDATE users
-      SET is_active = $1, updated_at = NOW()
-      WHERE user_id = $2
-      RETURNING 
-        user_id,
-        email,
-        full_name,
-        role,
-        is_active,
-        is_verified,
-        created_at,
-        updated_at,
-        last_login
-    `;
-
-    const result = await pool.query(query, [isActive, userId]);
-
-    if (result.rows.length === 0) {
-      throw new Error('User not found');
-    }
-
-    console.log(`✅ User status updated: ${result.rows[0].email} -> ${isActive ? 'active' : 'inactive'}`);
-
+    const result = await pool.query(`UPDATE users SET is_active = $1, updated_at = NOW() WHERE user_id = $2 RETURNING *`, [isActive, userId]);
+    delete result.rows[0].password_hash;
     return result.rows[0];
-  } catch (error) {
-    console.error('❌ Update user status error:', error.message);
-    throw error;
-  }
+  } catch (error) { throw error; }
 };
 
-/**
- * Initiate password reset (generate token and send email)
- */
 const initiatePasswordReset = async (userId) => {
   try {
-    // Get user
-    const userQuery = await pool.query(
-      'SELECT email, full_name FROM users WHERE user_id = $1 AND is_active = true',
-      [userId]
-    );
-
-    if (userQuery.rows.length === 0) {
-      throw new Error('User not found or inactive');
-    }
-
-    const user = userQuery.rows[0];
-
-    // Generate reset token
+    const userQuery = await pool.query('SELECT email, full_name FROM users WHERE user_id = $1 AND is_active = true', [userId]);
+    if (userQuery.rows.length === 0) throw new Error('User not found');
     const crypto = require('crypto');
     const resetToken = crypto.randomBytes(32).toString('hex');
     const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-
-    // Store reset token (expires in 1 hour)
-    await pool.query(
-      `INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at)
-       VALUES ($1, $2, NOW() + INTERVAL '1 hour', NOW())`,
-      [userId, hashedToken]
-    );
-
-    // TODO: Send email with reset link
-    // For now, just log the token (in production, send actual email)
-    console.log(`🔑 Password reset token for ${user.email}: ${resetToken}`);
-    console.log(`   (In production, this would be sent via email)`);
-
-    console.log(`✅ Password reset initiated for: ${user.email}`);
-
-    return {
-      message: 'Password reset email sent successfully',
-      // Don't send token in production!
-      dev_token: process.env.NODE_ENV === 'development' ? resetToken : undefined
-    };
-  } catch (error) {
-    console.error('❌ Initiate password reset error:', error.message);
-    throw error;
-  }
+    await pool.query(`INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour', NOW())`, [userId, hashedToken]);
+    return { message: 'Password reset initiated', dev_token: process.env.NODE_ENV === 'development' ? resetToken : undefined };
+  } catch (error) { throw error; }
 };
 
-/**
- * Get user statistics
- */
 const getUserStats = async () => {
   try {
-    const query = `
+    const result = await pool.query(`
       SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE is_active = true) as active,
+        COUNT(*) as total, COUNT(*) FILTER (WHERE is_active = true) as active,
         COUNT(*) FILTER (WHERE is_active = false) as inactive,
-        COUNT(*) FILTER (WHERE role = 'admin') as admins,
-        COUNT(*) FILTER (WHERE role = 'manager') as managers,
-        COUNT(*) FILTER (WHERE role = 'qa') as qa_users,
-        COUNT(*) FILTER (WHERE role = 'staff') as staff,
-        COUNT(*) FILTER (WHERE role = 'viewer') as viewers,
-        COUNT(*) FILTER (WHERE is_verified = true) as verified,
-        COUNT(*) FILTER (WHERE is_verified = false) as unverified,
-        COUNT(*) FILTER (WHERE last_login > NOW() - INTERVAL '7 days') as active_last_week
+        COUNT(*) FILTER (WHERE role = 'admin') as admins, COUNT(*) FILTER (WHERE role = 'ceo') as ceos,
+        COUNT(*) FILTER (WHERE role = 'cfo') as cfos, COUNT(*) FILTER (WHERE role = 'manager') as managers,
+        COUNT(*) FILTER (WHERE role = 'engineering') as engineers, COUNT(*) FILTER (WHERE role = 'qa') as qa_users,
+        COUNT(*) FILTER (WHERE role = 'staff') as staff, COUNT(*) FILTER (WHERE role = 'super_viewer') as super_viewers,
+        COUNT(*) FILTER (WHERE role = 'viewer') as viewers
       FROM users
-    `;
-
-    const result = await pool.query(query);
+    `);
     return result.rows[0];
-  } catch (error) {
-    console.error('❌ Get user stats error:', error.message);
-    throw error;
-  }
+  } catch (error) { throw error; }
 };
 
-module.exports = {
-  getAllUsers,
-  getUserById,
-  createUser,
-  updateUser,
-  deleteUser,
-  updateUserStatus,
-  initiatePasswordReset,
-  getUserStats
-};
+module.exports = { getAllUsers, getUserById, createUser, updateUser, deleteUser, updateUserStatus, initiatePasswordReset, getUserStats };

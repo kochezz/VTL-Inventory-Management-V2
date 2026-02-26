@@ -1482,6 +1482,8 @@ async function getIPQCForReview(ipqcId) {
         ipqc.all_checks_passed,
         ipqc.operator_name,
         ipqc.notes,
+        ipqc.lab_report_data,
+        ipqc.lab_report_name,
         ipqc.created_at,
         ipqc.qa_status,
         ipqc.qa_reviewed_by,
@@ -2003,7 +2005,11 @@ async function getNextIPQCStage(batchId) {
         qa_status,
         
         -- Custom data
-        stage_custom_data
+        stage_custom_data,
+
+      -- Lab Report
+        lab_report_data,         
+        lab_report_name          
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
         $9, $10, $11, $12, $13, $14, $15, $16, $17,
@@ -2014,7 +2020,8 @@ async function getNextIPQCStage(batchId) {
         $36,
         $37, $38, $39,
         $40,
-        $41
+        $41,
+        $42, $43                 
       )
       RETURNING *
     `;
@@ -2078,7 +2085,11 @@ async function getNextIPQCStage(batchId) {
       'draft_check',                              // $40
       
       // Custom
-      JSON.stringify(ipqcData.stage_custom_data || {})  // $41
+      JSON.stringify(ipqcData.stage_custom_data || {}),  // $41
+
+      // Lab Report
+      ipqcData.lab_report_data || null,           // $42
+      ipqcData.lab_report_name || null            // $43
     ];
     
     const result = await pool.query(insertQuery, values);

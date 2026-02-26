@@ -10,7 +10,7 @@ const analyticsService = require('../services/analytics-service');
  */
 router.get('/dashboard', authenticate, async (req, res) => {
   try {
-    const { timeRange } = req.query; // '7d', '30d', '90d', '1y'
+    const { timeRange } = req.query; // '7d', '30d', '90d', '1y', 'all'
     
     const dashboardData = await analyticsService.getDashboardMetrics(timeRange);
     

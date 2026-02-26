@@ -299,7 +299,7 @@ export default function BatchDetailPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">
             <button onClick={() => router.back()} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
               <ArrowLeft className="w-5 h-5 text-gray-400" />
@@ -310,19 +310,63 @@ export default function BatchDetailPage() {
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
-            {/* NEW PRINT PICK LIST BUTTON */}
-            {(batch.status === 'ready_for_setup' || batch.status === 'in_progress') && (
+          <div className="flex flex-wrap items-center gap-3">
+            {/* LAB REPORT VIEW BUTTON (Shows if Lab Report is attached to any IPQC Check) */}
+            {batch.ipqc_checks?.some((c: any) => c.lab_report_data) && (
               <button
-                onClick={() => window.open(`/production/${batch.batch_id}/pick-list`, '_blank')}
-                className="px-4 py-2 bg-dark-800 hover:bg-dark-700 border border-dark-600 text-gray-300 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                onClick={() => {
+                  const checkWithReport = batch.ipqc_checks.find((c: any) => c.lab_report_data);
+                  if (checkWithReport) {
+                    try {
+                      // Convert Base64 to Blob for native browser rendering
+                      const base64Data = checkWithReport.lab_report_data;
+                      const arr = base64Data.split(',');
+                      const mime = arr[0].match(/:(.*?);/)?.[1] || 'application/pdf';
+                      const bstr = atob(arr[1]);
+                      let n = bstr.length;
+                      const u8arr = new Uint8Array(n);
+                      while (n--) {
+                        u8arr[n] = bstr.charCodeAt(n);
+                      }
+                      const blob = new Blob([u8arr], { type: mime });
+                      const url = URL.createObjectURL(blob);
+                      
+                      // Open the Blob URL in a new tab
+                      window.open(url, '_blank');
+                    } catch (error) {
+                      console.error('Failed to open document:', error);
+                      alert('Could not open the document. The file might be corrupted.');
+                    }
+                  }
+                }}
+                className="px-4 py-2 bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 rounded-lg text-sm font-medium transition-colors border border-blue-500/30 flex items-center gap-2 whitespace-nowrap"
               >
-                <Printer className="w-4 h-4" />
-                Print Pick List
+                <FileText className="w-4 h-4" /> View Lab Report
               </button>
             )}
 
-            <div className={`px-4 py-2 rounded-full border ${getStatusColor(batch.status)}`}>
+            {/* PRINT PICK LIST BUTTON */}
+            {(batch.status === 'ready_for_setup' || batch.status === 'in_progress') && (
+              <button
+                onClick={() => window.open(`/production/${batch.batch_id}/pick-list`, '_blank')}
+                className="px-4 py-2 bg-dark-800 hover:bg-dark-700 border border-dark-600 text-gray-300 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <Printer className="w-4 h-4" /> Pick List
+              </button>
+            )}
+
+            {/* GENERATE COA BUTTON */}
+            {batch.status === 'released' && (
+              <button
+                onClick={() => window.open(`/production/${batch.batch_id}/coa`, '_blank')}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold transition-colors shadow-lg flex items-center gap-2 whitespace-nowrap"
+              >
+                <FileText className="w-4 h-4" /> Generate COA
+              </button>
+            )}
+
+            {/* STATUS BADGE - FIXED WRAPPING */}
+            <div className={`px-4 py-2 rounded-full border whitespace-nowrap ${getStatusColor(batch.status)}`}>
               <span className="text-sm font-semibold uppercase tracking-wide">
                 {batch.status.replace('_', ' ')}
               </span>

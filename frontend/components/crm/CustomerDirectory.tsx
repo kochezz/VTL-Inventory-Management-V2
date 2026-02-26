@@ -66,6 +66,8 @@ export default function CustomerDirectory() {
 
   const getTierBadge = (tier: string) => {
     switch (tier) {
+      case 'Corporate':
+        return <span className="px-2 py-1 rounded text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">CORPORATE (T4)</span>;
       case 'Chain':
         return <span className="px-2 py-1 rounded text-xs font-bold bg-purple-500/20 text-purple-400 border border-purple-500/30">CHAIN (T3)</span>;
       case 'Wholesale':

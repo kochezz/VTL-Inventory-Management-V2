@@ -1,12 +1,12 @@
 // ============================================================================
 // UPDATED: IPQC QA REVIEW MODAL - STAGE-AWARE VERSION
-// With 21 CFR Part 11 Digital Signature & Comprehensive Data View
+// With 21 CFR Part 11 Digital Signature, Comprehensive Data View, & Lab Reports
 // ============================================================================
 
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, AlertCircle, Clock, User, Droplet, Gauge, Package, Eye, FileText, Search, Key } from 'lucide-react';
+import { X, CheckCircle2, XCircle, AlertCircle, Clock, User, Droplet, Gauge, Package, Eye, FileText, Search, Key, FileCheck } from 'lucide-react';
 import { api, useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
 
@@ -44,6 +44,10 @@ interface IPQCCheck {
   water_treatment_notes?: string;
   line_clearance_verified?: boolean;
   equipment_cleaned?: boolean;
+  
+  // Lab Report fields
+  lab_report_data?: string;
+  lab_report_name?: string;
   
   // Filling fields
   fill_volume_ml?: number;
@@ -85,37 +89,34 @@ export default function IPQCReviewModal({
   onClose,
   onSuccess
 }: IPQCReviewModalProps) {
-  const { token } = useAuth(); // NEW: Needed for Signature Validation
+  const { token } = useAuth();
   const [loading, setLoading] = useState(false);
   const [ipqcCheck, setIpqcCheck] = useState<IPQCCheck | null>(null);
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [error, setError] = useState('');
-  
-  // Digital Signature State (NEW)
   const [signature, setSignature] = useState('');
 
   useEffect(() => {
     if (isOpen && ipqcId) {
       fetchIPQCDetails();
-      setSignature(''); // Reset signature on open
+      setSignature('');
     }
   }, [isOpen, ipqcId]);
 
- const fetchIPQCDetails = async () => {
-  try {
-    setLoading(true);
-    const response = await api.get(`/production/ipqc/${ipqcId}/review`);
-    setIpqcCheck(response.data.ipqc_check);
-  } catch (err: any) {
-    console.error('Error fetching IPQC details:', err);
-    setError('Failed to load IPQC check details');
-  } finally {
-    setLoading(false);
-  }
-};
+  const fetchIPQCDetails = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/production/ipqc/${ipqcId}/review`);
+      setIpqcCheck(response.data.ipqc_check);
+    } catch (err: any) {
+      console.error('Error fetching IPQC details:', err);
+      setError('Failed to load IPQC check details');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // NEW: Signature Verification Function
   const verifySignature = async () => {
     try {
       await axios.post(
@@ -131,96 +132,78 @@ export default function IPQCReviewModal({
   };
 
   const handleApprove = async () => {
-    if (!signature) { setError('Digital signature required.'); return; }
-
+    if (!signature) { 
+      setError('Digital signature required.'); 
+      return; 
+    }
     try {
-      setLoading(true);
+      setLoading(true); 
       setError('');
-
-      if (!(await verifySignature())) {
-        setLoading(false);
-        return;
+      if (!(await verifySignature())) { 
+        setLoading(false); 
+        return; 
       }
-
       await api.post(`/production/ipqc/${ipqcId}/approve`);
-      onSuccess();
-      onClose();
+      onSuccess(); 
+      onClose(); 
       resetModal();
     } catch (err: any) {
-      console.error('Error approving IPQC:', err);
       setError(err.response?.data?.error || 'Failed to approve IPQC check');
-    } finally {
-      setLoading(false);
+    } finally { 
+      setLoading(false); 
     }
   };
 
   const handleReject = async () => {
-    if (!signature) { setError('Digital signature required.'); return; }
-
+    if (!signature) { 
+      setError('Digital signature required.'); 
+      return; 
+    }
     try {
-      setLoading(true);
+      setLoading(true); 
       setError('');
-
-      if (!rejectionReason.trim()) {
-        setError('Please provide a reason for rejection');
-        setLoading(false);
-        return;
+      if (!rejectionReason.trim()) { 
+        setError('Please provide a reason for rejection'); 
+        setLoading(false); 
+        return; 
       }
-
-      if (!(await verifySignature())) {
-        setLoading(false);
-        return;
+      if (!(await verifySignature())) { 
+        setLoading(false); 
+        return; 
       }
-
-      await api.post(`/production/ipqc/${ipqcId}/reject`, {
-        rejection_reason: rejectionReason
-      });
-
-      onSuccess();
-      onClose();
+      await api.post(`/production/ipqc/${ipqcId}/reject`, { rejection_reason: rejectionReason });
+      onSuccess(); 
+      onClose(); 
       resetModal();
     } catch (err: any) {
-      console.error('Error rejecting IPQC:', err);
       setError(err.response?.data?.error || 'Failed to reject IPQC check');
-    } finally {
-      setLoading(false);
+    } finally { 
+      setLoading(false); 
     }
   };
 
   const resetModal = () => {
-    setAction(null);
-    setRejectionReason('');
-    setSignature('');
-    setError('');
+    setAction(null); 
+    setRejectionReason(''); 
+    setSignature(''); 
+    setError(''); 
     setIpqcCheck(null);
   };
 
-  // Helper function to get stage icon
   const getStageIcon = () => {
     if (!ipqcCheck?.stage_code) return null;
-    
     switch (ipqcCheck.stage_code) {
       case 'WATER_TREATMENT':
-      case 'PRE_PRODUCTION':
-        return <Droplet className="w-5 h-5 text-blue-400" />;
-      case 'BOTTLE_BLOW':
-        return <Eye className="w-5 h-5 text-purple-400" />;
-      case 'RETURNED_BOTTLE_INSPECTION':
-        return <Search className="w-5 h-5 text-purple-400" />;
-      case 'WASHING':
-        return <Droplet className="w-5 h-5 text-blue-400" />;
-      case 'FILLING':
-        return <Gauge className="w-5 h-5 text-green-400" />;
-      case 'CAPPING':
-        return <Package className="w-5 h-5 text-yellow-400" />;
-      case 'LABELING':
-        return <Eye className="w-5 h-5 text-purple-400" />;
-      case 'CODING':
-        return <FileText className="w-5 h-5 text-indigo-400" />;
-      case 'SHRINK_SEAL':
-        return <Package className="w-5 h-5 text-orange-400" />;
-      default:
-        return <CheckCircle2 className="w-5 h-5 text-gray-400" />;
+      case 'PRE_PRODUCTION': return <Droplet className="w-5 h-5 text-blue-400" />;
+      case 'BOTTLE_BLOW': return <Eye className="w-5 h-5 text-purple-400" />;
+      case 'RETURNED_BOTTLE_INSPECTION': return <Search className="w-5 h-5 text-purple-400" />;
+      case 'WASHING': return <Droplet className="w-5 h-5 text-blue-400" />;
+      case 'FILLING': return <Gauge className="w-5 h-5 text-green-400" />;
+      case 'CAPPING': return <Package className="w-5 h-5 text-yellow-400" />;
+      case 'LABELING': return <Eye className="w-5 h-5 text-purple-400" />;
+      case 'CODING': return <FileText className="w-5 h-5 text-indigo-400" />;
+      case 'SHRINK_SEAL': return <Package className="w-5 h-5 text-orange-400" />;
+      default: return <CheckCircle2 className="w-5 h-5 text-gray-400" />;
     }
   };
 
@@ -241,13 +224,7 @@ export default function IPQCReviewModal({
                 {ipqcCheck?.batch_number} • Check #{ipqcCheck?.check_sequence}
               </p>
             </div>
-            <button
-              onClick={() => {
-                onClose();
-                resetModal();
-              }}
-              className="p-2 hover:bg-dark-700 rounded-lg transition-colors"
-            >
+            <button onClick={() => { onClose(); resetModal(); }} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
               <X className="w-5 h-5 text-gray-400" />
             </button>
           </div>
@@ -267,21 +244,11 @@ export default function IPQCReviewModal({
           ) : ipqcCheck ? (
             <>
               {/* Overall Status */}
-              <div className={`p-4 rounded-lg mb-6 ${
-                ipqcCheck.all_checks_passed 
-                  ? 'bg-green-500/10 border border-green-500/30' 
-                  : 'bg-red-500/10 border border-red-500/30'
-              }`}>
+              <div className={`p-4 rounded-lg mb-6 ${ipqcCheck.all_checks_passed ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
                 <div className="flex items-center gap-3">
-                  {ipqcCheck.all_checks_passed ? (
-                    <CheckCircle2 className="w-6 h-6 text-green-400" />
-                  ) : (
-                    <XCircle className="w-6 h-6 text-red-400" />
-                  )}
+                  {ipqcCheck.all_checks_passed ? <CheckCircle2 className="w-6 h-6 text-green-400" /> : <XCircle className="w-6 h-6 text-red-400" />}
                   <div>
-                    <p className={`font-semibold ${
-                      ipqcCheck.all_checks_passed ? 'text-green-400' : 'text-red-400'
-                    }`}>
+                    <p className={`font-semibold ${ipqcCheck.all_checks_passed ? 'text-green-400' : 'text-red-400'}`}>
                       {ipqcCheck.all_checks_passed ? 'All Checks Passed' : 'Some Checks Failed'}
                     </p>
                     <p className="text-sm text-gray-400">
@@ -297,14 +264,10 @@ export default function IPQCReviewModal({
                   <p className="text-sm text-gray-400 mb-1">Product</p>
                   <p className="text-white font-medium">{ipqcCheck.product_name}</p>
                 </div>
-
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700">
                   <p className="text-sm text-gray-400 mb-1">Check Time</p>
-                  <p className="text-white font-medium">
-                    {new Date(ipqcCheck.check_time).toLocaleString()}
-                  </p>
+                  <p className="text-white font-medium">{new Date(ipqcCheck.check_time).toLocaleString()}</p>
                 </div>
-
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700">
                   <p className="text-sm text-gray-400 mb-1">Operator</p>
                   <div className="flex items-center gap-2">
@@ -312,21 +275,16 @@ export default function IPQCReviewModal({
                     <p className="text-white font-medium">{ipqcCheck.operator_name}</p>
                   </div>
                 </div>
-
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700">
                   <p className="text-sm text-gray-400 mb-1">Recorded At</p>
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-gray-400" />
-                    <p className="text-white font-medium">
-                      {new Date(ipqcCheck.created_at).toLocaleString()}
-                    </p>
+                    <p className="text-white font-medium">{new Date(ipqcCheck.created_at).toLocaleString()}</p>
                   </div>
                 </div>
               </div>
 
-              {/* STAGE-SPECIFIC MEASUREMENTS */}
-              
-              {/* Water Treatment / Pre-Production */}
+              {/* WATER TREATMENT / PRE-PRODUCTION */}
               {(ipqcCheck.stage_code === 'WATER_TREATMENT' || ipqcCheck.stage_code === 'PRE_PRODUCTION') && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
@@ -341,42 +299,36 @@ export default function IPQCReviewModal({
                         <span className="text-white font-medium">{ipqcCheck.water_source}</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.raw_water_ph !== null && ipqcCheck.raw_water_ph !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Raw Water pH</span>
                         <span className="text-white font-medium">{ipqcCheck.raw_water_ph}</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.raw_water_conductivity !== null && ipqcCheck.raw_water_conductivity !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Raw Water Conductivity</span>
                         <span className="text-white font-medium">{ipqcCheck.raw_water_conductivity} µS/cm</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.ro_conductivity !== null && ipqcCheck.ro_conductivity !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">RO Conductivity</span>
                         <span className="text-white font-medium">{ipqcCheck.ro_conductivity} µS/cm</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.uv_system_status && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">UV System</span>
                         <span className="text-white font-medium">{ipqcCheck.uv_system_status}</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.ozone_system_status && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Ozone System</span>
                         <span className="text-white font-medium">{ipqcCheck.ozone_system_status}</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.ozone_residual_ppm !== null && ipqcCheck.ozone_residual_ppm !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Ozone Residual</span>
@@ -414,6 +366,44 @@ export default function IPQCReviewModal({
                         <p className="text-white">{ipqcCheck.water_treatment_notes}</p>
                       </div>
                     )}
+
+                    {/* Lab Report Attachment View */}
+                    {ipqcCheck.lab_report_data && (
+                      <div className="pt-4 mt-2 border-t border-dark-700">
+                        <p className="text-sm font-semibold text-gray-300 mb-2">Attached Lab Report</p>
+                        <button 
+                          onClick={(e) => {
+                            e.preventDefault(); // Prevent form submission if inside a form
+                            try {
+                              const base64Data = ipqcCheck.lab_report_data as string;
+                              const arr = base64Data.split(',');
+                              const mime = arr[0].match(/:(.*?);/)?.[1] || 'application/pdf';
+                              const bstr = atob(arr[1]);
+                              let n = bstr.length;
+                              const u8arr = new Uint8Array(n);
+                              while (n--) {
+                                u8arr[n] = bstr.charCodeAt(n);
+                              }
+                              const blob = new Blob([u8arr], { type: mime });
+                              const url = URL.createObjectURL(blob);
+                              window.open(url, '_blank');
+                            } catch (error) {
+                              console.error('Failed to open document:', error);
+                              alert('Could not open the document. The file might be corrupted.');
+                            }
+                          }}
+                          className="w-full flex items-center justify-between px-4 py-3 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 rounded-lg transition-colors group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <FileCheck className="w-5 h-5 text-blue-400" />
+                            <span className="text-blue-400 font-medium group-hover:text-blue-300">
+                              {ipqcCheck.lab_report_name || 'Laboratory_COA_Report.pdf'}
+                            </span>
+                          </div>
+                          <Eye className="w-4 h-4 text-blue-400 opacity-50 group-hover:opacity-100" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -422,10 +412,9 @@ export default function IPQCReviewModal({
               {ipqcCheck.stage_code === 'BOTTLE_BLOW' && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Eye className="w-5 h-5 text-purple-400" />
+                    <Eye className="w-5 h-5 text-purple-400" /> 
                     Bottle Blowing & Inspection
                   </h3>
-                  
                   <div className="space-y-3">
                     {ipqcCheck.visual_inspection_pass !== null && ipqcCheck.visual_inspection_pass !== undefined && (
                       <div className="flex items-center justify-between">
@@ -442,20 +431,17 @@ export default function IPQCReviewModal({
                         </div>
                       </div>
                     )}
-                    
                     {ipqcCheck.bottle_integrity && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Bottle Integrity</span>
                         <span className={`font-medium ${
                           ipqcCheck.bottle_integrity === 'OK' ? 'text-green-400' : 
-                          ipqcCheck.bottle_integrity === 'Minor Defects' ? 'text-yellow-400' : 
-                          'text-red-400'
+                          ipqcCheck.bottle_integrity === 'Minor Defects' ? 'text-yellow-400' : 'text-red-400'
                         }`}>
                           {ipqcCheck.bottle_integrity}
                         </span>
                       </div>
                     )}
-                    
                     {ipqcCheck.equipment_cleaned !== null && ipqcCheck.equipment_cleaned !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Equipment Cleaned</span>
@@ -467,7 +453,6 @@ export default function IPQCReviewModal({
                         </div>
                       </div>
                     )}
-                    
                     {ipqcCheck.visual_inspection_notes && (
                       <div className="pt-2 border-t border-dark-700">
                         <p className="text-sm text-gray-400 mb-1">Inspection Notes</p>
@@ -482,31 +467,25 @@ export default function IPQCReviewModal({
               {ipqcCheck.stage_code === 'RETURNED_BOTTLE_INSPECTION' && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Search className="w-5 h-5 text-purple-400" />
+                    <Search className="w-5 h-5 text-purple-400" /> 
                     Returned Bottle Inspection (Re-Fill)
                   </h3>
-                  
                   <div className="space-y-4">
                     {(() => {
-                      const customData = ipqcCheck.stage_custom_data 
-                        ? (typeof ipqcCheck.stage_custom_data === 'string' 
-                            ? JSON.parse(ipqcCheck.stage_custom_data) 
-                            : ipqcCheck.stage_custom_data)
-                        : {};
-                      
+                      const customData = ipqcCheck.stage_custom_data ? (typeof ipqcCheck.stage_custom_data === 'string' ? JSON.parse(ipqcCheck.stage_custom_data) : ipqcCheck.stage_custom_data) : {};
                       return (
                         <>
                           <div className="bg-dark-800 rounded p-3">
                             <p className="text-sm font-semibold text-gray-300 mb-2">Inspection Checklist</p>
                             <div className="space-y-2">
-                              {[
-                                { key: 'exterior_clean', label: 'Exterior Clean' },
-                                { key: 'no_cracks_damage', label: 'No Cracks/Damage' },
-                                { key: 'cap_threads_intact', label: 'Cap Threads Intact' },
-                                { key: 'base_not_damaged', label: 'Base Not Damaged' },
-                                { key: 'no_discoloration', label: 'No Discoloration' },
-                                { key: 'no_foreign_odors', label: 'No Foreign Odors' },
-                                { key: 'bottles_acceptable', label: 'All Bottles Acceptable' }
+                              {[ 
+                                { key: 'exterior_clean', label: 'Exterior Clean' }, 
+                                { key: 'no_cracks_damage', label: 'No Cracks/Damage' }, 
+                                { key: 'cap_threads_intact', label: 'Cap Threads Intact' }, 
+                                { key: 'base_not_damaged', label: 'Base Not Damaged' }, 
+                                { key: 'no_discoloration', label: 'No Discoloration' }, 
+                                { key: 'no_foreign_odors', label: 'No Foreign Odors' }, 
+                                { key: 'bottles_acceptable', label: 'All Bottles Acceptable' } 
                               ].map(item => (
                                 customData[item.key] !== undefined && (
                                   <div key={item.key} className="flex items-center justify-between">
@@ -526,7 +505,6 @@ export default function IPQCReviewModal({
                               ))}
                             </div>
                           </div>
-
                           {ipqcCheck.visual_inspection_notes && (
                             <div className="pt-2 border-t border-dark-700">
                               <p className="text-sm text-gray-400 mb-1">Inspection Notes</p>
@@ -544,21 +522,14 @@ export default function IPQCReviewModal({
               {ipqcCheck.stage_code === 'WASHING' && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Droplet className="w-5 h-5 text-blue-400" />
+                    <Droplet className="w-5 h-5 text-blue-400" /> 
                     Bottle Washing
                   </h3>
-                  
                   <div className="space-y-4">
                     {(() => {
-                      const customData = ipqcCheck.stage_custom_data 
-                        ? (typeof ipqcCheck.stage_custom_data === 'string' 
-                            ? JSON.parse(ipqcCheck.stage_custom_data) 
-                            : ipqcCheck.stage_custom_data)
-                        : {};
-                      
+                      const customData = ipqcCheck.stage_custom_data ? (typeof ipqcCheck.stage_custom_data === 'string' ? JSON.parse(ipqcCheck.stage_custom_data) : ipqcCheck.stage_custom_data) : {};
                       return (
                         <>
-                          {/* Washing Steps */}
                           <div className="bg-dark-800 rounded p-3">
                             <p className="text-sm font-semibold text-gray-300 mb-2">Washing Steps</p>
                             <div className="space-y-2">
@@ -573,7 +544,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.internal_wash_complete !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Internal Wash</span>
@@ -585,7 +555,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.sterilant_wash_complete !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Sterilant Wash</span>
@@ -597,7 +566,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.final_rinse_complete !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Final Rinse</span>
@@ -611,8 +579,6 @@ export default function IPQCReviewModal({
                               )}
                             </div>
                           </div>
-
-                          {/* Water Quality */}
                           {(ipqcCheck.fill_temperature !== null || customData.rinse_temperature !== null) && (
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
@@ -621,19 +587,12 @@ export default function IPQCReviewModal({
                                   {ipqcCheck.fill_temperature || customData.rinse_temperature} °C
                                 </span>
                               </div>
-                              
                               {(ipqcCheck.fill_volume_within_spec !== null || customData.temperature_within_spec !== null) && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400">Temperature Status</span>
                                   <div className="flex items-center gap-2">
-                                    <span className={`font-medium ${
-                                      (ipqcCheck.fill_volume_within_spec || customData.temperature_within_spec) 
-                                        ? 'text-green-400' 
-                                        : 'text-red-400'
-                                    }`}>
-                                      {(ipqcCheck.fill_volume_within_spec || customData.temperature_within_spec) 
-                                        ? 'Within Spec' 
-                                        : 'Out of Spec'}
+                                    <span className={`font-medium ${(ipqcCheck.fill_volume_within_spec || customData.temperature_within_spec) ? 'text-green-400' : 'text-red-400'}`}>
+                                      {(ipqcCheck.fill_volume_within_spec || customData.temperature_within_spec) ? 'Within Spec' : 'Out of Spec'}
                                     </span>
                                     {(ipqcCheck.fill_volume_within_spec || customData.temperature_within_spec) && (
                                       <CheckCircle2 className="w-4 h-4 text-green-400" />
@@ -643,16 +602,12 @@ export default function IPQCReviewModal({
                               )}
                             </div>
                           )}
-
-                          {/* Sterilant Type */}
                           {customData.sterilant_type && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-400">Sterilant Type</span>
                               <span className="text-white font-medium">{customData.sterilant_type}</span>
                             </div>
                           )}
-
-                          {/* Post-Wash Verification */}
                           <div className="bg-dark-800 rounded p-3">
                             <p className="text-sm font-semibold text-gray-300 mb-2">Post-Wash Verification</p>
                             <div className="space-y-2">
@@ -667,7 +622,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {ipqcCheck.equipment_cleaned !== null && ipqcCheck.equipment_cleaned !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Equipment Cleaned</span>
@@ -681,8 +635,6 @@ export default function IPQCReviewModal({
                               )}
                             </div>
                           </div>
-
-                          {/* Washing Notes */}
                           {ipqcCheck.visual_inspection_notes && (
                             <div className="pt-2 border-t border-dark-700">
                               <p className="text-sm text-gray-400 mb-1">Washing Notes</p>
@@ -696,21 +648,18 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* Filling Stage */}
+              {/* FILLING */}
               {(ipqcCheck.stage_code === 'FILLING' && ipqcCheck.fill_volume_ml !== null) && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Gauge className="w-5 h-5 text-green-400" />
+                    <Gauge className="w-5 h-5 text-green-400" /> 
                     Filling Parameters
                   </h3>
-                  
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400">Fill Volume</span>
                       <div className="flex items-center gap-2">
-                        <span className={`font-medium ${
-                          ipqcCheck.fill_volume_within_spec ? 'text-green-400' : 'text-red-400'
-                        }`}>
+                        <span className={`font-medium ${ipqcCheck.fill_volume_within_spec ? 'text-green-400' : 'text-red-400'}`}>
                           {ipqcCheck.fill_volume_ml} ml
                         </span>
                         {ipqcCheck.fill_volume_within_spec ? (
@@ -720,7 +669,6 @@ export default function IPQCReviewModal({
                         )}
                       </div>
                     </div>
-                    
                     {ipqcCheck.fill_pressure !== null && ipqcCheck.fill_pressure !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Fill Pressure</span>
@@ -743,21 +691,18 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* Capping Stage */}
+              {/* CAPPING */}
               {(ipqcCheck.stage_code === 'CAPPING' && ipqcCheck.cap_torque_nm !== null) && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Package className="w-5 h-5 text-yellow-400" />
+                    <Package className="w-5 h-5 text-yellow-400" /> 
                     Capping Parameters
                   </h3>
-                  
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400">Cap Torque</span>
                       <div className="flex items-center gap-2">
-                        <span className={`font-medium ${
-                          ipqcCheck.cap_torque_within_spec ? 'text-green-400' : 'text-red-400'
-                        }`}>
+                        <span className={`font-medium ${ipqcCheck.cap_torque_within_spec ? 'text-green-400' : 'text-red-400'}`}>
                           {ipqcCheck.cap_torque_nm} Nm
                         </span>
                         {ipqcCheck.cap_torque_within_spec ? (
@@ -771,21 +716,18 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* Labeling / Visual Inspection Stage */}
+              {/* LABELING & VISUAL INSPECTION */}
               {(ipqcCheck.stage_code === 'LABELING' && ipqcCheck.visual_inspection_pass !== null) && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Eye className="w-5 h-5 text-purple-400" />
+                    <Eye className="w-5 h-5 text-purple-400" /> 
                     Visual Inspections
                   </h3>
-                  
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400">Visual Inspection</span>
                       <div className="flex items-center gap-2">
-                        <span className={`font-medium ${
-                          ipqcCheck.visual_inspection_pass ? 'text-green-400' : 'text-red-400'
-                        }`}>
+                        <span className={`font-medium ${ipqcCheck.visual_inspection_pass ? 'text-green-400' : 'text-red-400'}`}>
                           {ipqcCheck.visual_inspection_pass ? 'Pass' : 'Fail'}
                         </span>
                         {ipqcCheck.visual_inspection_pass ? (
@@ -795,28 +737,23 @@ export default function IPQCReviewModal({
                         )}
                       </div>
                     </div>
-                    
                     {ipqcCheck.label_position_correct !== null && ipqcCheck.label_position_correct !== undefined && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Label Position</span>
                         <div className="flex items-center gap-2">
-                          <span className={`font-medium ${
-                            ipqcCheck.label_position_correct ? 'text-green-400' : 'text-red-400'
-                          }`}>
+                          <span className={`font-medium ${ipqcCheck.label_position_correct ? 'text-green-400' : 'text-red-400'}`}>
                             {ipqcCheck.label_position_correct ? 'Correct' : 'Incorrect'}
                           </span>
                           {ipqcCheck.label_position_correct && <CheckCircle2 className="w-4 h-4 text-green-400" />}
                         </div>
                       </div>
                     )}
-                    
                     {ipqcCheck.bottle_integrity && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Bottle Integrity</span>
                         <span className="text-white font-medium">{ipqcCheck.bottle_integrity}</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.visual_inspection_notes && (
                       <div className="pt-2 border-t border-dark-700">
                         <p className="text-sm text-gray-400 mb-1">Inspection Notes</p>
@@ -827,34 +764,29 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* Coding Stage */}
+              {/* CODING */}
               {(ipqcCheck.stage_code === 'CODING' && ipqcCheck.coding_legible !== null) && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-indigo-400" />
+                    <FileText className="w-5 h-5 text-indigo-400" /> 
                     Coding & Traceability
                   </h3>
-                  
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400">Coding Legible</span>
                       <div className="flex items-center gap-2">
-                        <span className={`font-medium ${
-                          ipqcCheck.coding_legible ? 'text-green-400' : 'text-red-400'
-                        }`}>
+                        <span className={`font-medium ${ipqcCheck.coding_legible ? 'text-green-400' : 'text-red-400'}`}>
                           {ipqcCheck.coding_legible ? 'Yes' : 'No'}
                         </span>
                         {ipqcCheck.coding_legible && <CheckCircle2 className="w-4 h-4 text-green-400" />}
                       </div>
                     </div>
-                    
                     {ipqcCheck.tamper_evidence && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-400">Tamper Evidence</span>
                         <span className="text-white font-medium">{ipqcCheck.tamper_evidence}</span>
                       </div>
                     )}
-                    
                     {ipqcCheck.coding_notes && (
                       <div className="pt-2 border-t border-dark-700">
                         <p className="text-sm text-gray-400 mb-1">Coding Notes</p>
@@ -865,25 +797,18 @@ export default function IPQCReviewModal({
                 </div>
               )}
 
-              {/* Shrink Cap Sealing Stage */}
+              {/* SHRINK CAP SEALING */}
               {ipqcCheck.stage_code === 'SHRINK_SEAL' && (
                 <div className="bg-dark-900 rounded-lg p-4 border border-dark-700 mb-6">
                   <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                    <Package className="w-5 h-5 text-orange-400" />
+                    <Package className="w-5 h-5 text-orange-400" /> 
                     Shrink Cap Sealing
                   </h3>
-                  
                   <div className="space-y-4">
                     {(() => {
-                      const customData = ipqcCheck.stage_custom_data 
-                        ? (typeof ipqcCheck.stage_custom_data === 'string' 
-                            ? JSON.parse(ipqcCheck.stage_custom_data) 
-                            : ipqcCheck.stage_custom_data)
-                        : {};
-                      
+                      const customData = ipqcCheck.stage_custom_data ? (typeof ipqcCheck.stage_custom_data === 'string' ? JSON.parse(ipqcCheck.stage_custom_data) : ipqcCheck.stage_custom_data) : {};
                       return (
                         <>
-                          {/* Process Steps Section */}
                           <div className="bg-dark-800 rounded p-3">
                             <p className="text-sm font-semibold text-gray-300 mb-2">Process Steps</p>
                             <div className="space-y-2">
@@ -898,7 +823,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.shrink_sleeve_applied !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Shrink Sleeve Applied</span>
@@ -910,7 +834,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.expiry_date_etched !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Expiry Date Etched</span>
@@ -922,7 +845,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.expiry_date_legible !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Expiry Date Legible</span>
@@ -934,7 +856,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.pvc_film_applied !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">PVC Film Applied</span>
@@ -946,7 +867,6 @@ export default function IPQCReviewModal({
                                   </div>
                                 </div>
                               )}
-                              
                               {customData.shrink_seal_complete !== undefined && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-400 text-sm">Shrink Seal Complete</span>
@@ -960,22 +880,14 @@ export default function IPQCReviewModal({
                               )}
                             </div>
                           </div>
-
-                          {/* Seal Appearance */}
                           {customData.seal_appearance && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-400">Seal Appearance</span>
-                              <span className={`font-medium ${
-                                customData.seal_appearance === 'Smooth - No Wrinkles' ? 'text-green-400' : 
-                                customData.seal_appearance === 'Minor Wrinkles' ? 'text-yellow-400' : 
-                                'text-red-400'
-                              }`}>
+                              <span className={`font-medium ${customData.seal_appearance === 'Smooth - No Wrinkles' ? 'text-green-400' : customData.seal_appearance === 'Minor Wrinkles' ? 'text-yellow-400' : 'text-red-400'}`}>
                                 {customData.seal_appearance}
                               </span>
                             </div>
                           )}
-
-                          {/* Final Inspection */}
                           {ipqcCheck.visual_inspection_pass !== null && ipqcCheck.visual_inspection_pass !== undefined && (
                             <div className="bg-dark-800 rounded p-3">
                               <p className="text-sm font-semibold text-gray-300 mb-2">Final Inspection</p>
@@ -994,8 +906,6 @@ export default function IPQCReviewModal({
                               </div>
                             </div>
                           )}
-
-                          {/* Shrink Seal Notes */}
                           {ipqcCheck.visual_inspection_notes && (
                             <div className="pt-2 border-t border-dark-700">
                               <p className="text-sm text-gray-400 mb-1">Shrink Seal Notes</p>
@@ -1027,83 +937,37 @@ export default function IPQCReviewModal({
               {/* QA ACTIONS & DIGITAL SIGNATURE BLOCK */}
               {!action ? (
                 <div className="flex gap-3">
-                  <button
-                    onClick={() => setAction('approve')}
-                    disabled={loading}
-                    className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 className="w-5 h-5" />
-                    Approve Check
+                  <button onClick={() => setAction('approve')} disabled={loading} className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-5 h-5" /> Approve Check
                   </button>
-                  <button
-                    onClick={() => setAction('reject')}
-                    disabled={loading}
-                    className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <XCircle className="w-5 h-5" />
-                    Reject Check
+                  <button onClick={() => setAction('reject')} disabled={loading} className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                    <XCircle className="w-5 h-5" /> Reject Check
                   </button>
                 </div>
               ) : (
                 <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-200">
-                  
                   {action === 'reject' && (
                     <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Rejection Reason *
-                      </label>
-                      <textarea
-                        value={rejectionReason}
-                        onChange={(e) => setRejectionReason(e.target.value)}
-                        className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white focus:outline-none focus:border-red-500"
-                        rows={3}
-                        placeholder="Please detail why this check is being rejected..."
-                        required
-                      />
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Rejection Reason *</label>
+                      <textarea value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white focus:outline-none focus:border-red-500" rows={3} placeholder="Please detail why this check is being rejected..." required />
                     </div>
                   )}
 
                   {/* 21 CFR Part 11 Digital Signature Block */}
                   <div className="bg-dark-900 rounded-lg p-5 border border-dark-700 shadow-inner">
-                    <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
-                      <Key className="w-4 h-4 text-primary-400" />
-                      QA Electronic Signature Required
-                    </h3>
-                    <p className="text-xs text-gray-400 mb-3">
-                      By entering your password, you electronically sign off on this QA {action === 'approve' ? 'approval' : 'rejection'} per 21 CFR Part 11 guidelines.
-                    </p>
-                    <input
-                      type="password"
-                      value={signature}
-                      onChange={(e) => setSignature(e.target.value)}
-                      placeholder="Enter your login password"
-                      className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono tracking-widest"
-                      required
-                    />
+                    <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2"><Key className="w-4 h-4 text-primary-400" /> QA Electronic Signature Required</h3>
+                    <p className="text-xs text-gray-400 mb-3">By entering your password, you electronically sign off on this QA {action === 'approve' ? 'approval' : 'rejection'} per 21 CFR Part 11 guidelines.</p>
+                    <input type="password" value={signature} onChange={(e) => setSignature(e.target.value)} placeholder="Enter your login password" className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono tracking-widest" required />
                   </div>
 
                   <div className="flex gap-3">
-                    <button
-                      onClick={() => { setAction(null); setRejectionReason(''); setSignature(''); }}
-                      disabled={loading}
-                      className="flex-1 px-4 py-3 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <button onClick={() => { setAction(null); setRejectionReason(''); setSignature(''); }} disabled={loading} className="flex-1 px-4 py-3 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors">Cancel</button>
                     {action === 'approve' ? (
-                      <button
-                        onClick={handleApprove}
-                        disabled={loading || !signature}
-                        className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
+                      <button onClick={handleApprove} disabled={loading || !signature} className="flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                         {loading ? 'Verifying...' : <><CheckCircle2 className="w-5 h-5"/> Sign & Approve</>}
                       </button>
                     ) : (
-                      <button
-                        onClick={handleReject}
-                        disabled={loading || !signature || !rejectionReason.trim()}
-                        className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
+                      <button onClick={handleReject} disabled={loading || !signature || !rejectionReason.trim()} className="flex-1 px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                         {loading ? 'Verifying...' : <><XCircle className="w-5 h-5"/> Sign & Reject</>}
                       </button>
                     )}

@@ -39,6 +39,7 @@ class CustomerService {
       let tierCode = 'T1';
       if (customerData.tier_name === 'Wholesale') tierCode = 'T2';
       if (customerData.tier_name === 'Chain') tierCode = 'T3';
+      if (customerData.tier_name === 'Corporate') tierCode = 'T4';
 
       // 1. Insert Master Customer Record (Status: PENDING_CFO, ID is null until approved)
       const custResult = await client.query(

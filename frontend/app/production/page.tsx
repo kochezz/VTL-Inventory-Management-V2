@@ -344,7 +344,7 @@ export default function ProductionPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-6 whitespace-nowrap align-middle">
                         <span className={`px-3 py-1 rounded-lg border font-medium text-sm capitalize ${getStatusColor(batch.status)}`}>
                           {batch.status.replace('_', ' ')}
                         </span>

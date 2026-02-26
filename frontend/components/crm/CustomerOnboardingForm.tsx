@@ -22,7 +22,7 @@ export default function CustomerOnboardingForm() {
   const [territory, setTerritory] = useState('');
 
   // Commercial Profile
-  const [tierName, setTierName] = useState('Kantemba'); // Kantemba, Wholesale, Chain
+  const [tierName, setTierName] = useState('Kantemba'); // Kantemba, Wholesale, Chain, Corporate
   
   // Credit Terms
   const [paymentTerms, setPaymentTerms] = useState('Cash');
@@ -49,7 +49,7 @@ export default function CustomerOnboardingForm() {
   };
 
   const addLocation = () => {
-    setLocations([...locations, { outlet_name: `Branch ${locations.length + 1}`, address: '', town: '', region: '', is_primary: false }]);
+    setLocations([...locations, { outlet_name: `Branch/Site ${locations.length + 1}`, address: '', town: '', region: '', is_primary: false }]);
   };
 
   const removeLocation = (index: number) => {
@@ -132,8 +132,8 @@ export default function CustomerOnboardingForm() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-primary-400 mb-2">Customer Tier *</label>
-                <div className="grid grid-cols-3 gap-4">
-                  {['Kantemba', 'Wholesale', 'Chain'].map((tier) => (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {['Kantemba', 'Wholesale', 'Chain', 'Corporate'].map((tier) => (
                     <label 
                       key={tier} 
                       className={`cursor-pointer p-4 rounded-lg border-2 text-center transition-all ${
@@ -142,8 +142,8 @@ export default function CustomerOnboardingForm() {
                     >
                       <input type="radio" name="tier" value={tier} checked={tierName === tier} onChange={(e) => {
                         setTierName(e.target.value);
-                        if (e.target.value !== 'Chain' && locations.length > 1) {
-                          setLocations([locations[0]]); // Reset to single location if changing away from Chain
+                        if (e.target.value !== 'Chain' && e.target.value !== 'Corporate' && locations.length > 1) {
+                          setLocations([locations[0]]); // Reset to single location if changing away from Chain/Corporate
                         }
                       }} className="hidden" />
                       <div className="font-bold mb-1">{tier}</div>
@@ -151,6 +151,7 @@ export default function CustomerOnboardingForm() {
                         {tier === 'Kantemba' && 'Single shop/kiosk'}
                         {tier === 'Wholesale' && 'Bulk buyer / Distributor'}
                         {tier === 'Chain' && 'Multiple outlets/towns'}
+                        {tier === 'Corporate' && 'B2B, Mines, Clubs'}
                       </div>
                     </label>
                   ))}
@@ -178,9 +179,9 @@ export default function CustomerOnboardingForm() {
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                 <MapPin className="w-5 h-5 text-primary-400" /> Location(s)
               </h3>
-              {tierName === 'Chain' && (
+              {(tierName === 'Chain' || tierName === 'Corporate') && (
                 <button type="button" onClick={addLocation} className="text-xs px-3 py-1 bg-primary-600/20 text-primary-400 hover:bg-primary-600/40 rounded flex items-center gap-1">
-                  <Plus className="w-3 h-3" /> Add Branch
+                  <Plus className="w-3 h-3" /> Add Branch/Site
                 </button>
               )}
             </div>
@@ -194,8 +195,8 @@ export default function CustomerOnboardingForm() {
                     </button>
                   )}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {tierName === 'Chain' && (
-                      <div className="lg:col-span-4"><label className="block text-xs text-gray-400 mb-1">Outlet/Branch Name</label><input type="text" value={loc.outlet_name} onChange={(e) => handleLocationChange(idx, 'outlet_name', e.target.value)} className="w-full px-3 py-1.5 bg-dark-950 border border-dark-600 rounded text-white" /></div>
+                    {(tierName === 'Chain' || tierName === 'Corporate') && (
+                      <div className="lg:col-span-4"><label className="block text-xs text-gray-400 mb-1">Outlet/Branch/Site Name</label><input type="text" value={loc.outlet_name} onChange={(e) => handleLocationChange(idx, 'outlet_name', e.target.value)} className="w-full px-3 py-1.5 bg-dark-950 border border-dark-600 rounded text-white" /></div>
                     )}
                     <div className="lg:col-span-2"><label className="block text-xs text-gray-400 mb-1">Street Address *</label><input type="text" required value={loc.address} onChange={(e) => handleLocationChange(idx, 'address', e.target.value)} className="w-full px-3 py-1.5 bg-dark-950 border border-dark-600 rounded text-white" /></div>
                     <div><label className="block text-xs text-gray-400 mb-1">Town/City *</label><input type="text" required value={loc.town} onChange={(e) => handleLocationChange(idx, 'town', e.target.value)} className="w-full px-3 py-1.5 bg-dark-950 border border-dark-600 rounded text-white" /></div>
