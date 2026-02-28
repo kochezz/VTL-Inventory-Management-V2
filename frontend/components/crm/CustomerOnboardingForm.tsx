@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/hooks/useAuth';
 import { 
   Building2, MapPin, Phone, CreditCard, 
-  CheckCircle2, Save, AlertCircle, Plus, Trash2, Store
+  CheckCircle2, Save, AlertCircle, Plus, Trash2, Store,
+  FileText // Added QMS Icon
 } from 'lucide-react';
 
 export default function CustomerOnboardingForm() {
@@ -108,9 +109,20 @@ export default function CustomerOnboardingForm() {
 
   return (
     <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-xl">
-      <div className="p-6 border-b border-dark-700 bg-dark-900/50 flex items-center gap-3">
-        <Store className="w-6 h-6 text-primary-400" />
-        <h2 className="text-xl font-bold text-white">New Customer Profile</h2>
+      
+      {/* QMS INTEGRATED HEADER */}
+      <div className="p-6 border-b border-dark-700 bg-dark-900/50 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Store className="w-6 h-6 text-primary-400" />
+          <h2 className="text-xl font-bold text-white">New Customer Profile</h2>
+        </div>
+        <button 
+          type="button" 
+          onClick={() => window.open('/qms/documents?search=QA-SAL-ONB-SOP-001', '_blank')} 
+          className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+        >
+          <FileText className="w-4 h-4"/> View Onboarding SOP
+        </button>
       </div>
 
       <div className="p-6 md:p-8">

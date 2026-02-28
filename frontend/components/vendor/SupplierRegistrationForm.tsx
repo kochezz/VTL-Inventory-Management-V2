@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/hooks/useAuth';
 import { 
   Building2, UserCheck, ShieldCheck, Factory, FileSignature, 
-  CheckCircle2, AlertCircle, Save, ChevronRight, ChevronLeft, CreditCard, Plus, Trash2
+  CheckCircle2, AlertCircle, Save, ChevronRight, ChevronLeft, CreditCard, Plus, Trash2,
+  FileText // Added QMS Icon
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -57,7 +58,6 @@ export default function SupplierRegistrationForm() {
       uses_subcontractors: false, subcontractor_details: ''
     },
     
-    // CHANGED: Banking Data is now an Array to support multiple accounts!
     banking_data: [{
       acc_name: '', acc_number: '', bank_name: '', branch_name: '', sort_code: '', swift_code: '', currency: 'ZMW'
     }],
@@ -86,7 +86,6 @@ export default function SupplierRegistrationForm() {
     }));
   };
 
-  // NEW: Helper functions for multiple bank accounts
   const updateBankingField = (index: number, field: string, value: string) => {
     const newBanking = [...formData.banking_data];
     newBanking[index] = { ...newBanking[index], [field]: value };
@@ -161,6 +160,22 @@ export default function SupplierRegistrationForm() {
 
   return (
     <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-xl">
+      
+      {/* QMS INTEGRATED HEADER */}
+      <div className="p-6 border-b border-dark-700 bg-dark-900/50 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Building2 className="w-6 h-6 text-primary-400" />
+          <h2 className="text-xl font-bold text-white">Supplier Registration</h2>
+        </div>
+        <button 
+          type="button" 
+          onClick={() => window.open('/qms/documents?search=QA-PUR-VEN-SOP-002', '_blank')} 
+          className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+        >
+          <FileText className="w-4 h-4"/> View Approval SOP
+        </button>
+      </div>
+
       <div className="flex border-b border-dark-700 overflow-x-auto">
         {tabs.map((tab, idx) => {
           const Icon = tab.icon;

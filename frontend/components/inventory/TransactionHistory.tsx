@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { History, Filter, Download, Search, Calendar, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { History, Filter, Download, Search, Calendar, AlertCircle, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
 import axios from 'axios';
 
 interface Transaction {
@@ -89,20 +89,10 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
     fetchTransactions();
   };
 
-  // Export to CSV function
   const handleExport = () => {
     const csvHeaders = [
-      'Transaction #',
-      'Date',
-      'Type',
-      'Product',
-      'SKU',
-      'Quantity',
-      'UOM',
-      'From Location',
-      'To Location',
-      'Performed By',
-      'Notes'
+      'Transaction #', 'Date', 'Type', 'Product', 'SKU', 'Quantity', 'UOM',
+      'From Location', 'To Location', 'Performed By', 'Notes'
     ];
 
     const csvRows = filteredTransactions.map(txn => [
@@ -150,17 +140,12 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+      month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
     }).format(date);
   };
 
   const totalPages = Math.ceil(total / itemsPerPage);
 
-  // Filter transactions by search term
   const filteredTransactions = transactions.filter(txn => {
     if (!filterSearch) return true;
     const searchLower = filterSearch.toLowerCase();
@@ -185,10 +170,10 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
 
   return (
     <div className="space-y-6">
-      {/* Header with Search and Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        {/* Search */}
-        <div className="flex-1 relative">
+      
+      {/* Header with Search, Filters, and QMS SOP Link */}
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between pb-2">
+        <div className="flex-1 relative w-full sm:w-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
           <input
             type="text"
@@ -199,43 +184,43 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
           />
         </div>
 
-        {/* Filter Button */}
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="px-4 py-2.5 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors"
-        >
-          <Filter className="w-5 h-5" />
-          Filters
-          {(filterType || filterStartDate || filterEndDate) && (
-            <span className="w-2 h-2 bg-primary-500 rounded-full"></span>
-          )}
-        </button>
+        <div className="flex items-center gap-3 w-full sm:w-auto overflow-x-auto shrink-0">
+          <button
+            onClick={() => window.open('/qms/documents?search=QA-INV-TRC-SOP-005', '_blank')}
+            className="px-4 py-2.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg flex items-center gap-2 transition-colors font-medium whitespace-nowrap"
+          >
+            <FileText className="w-5 h-5" /> Traceability SOP
+          </button>
+          
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="px-4 py-2.5 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors whitespace-nowrap"
+          >
+            <Filter className="w-5 h-5" />
+            Filters
+            {(filterType || filterStartDate || filterEndDate) && (
+              <span className="w-2 h-2 bg-primary-500 rounded-full"></span>
+            )}
+          </button>
 
-        {/* Export Button */}
-        <button
-          onClick={handleExport}
-          disabled={filteredTransactions.length === 0}
-          className="px-4 py-2.5 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Download className="w-5 h-5" />
-          Export CSV
-        </button>
+          <button
+            onClick={handleExport}
+            disabled={filteredTransactions.length === 0}
+            className="px-4 py-2.5 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            <Download className="w-5 h-5" />
+            Export CSV
+          </button>
+        </div>
       </div>
 
       {/* Filters Panel */}
       {showFilters && (
         <div className="bg-dark-700 border border-dark-600 rounded-lg p-6 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* Transaction Type Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Transaction Type
-              </label>
-              <select
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-                className="w-full px-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-              >
+              <label className="block text-sm font-medium text-gray-300 mb-2">Transaction Type</label>
+              <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full px-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500">
                 <option value="">All Types</option>
                 <option value="receive">Receive</option>
                 <option value="issue">Issue</option>
@@ -245,54 +230,24 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
                 <option value="damage">Damage</option>
               </select>
             </div>
-
-            {/* Start Date Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Start Date
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Start Date</label>
               <div className="relative">
                 <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                <input
-                  type="date"
-                  value={filterStartDate}
-                  onChange={(e) => setFilterStartDate(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
+                <input type="date" value={filterStartDate} onChange={(e) => setFilterStartDate(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500" />
               </div>
             </div>
-
-            {/* End Date Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                End Date
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">End Date</label>
               <div className="relative">
                 <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                <input
-                  type="date"
-                  value={filterEndDate}
-                  onChange={(e) => setFilterEndDate(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                />
+                <input type="date" value={filterEndDate} onChange={(e) => setFilterEndDate(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500" />
               </div>
             </div>
           </div>
-
-          {/* Filter Actions */}
           <div className="flex gap-3 pt-2">
-            <button
-              onClick={handleApplyFilters}
-              className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors"
-            >
-              Apply Filters
-            </button>
-            <button
-              onClick={handleClearFilters}
-              className="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-white rounded-lg transition-colors"
-            >
-              Clear All
-            </button>
+            <button onClick={handleApplyFilters} className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors">Apply Filters</button>
+            <button onClick={handleClearFilters} className="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-white rounded-lg transition-colors">Clear All</button>
           </div>
         </div>
       )}
@@ -304,41 +259,23 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
         </div>
       )}
 
-      {/* Results Summary */}
       <div className="text-sm text-gray-400">
         Showing {filteredTransactions.length} of {total} transactions
-        {(filterType || filterStartDate || filterEndDate) && (
-          <span className="ml-2 text-primary-400">(filtered)</span>
-        )}
+        {(filterType || filterStartDate || filterEndDate) && <span className="ml-2 text-primary-400">(filtered)</span>}
       </div>
 
-      {/* Transactions Table */}
       <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-dark-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Transaction #
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Date & Time
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Type
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Product
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Quantity
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Location
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  User
-                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Transaction #</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Date & Time</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Product</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Quantity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Location</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">User</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-dark-700">
@@ -347,55 +284,24 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
                   <td colSpan={7} className="px-6 py-12 text-center">
                     <History className="w-12 h-12 text-gray-600 mx-auto mb-3" />
                     <p className="text-gray-400">No transactions found</p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {filterSearch || filterType || filterStartDate || filterEndDate
-                        ? 'Try adjusting your filters'
-                        : 'Create your first transaction to see it here'}
-                    </p>
+                    <p className="text-sm text-gray-500 mt-1">{filterSearch || filterType || filterStartDate || filterEndDate ? 'Try adjusting your filters' : 'Create your first transaction to see it here'}</p>
                   </td>
                 </tr>
               ) : (
                 filteredTransactions.map((txn) => (
                   <tr key={txn.transaction_id} className="hover:bg-dark-700 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm font-mono text-primary-400">{txn.transaction_number}</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-300">{formatDate(txn.transaction_date)}</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getTransactionTypeColor(txn.transaction_type_name)}`}>
-                        {txn.transaction_type_name.toUpperCase()}
-                      </span>
-                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm font-mono text-primary-400">{txn.transaction_number}</span></td>
+                    <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm text-gray-300">{formatDate(txn.transaction_date)}</span></td>
+                    <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getTransactionTypeColor(txn.transaction_type_name)}`}>{txn.transaction_type_name.toUpperCase()}</span></td>
+                    <td className="px-6 py-4"><div className="text-sm"><p className="text-white font-medium">{txn.product_name}</p><p className="text-gray-400 text-xs">{txn.sku}</p></div></td>
+                    <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm text-white font-medium">{txn.quantity.toLocaleString()} {txn.uom}</span></td>
                     <td className="px-6 py-4">
                       <div className="text-sm">
-                        <p className="text-white font-medium">{txn.product_name}</p>
-                        <p className="text-gray-400 text-xs">{txn.sku}</p>
+                        {txn.from_location_code && <p className="text-gray-400">From: <span className="text-white">{txn.from_location_code}</span></p>}
+                        {txn.to_location_code && <p className="text-gray-400">To: <span className="text-white">{txn.to_location_code}</span></p>}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-white font-medium">
-                        {txn.quantity.toLocaleString()} {txn.uom}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm">
-                        {txn.from_location_code && (
-                          <p className="text-gray-400">
-                            From: <span className="text-white">{txn.from_location_code}</span>
-                          </p>
-                        )}
-                        {txn.to_location_code && (
-                          <p className="text-gray-400">
-                            To: <span className="text-white">{txn.to_location_code}</span>
-                          </p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-300">{txn.performed_by_name}</span>
-                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm text-gray-300">{txn.performed_by_name}</span></td>
                   </tr>
                 ))
               )}
@@ -403,29 +309,12 @@ export default function TransactionHistory({ token, refreshTrigger }: Transactio
           </table>
         </div>
 
-        {/* Pagination */}
         {totalPages > 1 && (
           <div className="bg-dark-900 px-6 py-4 flex items-center justify-between border-t border-dark-700">
-            <p className="text-sm text-gray-400">
-              Page {currentPage} of {totalPages}
-            </p>
+            <p className="text-sm text-gray-400">Page {currentPage} of {totalPages}</p>
             <div className="flex gap-2">
-              <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-2 bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Previous
-              </button>
-              <button
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-2 bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors"
-              >
-                Next
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-2 bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors"><ChevronLeft className="w-4 h-4" />Previous</button>
+              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-2 bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors">Next<ChevronRight className="w-4 h-4" /></button>
             </div>
           </div>
         )}

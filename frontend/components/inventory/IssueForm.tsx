@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Package, Check, AlertCircle } from 'lucide-react';
+import { Package, Check, AlertCircle, FileText, AlertOctagon } from 'lucide-react';
 import axios from 'axios';
+import RaiseNCRModal from '@/components/qms/RaiseNCRModal';
 
 interface Product {
   product_id: string;
@@ -38,6 +39,9 @@ export default function IssueForm({ token, onSuccess }: IssueFormProps) {
   const [quantity, setQuantity] = useState('');
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
+
+  // QMS Integration
+  const [showNCRModal, setShowNCRModal] = useState(false);
 
   useEffect(() => {
     fetchProducts();
@@ -162,140 +166,159 @@ export default function IssueForm({ token, onSuccess }: IssueFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      {error && (
-        <div className="bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded-lg flex items-start gap-2">
-          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Product Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Product *
-        </label>
-        <select
-          value={selectedProduct}
-          onChange={(e) => setSelectedProduct(e.target.value)}
-          required
-          className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-        >
-          <option value="">Select a product</option>
-          {products.map((product) => (
-            <option key={product.product_id} value={product.product_id}>
-              {product.sku} - {product.product_name}
-            </option>
-          ))}
-        </select>
+    <div className="space-y-4">
+      {/* QMS Action Bar */}
+      <div className="flex justify-end gap-3 pb-4 border-b border-dark-700">
+        <button type="button" onClick={() => window.open('/qms/documents?search=QA-INV-ISS-SOP-002', '_blank')} className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors">
+          <FileText className="w-4 h-4"/> Issuance SOP
+        </button>
+        <button type="button" onClick={() => setShowNCRModal(true)} className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors">
+          <AlertOctagon className="w-4 h-4"/> Log Defect (NCR)
+        </button>
       </div>
 
-      {/* Source Location */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Issue From (Source Location) *
-        </label>
-        <select
-          value={selectedLocation}
-          onChange={(e) => setSelectedLocation(e.target.value)}
-          required
-          className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-        >
-          {locations.map((location) => (
-            <option key={location.location_id} value={location.location_id}>
-              {location.location_code} - {location.location_name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Stock Availability Display */}
-      {selectedProduct && selectedLocation && availableStock !== null && (
-        <div className="bg-dark-700 rounded-lg p-4 border border-dark-600">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Available at {selectedLocationData?.location_code}:</span>
-            <span className={`text-lg font-bold ${
-              availableStock > 0 ? 'text-green-400' : 'text-red-400'
-            }`}>
-              {availableStock.toLocaleString()} {selectedProductData?.base_uom}
-            </span>
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {error && (
+          <div className="bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded-lg flex items-start gap-2">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <span>{error}</span>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Quantity and Unit */}
-      <div className="grid grid-cols-2 gap-4">
+        {/* Product Selection */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Quantity to Issue *
+            Product *
           </label>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
+          <select
+            value={selectedProduct}
+            onChange={(e) => setSelectedProduct(e.target.value)}
             required
             className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-            placeholder="Enter quantity"
-          />
-          {availableStock !== null && quantity && parseFloat(quantity) > availableStock && (
-            <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" />
-              Exceeds available stock
-            </p>
-          )}
+          >
+            <option value="">Select a product</option>
+            {products.map((product) => (
+              <option key={product.product_id} value={product.product_id}>
+                {product.sku} - {product.product_name}
+              </option>
+            ))}
+          </select>
         </div>
+
+        {/* Source Location */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            Unit of Measure
+            Issue From (Source Location) *
+          </label>
+          <select
+            value={selectedLocation}
+            onChange={(e) => setSelectedLocation(e.target.value)}
+            required
+            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            {locations.map((location) => (
+              <option key={location.location_id} value={location.location_id}>
+                {location.location_code} - {location.location_name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Stock Availability Display */}
+        {selectedProduct && selectedLocation && availableStock !== null && (
+          <div className="bg-dark-700 rounded-lg p-4 border border-dark-600">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Available at {selectedLocationData?.location_code}:</span>
+              <span className={`text-lg font-bold ${
+                availableStock > 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {availableStock.toLocaleString()} {selectedProductData?.base_uom}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Quantity and Unit */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Quantity to Issue *
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              required
+              className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+              placeholder="Enter quantity"
+            />
+            {availableStock !== null && quantity && parseFloat(quantity) > availableStock && (
+              <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" />
+                Exceeds available stock
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Unit of Measure
+            </label>
+            <input
+              type="text"
+              value={selectedProductData?.base_uom || ''}
+              disabled
+              className="w-full px-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-gray-400"
+            />
+          </div>
+        </div>
+
+        {/* Production Order Reference */}
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Production Order / Reference Number
           </label>
           <input
             type="text"
-            value={selectedProductData?.base_uom || ''}
-            disabled
-            className="w-full px-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-gray-400"
+            value={referenceNumber}
+            onChange={(e) => setReferenceNumber(e.target.value)}
+            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            placeholder="e.g., PROD-2024-001"
           />
         </div>
-      </div>
 
-      {/* Production Order Reference */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Production Order / Reference Number
-        </label>
-        <input
-          type="text"
-          value={referenceNumber}
-          onChange={(e) => setReferenceNumber(e.target.value)}
-          className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-          placeholder="e.g., PROD-2024-001"
-        />
-      </div>
+        {/* Notes */}
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Notes
+          </label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+            placeholder="Add any additional details..."
+          />
+        </div>
 
-      {/* Notes */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Notes
-        </label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={3}
-          className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
-          placeholder="Add any additional details..."
-        />
-      </div>
+        {/* Submit Button */}
+        <button
+          type="submit"
+          disabled={loading || !selectedProduct || !quantity || (availableStock !== null && parseFloat(quantity) > availableStock)}
+          className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          <Package className="w-5 h-5" />
+          {loading ? 'Processing...' : 'Issue to Production'}
+        </button>
+      </form>
 
-      {/* Submit Button */}
-      <button
-        type="submit"
-        disabled={loading || !selectedProduct || !quantity || (availableStock !== null && parseFloat(quantity) > availableStock)}
-        className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-      >
-        <Package className="w-5 h-5" />
-        {loading ? 'Processing...' : 'Issue to Production'}
-      </button>
-    </form>
+      <RaiseNCRModal 
+        isOpen={showNCRModal} 
+        onClose={() => setShowNCRModal(false)} 
+        sourceModule="Inventory" 
+        sourceId={referenceNumber || 'Material Issuance'} 
+      />
+    </div>
   );
 }
