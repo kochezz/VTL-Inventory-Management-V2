@@ -15,6 +15,7 @@ import IPQCCheckModal from '@/components/production/IPQCCheckModal';
 import IPQCReviewModal from '@/components/production/IPQCReviewModal';
 import MultiStageIPQCModal from '@/components/production/MultiStageIPQCModal';
 import FinalReleaseModal from '@/components/production/FinalReleaseModal';
+import RaiseNCRModal from '@/components/qms/RaiseNCRModal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 

@@ -1,6 +1,6 @@
 // ============================================================================
 // MULTI-STAGE IPQC MODAL COMPONENT
-// Dynamic forms based on production stage with Digital Signature & File Uploads
+// Dynamic forms based on production stage with Digital Signature, File Uploads, & NCR Integration
 // ============================================================================
 
 'use client';
@@ -8,7 +8,8 @@
 import { useState, useEffect } from 'react';
 import { api, useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
-import { X, Droplet, Gauge, Package, Eye, FileText, CheckCircle, AlertCircle, Search, Key, Upload, FileCheck } from 'lucide-react';
+import { X, Droplet, Gauge, Package, Eye, FileText, CheckCircle, AlertCircle, Search, Key, Upload, FileCheck, AlertOctagon } from 'lucide-react';
+import RaiseNCRModal from '@/components/qms/RaiseNCRModal';
 
 interface MultiStageIPQCModalProps {
   isOpen: boolean;
@@ -42,7 +43,10 @@ export default function MultiStageIPQCModal({
   const { token } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [signature, setSignature] = useState(''); // Digital Signature State
+  const [signature, setSignature] = useState(''); 
+  
+  // QMS Integration: NCR Modal State
+  const [showNCRModal, setShowNCRModal] = useState(false);
   
   // Form data - all possible fields for all stages
   const [formData, setFormData] = useState({
@@ -51,7 +55,7 @@ export default function MultiStageIPQCModal({
     
     // Stage 1: Water Treatment
     water_source: 'Borehole', raw_water_ph: '', raw_water_conductivity: '', ro_conductivity: '', uv_system_status: 'ON', ozone_system_status: 'Active', ozone_residual_ppm: '', water_treatment_approved: true, water_treatment_notes: '', line_clearance_verified: false, equipment_cleaned: false,
-    lab_report_data: '', lab_report_name: '', // NEW LAB REPORT FIELDS
+    lab_report_data: '', lab_report_name: '', 
     
     // Bottle Washing fields
     external_wash_complete: false, internal_wash_complete: false, sterilant_wash_complete: false, rinse_temperature: '', temperature_within_spec: true, sterilant_type: 'Chlorine Solution', final_rinse_complete: false, bottles_visually_clean: false, washing_equipment_cleaned: false, washing_notes: '',
@@ -104,6 +108,23 @@ export default function MultiStageIPQCModal({
     }
   };
 
+  // QMS SOP MAPPING
+  const getRelevantSOP = (code: string) => {
+    switch (code) {
+      case 'WATER_TREATMENT': return 'QA-WT-MON-SOP-009';
+      case 'PRE_PRODUCTION': return 'QA-PRO-CLR-SOP-007';
+      case 'BOTTLE_BLOW': return 'QA-PRO-BLOW-SOP-002';
+      case 'RETURNED_BOTTLE_INSPECTION': return 'QA-PRO-IPQC-SOP-008';
+      case 'WASHING': return 'QA-PRO-RINS-SOP-003';
+      case 'FILLING': return 'QA-PRO-FILL-SOP-004';
+      case 'CAPPING': return 'QA-PRO-CAP-SOP-005';
+      case 'LABELING': return 'QA-PRO-PACK-SOP-006';
+      case 'CODING': return 'QA-PRO-TRC-SOP-009';
+      case 'SHRINK_SEAL': return 'QA-PRO-PACK-SOP-006';
+      default: return 'QA-PRO-IPQC-SOP-008';
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!signature) {
@@ -147,7 +168,6 @@ export default function MultiStageIPQCModal({
         payload.water_treatment_notes = formData.water_treatment_notes;
         payload.line_clearance_verified = formData.line_clearance_verified;
         payload.equipment_cleaned = formData.equipment_cleaned;
-        // Attach File
         payload.lab_report_data = formData.lab_report_data;
         payload.lab_report_name = formData.lab_report_name;
       } 
@@ -281,9 +301,9 @@ export default function MultiStageIPQCModal({
   const stageColor = getStageColor();
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-        <div className={`p-6 border-b border-dark-700 bg-${stageColor}-500/10`}>
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-40 p-4">
+      <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto relative">
+        <div className={`p-6 border-b border-dark-700 bg-${stageColor}-500/10 sticky top-0 z-10 backdrop-blur-md`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-3">
               <div className={`p-2 bg-${stageColor}-500/20 rounded-lg text-${stageColor}-400`}>
@@ -298,9 +318,26 @@ export default function MultiStageIPQCModal({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
-              <X className="w-5 h-5 text-gray-400" />
-            </button>
+            <div className="flex items-center gap-3">
+              {/* QMS INTEGRATION: View SOP & Raise NCR Buttons */}
+              <button 
+                type="button" 
+                onClick={() => window.open(`/qms/documents?search=${getRelevantSOP(nextStage.next_stage_code)}`, '_blank')} 
+                className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm"
+              >
+                <FileText className="w-4 h-4" /> View SOP
+              </button>
+              <button 
+                type="button"
+                onClick={() => setShowNCRModal(true)}
+                className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-sm"
+              >
+                <AlertOctagon className="w-4 h-4" /> Raise NCR
+              </button>
+              <button type="button" onClick={onClose} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-400">
             <span>Batch: {batchNumber}</span>
@@ -745,9 +782,7 @@ export default function MultiStageIPQCModal({
             <textarea value={formData.notes} onChange={(e) => handleChange('notes', e.target.value)} className="w-full px-3 py-2 bg-dark-900 border border-dark-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500" rows={3} placeholder="Any additional observations or comments..." />
           </div>
 
-          {/* ================================================================= */}
           {/* DIGITAL SIGNATURE BLOCK */}
-          {/* ================================================================= */}
           <div className="bg-dark-900 rounded-lg p-5 border border-dark-700 mt-6">
             <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
               <Key className="w-4 h-4 text-primary-400" />
@@ -781,6 +816,17 @@ export default function MultiStageIPQCModal({
           </div>
         </form>
       </div>
+
+      {/* Embedded QMS NCR Modal */}
+      <RaiseNCRModal 
+        isOpen={showNCRModal}
+        onClose={() => setShowNCRModal(false)}
+        sourceModule="Production"
+        sourceId={`${batchNumber} - ${nextStage.next_stage_name}`}
+        onSuccess={() => {
+          alert('NCR successfully logged and escalated to the Quality Management System.');
+        }}
+      />
     </div>
   );
 }

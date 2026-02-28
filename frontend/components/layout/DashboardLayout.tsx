@@ -15,7 +15,9 @@ import {
   ClipboardCheck,
   Building2,
   ShoppingCart,
-  PackageCheck 
+  PackageCheck,
+  ShieldCheck
+
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -74,6 +76,12 @@ const navigation: NavItem[] = [
     href: '/vendor-management/goods-receipts', 
     icon: PackageCheck,
     roles: ['admin', 'manager', 'warehouse', 'staff', 'cfo'] 
+  },
+  { 
+    name: 'Quality (QMS)', 
+    href: '/qms', 
+    icon: ShieldCheck,
+    roles: ['admin', 'qa', 'manager', 'ceo', 'cfo', 'engineering'] 
   },
   { 
     name: 'Analytics', 

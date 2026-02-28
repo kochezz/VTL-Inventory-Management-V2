@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
-import { X, Plus, Check, AlertCircle, Package, Calendar, Clock } from 'lucide-react';
+import { X, Plus, Check, AlertCircle, Package, Calendar, Clock, FileText } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -106,11 +106,9 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
 
   // Generate batch number based on product
   const generateBatchNumber = (productName: string, date: Date): string => {
-    // Extract brand and size from product name
-    let brandCode = 'R';  // Default to Regular
-    let sizeCode = '500';  // Default to 500ml
+    let brandCode = 'R';
+    let sizeCode = '500';
 
-    // Find brand code
     for (const [brand, code] of Object.entries(BRAND_CODES)) {
       if (productName.includes(brand)) {
         brandCode = code;
@@ -118,7 +116,6 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
       }
     }
 
-    // Find size code
     for (const [size, code] of Object.entries(SIZE_CODES)) {
       if (productName.includes(size)) {
         sizeCode = code;
@@ -126,13 +123,11 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
       }
     }
 
-    // Format: PROD-R500-DDMMYY-XXX
     const day = date.getDate().toString().padStart(2, '0');
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const year = date.getFullYear().toString().slice(-2);
     const dateStr = `${day}${month}${year}`;
 
-    // Note: Sequential number will be assigned by backend
     return `PROD-${brandCode}${sizeCode}-${dateStr}`;
   };
 
@@ -181,7 +176,6 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
           const requiredQty = comp.quantity_required * plannedQuantity;
           const bufferQty = Math.ceil(requiredQty * 0.05);
           
-          // FIX 1: Use Math.ceil for totalQty
           const totalQty = Math.ceil(requiredQty + bufferQty);
 
           if (!locationToUse || !locationToUse.location_id) {
@@ -223,16 +217,12 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
       return;
     }
     
-    // Recalculate component quantities with current plannedQuantity
     setSelectedComponents(prev => prev.map(sc => {
-      // Find the component to get quantity_required
       const component = components.find(c => c.component_id === sc.componentId);
       if (!component) return sc;
       
       const requiredQty = component.quantity_required * plannedQuantity;
       const bufferQty = Math.ceil(requiredQty * 0.05);
-      
-      // FIX 2: Use Math.ceil for totalQty
       const totalQty = Math.ceil(requiredQty + bufferQty);
       
       return {
@@ -288,7 +278,6 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
         throw new Error('Failed to get batch ID from server response');
       }
       
-      // Assign components
       await axios.post(
         `${API_URL}/production/batches/${batchId}/assign-components`,
         { components: selectedComponents },
@@ -322,12 +311,21 @@ export default function CreateBatchModal({ isOpen, onClose, onSuccess }: CreateB
               Step {step} of 3: {step === 1 ? 'Basic Information' : step === 2 ? 'Component Selection' : 'Review & Confirm'}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* QMS SOP REFERENCE */}
+            <button 
+              onClick={() => window.open('/qms/documents?search=QA-PRO-CLR-SOP-007', '_blank')} 
+              className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+            >
+              <FileText className="w-4 h-4"/> Line Clearance SOP
+            </button>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white transition-colors p-2"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         {/* Progress Bar */}

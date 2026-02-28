@@ -7,8 +7,8 @@ import AuthProvider from '@/components/AuthProvider';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Vilagio Inventory System',
-  description: 'Comprehensive inventory management for Vilagio Technologies Ltd.',
+  title: 'VTL ERP Management System Version 1.0',
+  description: 'Vilagio Trading Limited Enterprise Resource Planning & Quality Management System',
 };
 
 export default function RootLayout({

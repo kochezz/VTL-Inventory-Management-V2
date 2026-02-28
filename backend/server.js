@@ -18,6 +18,7 @@ const grnRoutes = require('./src/routes/grn-routes');
 const customerRoutes = require('./src/routes/customer-routes');
 const metricsRoutes = require('./src/routes/metrics-routes');
 const analyticsRoutes = require('./src/routes/analytics-routes');
+const qmsRoutes = require('./src/routes/qms-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -72,6 +73,7 @@ app.use('/api/grns', grnRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/qms', qmsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

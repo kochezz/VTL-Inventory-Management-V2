@@ -1,12 +1,7 @@
-// ============================================================================
-// FINAL RELEASE MODAL 
-// With 21 CFR Part 11 Digital Signature, Inventory Sync & Full Data Summary
-// ============================================================================
-
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, AlertCircle, CheckCircle2, Package, ClipboardCheck, AlertTriangle, MapPin, Key } from 'lucide-react';
+import { X, AlertCircle, CheckCircle2, Package, ClipboardCheck, AlertTriangle, MapPin, Key, FileText } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -61,14 +56,11 @@ export default function FinalReleaseModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
-  // Locations State
   const [locations, setLocations] = useState<any[]>([]);
   const [selectedLocation, setSelectedLocation] = useState('');
   
-  // Digital Signature State
   const [signature, setSignature] = useState('');
 
-  // Fetch locations on mount
   useEffect(() => {
     if (isOpen && token) {
       setSignature('');
@@ -80,7 +72,6 @@ export default function FinalReleaseModal({
     }
   }, [isOpen, token]);
 
-  // Filter approved QA items
   const approvedGates = batch.qa_gates?.filter(g => 
     g.status === 'approved' || g.status === 'qa_approved'
   ) || [];
@@ -103,16 +94,13 @@ export default function FinalReleaseModal({
       setLoading(true);
       setError('');
       
-      // 1. VERIFY SIGNATURE FIRST
       await axios.post(
         `${process.env.NEXT_PUBLIC_API_URL}/signature/verify`,
         { password: signature },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
-      // 2. PROCEED WITH APPROVAL AND SYNC
       await onApprove(selectedLocation);
-      
       onClose();
     } catch (err: any) {
       console.error('Error approving final release:', err);
@@ -127,7 +115,6 @@ export default function FinalReleaseModal({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-dark-800 rounded-xl border border-dark-700 w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
-        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-dark-700 shrink-0 bg-dark-900/50 rounded-t-xl">
           <div>
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -138,9 +125,18 @@ export default function FinalReleaseModal({
               {batch.batch_number} - {batch.product_name}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* QMS SOP REFERENCE */}
+            <button 
+              onClick={() => window.open('/qms/documents?search=QA-PRO-REL-SOP-010', '_blank')} 
+              className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+            >
+              <FileText className="w-4 h-4"/> QA Release SOP
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-white p-2 hover:bg-dark-700 rounded-lg transition-colors">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
@@ -151,16 +147,13 @@ export default function FinalReleaseModal({
             </div>
           )}
 
-          {/* ================================================================= */}
-          {/* 1. QA APPROVAL SUMMARY (FULLY RESTORED)                           */}
-          {/* ================================================================= */}
+          {/* 1. QA APPROVAL SUMMARY */}
           <div className="bg-dark-900 rounded-lg p-5 border border-dark-700">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <ClipboardCheck className="w-5 h-5 text-green-400" />
               Quality Assurance Validation Summary
             </h3>
 
-            {/* QA Gates */}
             {approvedGates.length > 0 && (
               <div className="mb-4">
                 <p className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
@@ -190,7 +183,6 @@ export default function FinalReleaseModal({
               </div>
             )}
 
-            {/* IPQC Checks */}
             {approvedIPQC.length > 0 && (
               <div className="mt-4 pt-4 border-t border-dark-700">
                 <p className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
@@ -224,7 +216,6 @@ export default function FinalReleaseModal({
               </div>
             )}
 
-            {/* No QA Data Warning */}
             {approvedGates.length === 0 && approvedIPQC.length === 0 && (
               <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
@@ -238,9 +229,7 @@ export default function FinalReleaseModal({
             )}
           </div>
 
-          {/* ================================================================= */}
-          {/* 2. PRODUCTION SUMMARY (FULLY RESTORED)                            */}
-          {/* ================================================================= */}
+          {/* 2. PRODUCTION SUMMARY */}
           <div className="bg-dark-900 rounded-lg p-5 border border-dark-700">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <Package className="w-5 h-5 text-primary-400" />
@@ -248,14 +237,12 @@ export default function FinalReleaseModal({
             </h3>
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Planned Quantity */}
               <div className="bg-dark-800 rounded-lg p-4 border border-dark-700">
                 <p className="text-xs text-gray-400 mb-1">Planned Quantity</p>
                 <p className="text-2xl font-bold text-white">{batch.planned_quantity.toLocaleString()}</p>
                 <p className="text-xs text-gray-500 mt-1">units</p>
               </div>
 
-              {/* Actual Output */}
               <div className="bg-dark-800 rounded-lg p-4 border border-dark-700">
                 <p className="text-xs text-gray-400 mb-1">Actual Output</p>
                 <p className="text-2xl font-bold text-white">
@@ -264,7 +251,6 @@ export default function FinalReleaseModal({
                 <p className="text-xs text-gray-500 mt-1">good units</p>
               </div>
 
-              {/* Rejected Bottles */}
               <div className="bg-dark-800 rounded-lg p-4 border border-dark-700">
                 <p className="text-xs text-gray-400 mb-1">Rejected</p>
                 <p className={`text-2xl font-bold ${batch.rejected_bottles && batch.rejected_bottles > 0 ? 'text-red-400' : 'text-gray-400'}`}>
@@ -273,7 +259,6 @@ export default function FinalReleaseModal({
                 <p className="text-xs text-gray-500 mt-1">scrap units</p>
               </div>
 
-              {/* Yield */}
               <div className="bg-dark-800 rounded-lg p-4 border border-dark-700">
                 <p className="text-xs text-gray-400 mb-1">Yield</p>
                 <p className={`text-2xl font-bold ${
@@ -288,9 +273,7 @@ export default function FinalReleaseModal({
             </div>
           </div>
 
-          {/* ================================================================= */}
-          {/* 3. WAREHOUSE DESTINATION                                          */}
-          {/* ================================================================= */}
+          {/* 3. WAREHOUSE DESTINATION */}
           <div className="bg-dark-900 rounded-lg p-5 border border-dark-700">
             <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
               <MapPin className="w-5 h-5 text-blue-400" />
@@ -305,7 +288,7 @@ export default function FinalReleaseModal({
               onChange={(e) => setSelectedLocation(e.target.value)}
               className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">-- Select Destination Location (e.g. Storage Zone B) --</option>
+              <option value="">-- Select Destination Location --</option>
               {locations.map(loc => (
                 <option key={loc.location_id} value={loc.location_id}>
                   {loc.location_name} ({loc.location_code})
@@ -314,9 +297,7 @@ export default function FinalReleaseModal({
             </select>
           </div>
 
-          {/* ================================================================= */}
-          {/* 4. DIGITAL SIGNATURE BLOCK                                        */}
-          {/* ================================================================= */}
+          {/* 4. DIGITAL SIGNATURE BLOCK */}
           <div className="bg-dark-900 rounded-lg p-5 border border-dark-700 shadow-inner">
             <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
               <Key className="w-4 h-4 text-primary-400" />
@@ -335,44 +316,17 @@ export default function FinalReleaseModal({
             />
           </div>
 
-          {/* Warning Banner */}
-          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-yellow-400">Important: Final Release & Inventory Sync</p>
-              <p className="text-xs text-yellow-400/80 mt-1">
-                This action is final and cannot be undone. Make sure the output numbers and the selected destination warehouse are strictly correct.
-              </p>
-            </div>
-          </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex items-center justify-end gap-3 p-6 border-t border-dark-700 bg-dark-900/50 rounded-b-xl shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={loading}
-            className="px-6 py-2.5 border border-dark-600 rounded-lg text-gray-300 hover:bg-dark-700 transition-colors disabled:opacity-50 font-medium"
-          >
+          <button type="button" onClick={onClose} disabled={loading} className="px-6 py-2.5 border border-dark-600 rounded-lg text-gray-300 hover:bg-dark-700 transition-colors disabled:opacity-50 font-medium">
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={handleApprove}
-            disabled={loading || !selectedLocation || !signature}
-            className="px-6 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 font-medium"
-          >
+          <button type="button" onClick={handleApprove} disabled={loading || !selectedLocation || !signature} className="px-6 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 font-medium">
             {loading ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                <span>Syncing Inventory...</span>
-              </>
+              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div><span>Syncing Inventory...</span></>
             ) : (
-              <>
-                <CheckCircle2 className="w-5 h-5" />
-                <span>Sign & Release Batch</span>
-              </>
+              <><CheckCircle2 className="w-5 h-5" /><span>Sign & Release Batch</span></>
             )}
           </button>
         </div>

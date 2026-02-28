@@ -1,12 +1,7 @@
-// ============================================================================
-// COMPLETE PRODUCTION MODAL 
-// With 21 CFR Part 11 Digital Signature for Line Supervisor
-// ============================================================================
-
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, AlertCircle, CheckCircle2, Package, TrendingDown, ClipboardCheck, Key } from 'lucide-react';
+import { X, AlertCircle, CheckCircle2, Package, TrendingDown, FileText, Key } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -41,7 +36,6 @@ export default function CompleteProductionModal({ isOpen, onClose, batch, onComp
   const [rejectedBottles, setRejectedBottles] = useState(0);
   const [rejectionReason, setRejectionReason] = useState('');
   
-  // NEW: Digital Signature State
   const [signature, setSignature] = useState('');
 
   useEffect(() => {
@@ -61,14 +55,12 @@ export default function CompleteProductionModal({ isOpen, onClose, batch, onComp
     setError('');
 
     try {
-      // 1. VERIFY SIGNATURE FIRST
       await axios.post(
         `${process.env.NEXT_PUBLIC_API_URL}/signature/verify`,
         { password: signature },
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // 2. PROCEED WITH COMPLETION
       await onComplete({
         actual_output: actualOutput,
         rejected_bottles: rejectedBottles,
@@ -90,7 +82,18 @@ export default function CompleteProductionModal({ isOpen, onClose, batch, onComp
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <CheckCircle2 className="w-6 h-6 text-green-400" /> Complete Production Run
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+          <div className="flex items-center gap-3">
+            {/* QMS SOP REFERENCE */}
+            <button 
+              onClick={() => window.open('/qms/documents?search=QA-PRO-TRC-SOP-009', '_blank')} 
+              className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+            >
+              <FileText className="w-4 h-4"/> Batch Traceability SOP
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-white p-2 hover:bg-dark-700 rounded-lg transition-colors">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -133,9 +136,6 @@ export default function CompleteProductionModal({ isOpen, onClose, batch, onComp
             </div>
           </div>
 
-          {/* ================================================================= */}
-          {/* DIGITAL SIGNATURE BLOCK */}
-          {/* ================================================================= */}
           <div className="bg-dark-900 rounded-lg p-5 border border-dark-700">
             <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
               <Key className="w-4 h-4 text-primary-400" />

@@ -1,8 +1,3 @@
-// ============================================================================
-// UPDATED: IPQC QA REVIEW MODAL - STAGE-AWARE VERSION
-// With 21 CFR Part 11 Digital Signature, Comprehensive Data View, & Lab Reports
-// ============================================================================
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -131,6 +126,23 @@ export default function IPQCReviewModal({
     }
   };
 
+  // QMS SOP MAPPING
+  const getRelevantSOP = (code: string) => {
+    switch (code) {
+      case 'WATER_TREATMENT': return 'QA-WT-MON-SOP-009';
+      case 'PRE_PRODUCTION': return 'QA-PRO-CLR-SOP-007';
+      case 'BOTTLE_BLOW': return 'QA-PRO-BLOW-SOP-002';
+      case 'RETURNED_BOTTLE_INSPECTION': return 'QA-PRO-IPQC-SOP-008';
+      case 'WASHING': return 'QA-PRO-RINS-SOP-003';
+      case 'FILLING': return 'QA-PRO-FILL-SOP-004';
+      case 'CAPPING': return 'QA-PRO-CAP-SOP-005';
+      case 'LABELING': return 'QA-PRO-PACK-SOP-006';
+      case 'CODING': return 'QA-PRO-TRC-SOP-009';
+      case 'SHRINK_SEAL': return 'QA-PRO-PACK-SOP-006';
+      default: return 'QA-PRO-IPQC-SOP-008';
+    }
+  };
+
   const handleApprove = async () => {
     if (!signature) { 
       setError('Digital signature required.'); 
@@ -212,6 +224,7 @@ export default function IPQCReviewModal({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        
         {/* Header */}
         <div className="p-6 border-b border-dark-700">
           <div className="flex items-center justify-between">
@@ -224,9 +237,20 @@ export default function IPQCReviewModal({
                 {ipqcCheck?.batch_number} • Check #{ipqcCheck?.check_sequence}
               </p>
             </div>
-            <button onClick={() => { onClose(); resetModal(); }} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
-              <X className="w-5 h-5 text-gray-400" />
-            </button>
+            <div className="flex items-center gap-3">
+              {/* QMS SOP LINK */}
+              {ipqcCheck?.stage_code && (
+                <button 
+                  onClick={() => window.open(`/qms/documents?search=${getRelevantSOP(ipqcCheck.stage_code!)}`, '_blank')} 
+                  className="px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
+                >
+                  <FileText className="w-4 h-4"/> QA SOP
+                </button>
+              )}
+              <button onClick={() => { onClose(); resetModal(); }} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -373,7 +397,7 @@ export default function IPQCReviewModal({
                         <p className="text-sm font-semibold text-gray-300 mb-2">Attached Lab Report</p>
                         <button 
                           onClick={(e) => {
-                            e.preventDefault(); // Prevent form submission if inside a form
+                            e.preventDefault(); 
                             try {
                               const base64Data = ipqcCheck.lab_report_data as string;
                               const arr = base64Data.split(',');
