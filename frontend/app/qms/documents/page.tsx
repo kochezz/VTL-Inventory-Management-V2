@@ -7,7 +7,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
   Search, Filter, Eye, FileText, 
   CheckCircle2, Clock, AlertCircle, FileEdit,
-  FolderTree, BookOpen, Link
+  FolderTree, BookOpen, Link, Plus, X, Save
 } from 'lucide-react';
 
 interface QMSDocument {
@@ -25,28 +25,46 @@ interface QMSDocument {
   author_name: string;
 }
 
-// ----------------------------------------------------------------------------
-// INNER COMPONENT: Handles the actual data fetching and search params
-// ----------------------------------------------------------------------------
+interface QMSSection {
+  section_id: string;
+  section_code: string;
+  section_name: string;
+}
+
 function MasterDocumentRegisterContent() {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
   
-  // NEW: Capture the ?search=... parameter from the URL
   const searchParams = useSearchParams();
   const initialSearch = searchParams.get('search') || '';
   
   const [documents, setDocuments] = useState<QMSDocument[]>([]);
+  const [sections, setSections] = useState<QMSSection[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Filters (searchQuery now defaults to the URL parameter)
+  // Filters
   const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [sectionFilter, setSectionFilter] = useState('all');
 
+  // Create Document State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [newDoc, setNewDoc] = useState({
+    doc_code: '',
+    doc_name: '',
+    doc_type: 'SOP',
+    section_id: '',
+    erp_link_module: ''
+  });
+
   useEffect(() => {
-    if (isAuthenticated) fetchDocuments();
+    if (isAuthenticated) {
+      fetchDocuments();
+      fetchSections();
+    }
   }, [isAuthenticated]);
 
   const fetchDocuments = async () => {
@@ -58,6 +76,33 @@ function MasterDocumentRegisterContent() {
       console.error('Failed to fetch documents:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSections = async () => {
+    try {
+      const response = await api.get('/qms/sections');
+      setSections(response.data);
+      if (response.data.length > 0) {
+        setNewDoc(prev => ({ ...prev, section_id: response.data[0].section_id }));
+      }
+    } catch (error) {
+      console.error('Failed to fetch sections:', error);
+    }
+  };
+
+  const handleCreateDocument = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateLoading(true);
+    setCreateError('');
+
+    try {
+      const response = await api.post('/qms/documents', newDoc);
+      // Redirect straight to the editor view for this new document!
+      router.push(`/qms/documents/${response.data.doc_id}`);
+    } catch (err: any) {
+      setCreateError(err.response?.data?.error || 'Failed to create document.');
+      setCreateLoading(false);
     }
   };
 
@@ -79,20 +124,13 @@ function MasterDocumentRegisterContent() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'RELEASED':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-green-500/10 text-green-400 border border-green-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Released</span>;
-      case 'APPROVED':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Approved</span>;
-      case 'REVIEW':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 w-max"><Eye className="w-3 h-3"/> In Review</span>;
-      case 'DRAFT':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 flex items-center gap-1 w-max"><FileEdit className="w-3 h-3"/> Draft</span>;
-      case 'PLANNED':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-500/10 text-gray-400 border border-gray-500/20 flex items-center gap-1 w-max"><Clock className="w-3 h-3"/> Planned</span>;
-      case 'SUPERSEDED':
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1 w-max"><AlertCircle className="w-3 h-3"/> Superseded</span>;
-      default:
-        return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-500/10 text-gray-400 border border-gray-500/20 w-max">{status}</span>;
+      case 'RELEASED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-green-500/10 text-green-400 border border-green-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Released</span>;
+      case 'APPROVED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Approved</span>;
+      case 'REVIEW': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 w-max"><Eye className="w-3 h-3"/> In Review</span>;
+      case 'DRAFT': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 flex items-center gap-1 w-max"><FileEdit className="w-3 h-3"/> Draft</span>;
+      case 'PLANNED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-500/10 text-gray-400 border border-gray-500/20 flex items-center gap-1 w-max"><Clock className="w-3 h-3"/> Planned</span>;
+      case 'SUPERSEDED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1 w-max"><AlertCircle className="w-3 h-3"/> Superseded</span>;
+      default: return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-500/10 text-gray-400 border border-gray-500/20 w-max">{status}</span>;
     }
   };
 
@@ -124,6 +162,12 @@ function MasterDocumentRegisterContent() {
             </h1>
             <p className="text-gray-400 mt-1">Definitive index of all controlled QMS documentation</p>
           </div>
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg shadow-primary-500/20"
+          >
+            <Plus className="w-5 h-5" /> Author New Document
+          </button>
         </div>
 
         <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-xl">
@@ -265,7 +309,7 @@ function MasterDocumentRegisterContent() {
                           {doc.status === 'PLANNED' ? (
                             <><FileEdit className="w-4 h-4"/> Author Draft</>
                           ) : (
-                            <><FileText className="w-4 h-4"/> View Document</>
+                            <><FileText className="w-4 h-4"/> View / Edit</>
                           )}
                         </button>
                       </td>
@@ -277,15 +321,89 @@ function MasterDocumentRegisterContent() {
             </table>
           </div>
         </div>
-        
       </div>
+
+      {/* CREATE DOCUMENT MODAL */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-2xl shadow-2xl">
+            <div className="flex items-center justify-between p-6 border-b border-dark-700 bg-dark-900 rounded-t-xl">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <FileEdit className="w-6 h-6 text-primary-500" /> Create New QMS Document
+              </h2>
+              <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
+            </div>
+
+            <form onSubmit={handleCreateDocument} className="p-6 space-y-6">
+              {createError && (
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" /> <p>{createError}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Document Code *</label>
+                  <input type="text" required value={newDoc.doc_code} onChange={(e) => setNewDoc({...newDoc, doc_code: e.target.value.toUpperCase()})} placeholder="e.g. QA-PRO-SOP-011" className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono uppercase focus:border-primary-500" />
+                  <p className="text-xs text-gray-500 mt-1">Must be unique.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Document Type Template *</label>
+                  <select required value={newDoc.doc_type} onChange={(e) => setNewDoc({...newDoc, doc_type: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500">
+                    <option value="POL">Policy (POL)</option>
+                    <option value="MAN">Manual (MAN)</option>
+                    <option value="SOP">Standard Operating Procedure (SOP)</option>
+                    <option value="FRM">Form (FRM)</option>
+                    <option value="LOG">Record / Log (LOG)</option>
+                    <option value="CHK">Checklist (CHK)</option>
+                    <option value="REG">Register (REG)</option>
+                  </select>
+                  <p className="text-xs text-primary-400/70 mt-1">This auto-generates the ISO layout.</p>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Document Title *</label>
+                  <input type="text" required value={newDoc.doc_name} onChange={(e) => setNewDoc({...newDoc, doc_name: e.target.value})} placeholder="e.g. Daily Line Clearance Procedure" className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500" />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">QMS Section / Department *</label>
+                  <select required value={newDoc.section_id} onChange={(e) => setNewDoc({...newDoc, section_id: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500">
+                    {sections.map(s => <option key={s.section_id} value={s.section_id}>{s.section_code} - {s.section_name}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">ERP Link Module (Optional)</label>
+                  <select value={newDoc.erp_link_module} onChange={(e) => setNewDoc({...newDoc, erp_link_module: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500">
+                    <option value="">-- None --</option>
+                    <option value="Production">Production</option>
+                    <option value="Inventory">Warehouse / Inventory</option>
+                    <option value="Procurement">Procurement / AVL</option>
+                    <option value="CRM">Sales / CRM</option>
+                    <option value="IT">Information Technology</option>
+                    <option value="QC Lab">QC Lab</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-dark-700 flex justify-end gap-3">
+                <button type="button" onClick={() => setShowCreateModal(false)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium transition-colors bg-dark-900 rounded-lg">Cancel</button>
+                <button type="submit" disabled={createLoading} className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50">
+                  {createLoading ? 'Generating...' : <><Save className="w-5 h-5"/> Generate Template & Edit</>}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
     </DashboardLayout>
   );
 }
 
-// ----------------------------------------------------------------------------
-// EXPORT: Wraps the inner component in Suspense to prevent Next.js build errors
-// ----------------------------------------------------------------------------
 export default function MasterDocumentRegister() {
   return (
     <Suspense fallback={

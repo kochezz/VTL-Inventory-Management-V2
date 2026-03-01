@@ -484,7 +484,11 @@ const getBatchById = async (batchId) => {
         pb.actual_output,
         pb.rejected_bottles,
         pb.yield_percentage,
-        pb.status,
+        pb.status, -- TRUE STATE MACHINE STATUS
+        CASE 
+          WHEN pb.status = 'in_progress' AND EXISTS (SELECT 1 FROM batch_ipqc_records WHERE batch_id = pb.batch_id AND (qa_status IN ('pending', 'pending_qa_review') OR qa_status IS NULL)) THEN 'awaiting_qa'
+          ELSE pb.status 
+        END as display_status, -- COSMETIC STATUS FOR UI BADGE
         pb.line_supervisor_id,
         pb.line_supervisor_name,
         pb.created_by,
@@ -504,8 +508,8 @@ const getBatchById = async (batchId) => {
     
     const batch = batchResult.rows[0];
     
-    // Get components
-   const componentsQuery = `
+    // Get components (TYPO FIXED HERE: Restored back to your original bc.product_id)
+    const componentsQuery = `
       SELECT 
         bc.product_id as component_id,
         bc.component_name,
@@ -650,7 +654,6 @@ const listBatches = async (filters = {}) => {
   try {
     console.log('📋 Fetching batches with filters:', filters);
     
-    // FIX: Using COALESCE to gracefully fall back to the products table if pb.product_name is blank
     let query = `
       SELECT 
         pb.batch_id,
@@ -665,6 +668,10 @@ const listBatches = async (filters = {}) => {
         pb.planned_quantity,
         pb.actual_output,
         pb.status,
+        CASE 
+          WHEN pb.status = 'in_progress' AND EXISTS (SELECT 1 FROM batch_ipqc_records WHERE batch_id = pb.batch_id AND (qa_status IN ('pending', 'pending_qa_review') OR qa_status IS NULL)) THEN 'awaiting_qa'
+          ELSE pb.status 
+        END as display_status,
         pb.created_by,
         u.full_name as created_by_name,
         pb.created_at
@@ -677,10 +684,17 @@ const listBatches = async (filters = {}) => {
     const params = [];
     let paramCount = 1;
     
+    // Filter Logic perfectly aligns with derived statuses
     if (filters.status) {
-      query += ` AND pb.status = $${paramCount}`;
-      params.push(filters.status);
-      paramCount++;
+      if (filters.status === 'awaiting_qa') {
+        query += ` AND (pb.status = 'awaiting_qa' OR (pb.status = 'in_progress' AND EXISTS (SELECT 1 FROM batch_ipqc_records WHERE batch_id = pb.batch_id AND (qa_status IN ('pending', 'pending_qa_review') OR qa_status IS NULL))))`;
+      } else if (filters.status === 'in_progress') {
+        query += ` AND pb.status = 'in_progress' AND NOT EXISTS (SELECT 1 FROM batch_ipqc_records WHERE batch_id = pb.batch_id AND (qa_status IN ('pending', 'pending_qa_review') OR qa_status IS NULL))`;
+      } else {
+        query += ` AND pb.status = $${paramCount}`;
+        params.push(filters.status);
+        paramCount++;
+      }
     }
     
     if (filters.productId) {
@@ -700,12 +714,16 @@ const listBatches = async (filters = {}) => {
       params.push(filters.dateTo);
       paramCount++;
     }
+
+    if (filters.search) {
+      query += ` AND (pb.batch_number ILIKE $${paramCount} OR COALESCE(pb.product_name, p.product_name) ILIKE $${paramCount})`;
+      params.push(`%${filters.search}%`);
+      paramCount++;
+    }
     
     query += ' ORDER BY pb.created_at DESC';
     
     const result = await pool.query(query, params);
-    
-    console.log(`✅ Found ${result.rows.length} batches`);
     
     return {
       batches: Array.isArray(result.rows) ? result.rows : [],

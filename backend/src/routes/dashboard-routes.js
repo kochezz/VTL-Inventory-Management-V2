@@ -8,6 +8,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
   try {
     console.log('📊 Fetching unified dashboard statistics...');
+    const userId = req.user.user_id;
 
     // 1. INVENTORY STATS
     const productsQuery = `
@@ -40,7 +41,7 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
     const productsResult = await pool.query(productsQuery);
     const productStats = productsResult.rows[0];
 
-    // 2. PRODUCTION & QA STATS (NEW)
+    // 2. PRODUCTION STATS
     const productionQuery = `
       SELECT 
         (SELECT COUNT(*) FROM production_batches WHERE status IN ('draft', 'ready_for_setup', 'in_progress')) as active_batches,
@@ -50,73 +51,108 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
     const productionResult = await pool.query(productionQuery);
     const prodStats = productionResult.rows[0];
 
-    // 3. TRANSACTION STATS
-    const todayTransactionsQuery = `SELECT COUNT(*) as count FROM inventory_transactions WHERE DATE(transaction_date) = CURRENT_DATE`;
-    const last30DaysQuery = `SELECT COUNT(*) as count FROM inventory_transactions WHERE transaction_date >= CURRENT_DATE - INTERVAL '30 days'`;
-    const previous30DaysQuery = `SELECT COUNT(*) as count FROM inventory_transactions WHERE transaction_date >= CURRENT_DATE - INTERVAL '60 days' AND transaction_date < CURRENT_DATE - INTERVAL '30 days'`;
+    // 3. PERSONAL QMS HEALTH STATS
+    const personalQmsQuery = `
+      SELECT 
+        (SELECT COUNT(*) FROM qms_documents d 
+         WHERE d.status = 'RELEASED' AND d.doc_type IN ('SOP', 'POL', 'MAN') 
+         AND NOT EXISTS (
+           SELECT 1 FROM qms_training_records tr 
+           WHERE tr.doc_id = d.doc_id AND tr.user_id = $1 AND tr.version_id = d.current_version_id
+         )) as pending_training,
+        (SELECT COUNT(*) FROM qms_ncr WHERE assigned_to = $1 AND status != 'CLOSED') as assigned_ncrs
+    `;
+    const personalQmsResult = await pool.query(personalQmsQuery, [userId]);
+    const personalStats = personalQmsResult.rows[0];
 
-    const [todayTxnRes, last30Res, prev30Res] = await Promise.all([
-      pool.query(todayTransactionsQuery),
-      pool.query(last30DaysQuery),
-      pool.query(previous30DaysQuery)
-    ]);
+    // 4. QA DEPARTMENT SPECIFIC STATS (FIXED to include 'pending_qa_review')
+    const qaQuery = `
+      SELECT 
+        (SELECT COUNT(*) FROM production_batches pb
+         WHERE pb.status = 'awaiting_qa'
+            OR (pb.status = 'in_progress' AND EXISTS (
+                SELECT 1 FROM batch_ipqc_records ipqc 
+                WHERE ipqc.batch_id = pb.batch_id 
+                  AND (ipqc.qa_status IN ('pending', 'pending_qa_review') OR ipqc.qa_status IS NULL)
+            ))
+        ) as pending_batch_release,
+        
+        (SELECT COUNT(*) FROM batch_ipqc_records 
+         WHERE qa_status IN ('pending', 'pending_qa_review') OR qa_status IS NULL
+        ) as pending_ipqc_reviews
+    `;
+    const qaResult = await pool.query(qaQuery);
+    const qaStats = qaResult.rows[0];
 
-    const currentMonthTxn = parseInt(last30Res.rows[0].count);
-    const previousMonthTxn = parseInt(prev30Res.rows[0].count);
-    const txnChange = previousMonthTxn > 0 ? ((currentMonthTxn - previousMonthTxn) / previousMonthTxn * 100).toFixed(1) : 0;
-
+    // Compile Unified Stats Object
     const stats = {
       // Inventory
-      total_products: parseInt(productStats.total_products),
-      in_stock_products: parseInt(productStats.in_stock),
-      low_stock_products: parseInt(productStats.low_stock),
-      out_of_stock_products: parseInt(productStats.out_of_stock),
+      total_products: parseInt(productStats.total_products || 0),
+      in_stock_products: parseInt(productStats.in_stock || 0),
+      low_stock_products: parseInt(productStats.low_stock || 0),
+      out_of_stock_products: parseInt(productStats.out_of_stock || 0),
       total_inventory_value: parseFloat(productStats.total_inventory_value || 0),
       total_inventory_units: parseInt(productStats.total_units || 0),
       
-      // Production & QA
-      active_batches: parseInt(prodStats.active_batches),
-      pending_qa: parseInt(prodStats.pending_qa),
-      today_output: parseInt(prodStats.today_output),
+      // Production
+      active_batches: parseInt(prodStats.active_batches || 0),
+      pending_qa: parseInt(prodStats.pending_qa || 0),
+      today_output: parseInt(prodStats.today_output || 0),
 
-      // Activity
-      today_transactions: parseInt(todayTxnRes.rows[0].count),
-      monthly_transactions: currentMonthTxn,
-      transaction_change_percent: parseFloat(txnChange)
+      // Personal User Action Center
+      pending_training: parseInt(personalStats.pending_training || 0),
+      assigned_ncrs: parseInt(personalStats.assigned_ncrs || 0),
+
+      // QA specific
+      qa_pending_batches: parseInt(qaStats.pending_batch_release || 0),
+      qa_pending_ipqc: parseInt(qaStats.pending_ipqc_reviews || 0)
     };
 
     res.json(stats);
   } catch (error) {
-    console.error('❌ Get dashboard stats error:', error.message);
+    console.error('❌ Get dashboard stats error:', error);
     res.status(500).json({ message: error.message });
   }
 });
 
-// GET /api/dashboard/active-production (NEW) - Get currently running batches
+// GET /api/dashboard/active-production (Get currently running batches)
 router.get('/active-production', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
   try {
+    // FIXED: Added the dynamic CASE statement so batches turn yellow on the dashboard
     const query = `
       SELECT 
-        batch_id, batch_number, COALESCE(pb.product_name, p.product_name) as product_name, 
-        status, planned_quantity, actual_output, yield_percentage, production_date
+        pb.batch_id, 
+        pb.batch_number, 
+        COALESCE(pb.product_name, p.product_name) as product_name, 
+        CASE 
+          WHEN pb.status = 'in_progress' AND EXISTS (
+              SELECT 1 FROM batch_ipqc_records 
+              WHERE batch_id = pb.batch_id AND (qa_status IN ('pending', 'pending_qa_review') OR qa_status IS NULL)
+          ) THEN 'awaiting_qa'
+          ELSE pb.status 
+        END as status,
+        pb.planned_quantity, 
+        pb.actual_output, 
+        pb.yield_percentage, 
+        pb.production_date
       FROM production_batches pb
       LEFT JOIN products p ON pb.product_id = p.product_id
-      WHERE status NOT IN ('released', 'rejected', 'draft')
+      WHERE pb.status NOT IN ('released', 'rejected', 'draft')
       ORDER BY 
-        CASE status
+        CASE pb.status
           WHEN 'in_progress' THEN 1
           WHEN 'ready_for_setup' THEN 2
           WHEN 'awaiting_qa' THEN 3
           WHEN 'completed' THEN 4
           ELSE 5
         END,
-        production_date ASC
-      LIMIT 5
+        pb.production_date ASC
+      LIMIT 6
     `;
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (error) {
-    console.error('❌ Get active production error:', error.message);
+    console.error('❌ Get active production error:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -139,6 +175,7 @@ router.get('/recent-transactions', authenticate, authorize(['admin', 'manager', 
     const result = await pool.query(query, [limit]);
     res.json(result.rows);
   } catch (error) {
+    console.error('❌ Get recent transactions error:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -168,6 +205,7 @@ router.get('/low-stock-alerts', authenticate, authorize(['admin', 'manager', 'qa
     const result = await pool.query(query, [limit]);
     res.json(result.rows);
   } catch (error) {
+    console.error('❌ Get low stock alerts error:', error.message);
     res.status(500).json({ message: error.message });
   }
 });
@@ -188,14 +226,9 @@ router.get('/locations', authenticate, authorize(['admin', 'manager', 'qa', 'sta
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (error) {
+    console.error('❌ Get locations error:', error);
     res.status(500).json({ message: error.message });
   }
-});
-
-// Alias for backward compatibility
-router.get('/stock-by-location', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
-  req.url = '/locations';
-  return router.handle(req, res);
 });
 
 module.exports = router;

@@ -3,23 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { useSettings } from '@/hooks/useSettings'; // <-- Added new Settings hook
+import { useSettings } from '@/hooks/useSettings';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
-  Package, 
-  TrendingUp, 
-  AlertCircle, 
-  TruckIcon,
-  ArrowRightLeft,
-  Settings,
-  Clock,
-  MapPin,
-  Activity,
-  RefreshCw,
-  ChevronRight,
-  Factory,
-  ShieldCheck,
-  PlayCircle
+  Package, TrendingUp, AlertCircle, TruckIcon, ArrowRightLeft,
+  Settings, Clock, Activity, RefreshCw, ChevronRight, Factory, 
+  ShieldCheck, PlayCircle, GraduationCap, AlertOctagon, FileText, 
+  ClipboardCheck, Users
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -30,6 +20,10 @@ interface DashboardStats {
   active_batches: number;
   pending_qa: number;
   today_output: number;
+  pending_training: number;
+  assigned_ncrs: number;
+  qa_pending_batches: number;
+  qa_pending_ipqc: number;
 }
 
 interface ActiveBatch {
@@ -44,7 +38,7 @@ interface ActiveBatch {
 export default function DashboardPage() {
   const router = useRouter();
   const { isAuthenticated, user, token, isLoading: authLoading } = useAuth();
-  const { formatCurrency } = useSettings(); // <-- Initialized dynamic currency formatter
+  const { formatCurrency } = useSettings();
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -53,7 +47,6 @@ export default function DashboardPage() {
   const [activeBatches, setActiveBatches] = useState<ActiveBatch[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<any[]>([]);
-  const [locationStock, setLocationStock] = useState<any[]>([]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -69,19 +62,17 @@ export default function DashboardPage() {
       setLoading(true);
       const headers = { Authorization: `Bearer ${token}` };
 
-      const [statsRes, activeProdRes, transactionsRes, alertsRes, locationsRes] = await Promise.all([
+      const [statsRes, activeProdRes, transactionsRes, alertsRes] = await Promise.all([
         axios.get(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/stats`, { headers }),
         axios.get(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/active-production`, { headers }),
         axios.get(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/recent-transactions?limit=5`, { headers }),
-        axios.get(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/low-stock-alerts?limit=5`, { headers }),
-        axios.get(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/stock-by-location`, { headers })
+        axios.get(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/low-stock-alerts?limit=5`, { headers })
       ]);
 
       setStats(statsRes.data);
       setActiveBatches(activeProdRes.data);
       setRecentTransactions(transactionsRes.data);
       setLowStockAlerts(alertsRes.data);
-      setLocationStock(locationsRes.data);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -115,17 +106,20 @@ export default function DashboardPage() {
     }
   };
 
-  // Reusable KPI Card (Matched to Analytics styling)
-  const KPICard = ({ title, value, subtext, icon: Icon, colorClass }: any) => (
-    <div className="bg-dark-800 border border-dark-700 rounded-xl p-5 relative overflow-hidden group hover:border-primary-500/50 transition-colors">
+  // Reusable Clickable KPI Card
+  const KPICard = ({ title, value, subtext, icon: Icon, colorClass, onClick, alert }: any) => (
+    <div 
+      onClick={onClick}
+      className={`bg-dark-800 border ${alert ? `border-${colorClass}-500 shadow-[0_0_15px_rgba(0,0,0,0.2)] shadow-${colorClass}-500/20` : 'border-dark-700'} rounded-xl p-5 relative overflow-hidden group hover:border-${colorClass}-500/50 transition-all cursor-pointer`}
+    >
       <div className={`absolute top-0 right-0 w-24 h-24 bg-${colorClass}-500/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110`}></div>
       <div className="flex justify-between items-start relative z-10">
         <div>
           <p className="text-gray-400 text-sm font-medium mb-1">{title}</p>
-          <h3 className="text-3xl font-bold text-white mb-1">{value}</h3>
+          <h3 className={`text-3xl font-bold mb-1 ${alert ? `text-${colorClass}-400` : 'text-white'}`}>{value}</h3>
           <p className="text-gray-500 text-xs">{subtext}</p>
         </div>
-        <div className={`p-3 rounded-lg bg-${colorClass}-500/10 text-${colorClass}-400`}>
+        <div className={`p-3 rounded-lg bg-${colorClass}-500/10 text-${colorClass}-400 group-hover:bg-${colorClass}-500/20 transition-colors`}>
           <Icon className="w-6 h-6" />
         </div>
       </div>
@@ -136,78 +130,136 @@ export default function DashboardPage() {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-screen">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-primary-500"></div>
         </div>
       </DashboardLayout>
     );
   }
 
+  const isQA = user?.role === 'qa';
+  const isAdmin = user?.role === 'admin';
+
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+      <div className="p-6 space-y-8 max-w-[1600px] mx-auto pb-12">
         
-        {/* Header */}
+        {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-white">Command Center</h1>
-            <p className="text-gray-400 mt-1">Welcome back, {user?.full_name}. Here is your live operational overview.</p>
+            <p className="text-gray-400 mt-1">Welcome back, {user?.full_name}. Your role is <span className="uppercase text-primary-400 font-bold">{user?.role}</span>.</p>
           </div>
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg text-white flex items-center gap-2 transition-colors disabled:opacity-50 font-medium"
+            className="px-4 py-2 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded-lg text-white flex items-center gap-2 transition-colors disabled:opacity-50 font-medium"
           >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh Data
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary-400' : 'text-gray-400'}`} />
+            Sync Data
           </button>
         </div>
 
-        {/* 1. TOP KPI GRID (Mix of Inventory & Production) */}
+        {/* 1. PERSONAL ACTION CENTER (Always visible to all users) */}
+        {(stats?.pending_training > 0 || stats?.assigned_ncrs > 0) && (
+          <div className="bg-dark-900 border border-dark-700 rounded-xl p-5">
+            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Activity className="w-4 h-4" /> My Action Center
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {stats?.pending_training > 0 && (
+                <div onClick={() => router.push('/qms/training')} className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-blue-500/20 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-blue-500/20 rounded-full text-blue-400"><GraduationCap className="w-6 h-6"/></div>
+                    <div>
+                      <p className="text-white font-bold text-lg">{stats.pending_training} Training Modules Due</p>
+                      <p className="text-blue-400 text-sm">You have newly released QMS SOPs to read and sign.</p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-blue-400" />
+                </div>
+              )}
+              
+              {stats?.assigned_ncrs > 0 && (
+                <div onClick={() => router.push('/qms/ncr')} className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-red-500/20 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-red-500/20 rounded-full text-red-400"><AlertOctagon className="w-6 h-6"/></div>
+                    <div>
+                      <p className="text-white font-bold text-lg">{stats.assigned_ncrs} NCRs Assigned to You</p>
+                      <p className="text-red-400 text-sm">Root cause analysis or CAPA required.</p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-red-400" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 2. DYNAMIC KPI GRID (Role Based) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KPICard 
-            title="Total Inventory Value" 
-            value={formatCurrency(stats?.total_inventory_value || 0, 'USD')} // <-- Updated to use dynamic currency
-            subtext="Current warehouse valuation" 
-            icon={TrendingUp} colorClass="green" 
-          />
-          <KPICard 
-            title="Today's Output" 
-            value={(stats?.today_output || 0).toLocaleString()} 
-            subtext="Bottles produced today" 
-            icon={Factory} colorClass="blue" 
-          />
-          <KPICard 
-            title="Pending QA Actions" 
-            value={stats?.pending_qa || 0} 
-            subtext="Batches awaiting review" 
-            icon={ShieldCheck} colorClass="yellow" 
-          />
-          <KPICard 
-            title="Low Stock Alerts" 
-            value={stats?.low_stock_products || 0} 
-            subtext={`${stats?.out_of_stock_products || 0} items completely out of stock`} 
-            icon={AlertCircle} colorClass="red" 
-          />
+          {isQA ? (
+            <>
+              <KPICard 
+                title="Batches Awaiting Release" value={stats?.qa_pending_batches || 0} subtext="Final QA approval required" 
+                icon={ShieldCheck} colorClass="green" alert={stats?.qa_pending_batches > 0}
+                onClick={() => router.push('/production')}
+              />
+              <KPICard 
+                title="Pending IPQC Reviews" value={stats?.qa_pending_ipqc || 0} subtext="In-process checks awaiting sign-off" 
+                icon={ClipboardCheck} colorClass="blue" alert={stats?.qa_pending_ipqc > 0}
+                onClick={() => router.push('/production')}
+              />
+              <KPICard 
+                title="Today's Output" value={(stats?.today_output || 0).toLocaleString()} subtext="Bottles produced today" 
+                icon={Factory} colorClass="purple" onClick={() => router.push('/production')}
+              />
+              <KPICard 
+                title="Low Stock Alerts" value={stats?.low_stock_products || 0} subtext={`${stats?.out_of_stock_products || 0} critical shortages`} 
+                icon={AlertCircle} colorClass="red" alert={stats?.low_stock_products > 0}
+                onClick={() => router.push('/inventory')}
+              />
+            </>
+          ) : (
+            <>
+              <KPICard 
+                title="Total Inventory Value" value={formatCurrency(stats?.total_inventory_value || 0, 'USD')} subtext="Current warehouse valuation" 
+                icon={TrendingUp} colorClass="green" onClick={() => router.push('/inventory')}
+              />
+              <KPICard 
+                title="Today's Output" value={(stats?.today_output || 0).toLocaleString()} subtext="Bottles produced today" 
+                icon={Factory} colorClass="blue" onClick={() => router.push('/production')}
+              />
+              <KPICard 
+                title="Active Batches" value={stats?.active_batches || 0} subtext="Currently running on factory floor" 
+                icon={Activity} colorClass="purple" onClick={() => router.push('/production')}
+              />
+              <KPICard 
+                title="Low Stock Alerts" value={stats?.low_stock_products || 0} subtext={`${stats?.out_of_stock_products || 0} completely out of stock`} 
+                icon={AlertCircle} colorClass="red" alert={stats?.low_stock_products > 0}
+                onClick={() => router.push('/inventory')}
+              />
+            </>
+          )}
         </div>
 
-        {/* 2. MIDDLE SPLIT: PRODUCTION VS INVENTORY ALERTS */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 3. MIDDLE SPLIT: PRODUCTION VS QUICK ACTIONS */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Active Production Board */}
-          <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 flex flex-col">
+          {/* Live Production Board (Takes 2/3 width) */}
+          <div className="lg:col-span-2 bg-dark-800 border border-dark-700 rounded-xl p-6 flex flex-col shadow-lg">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <Activity className="w-5 h-5 text-blue-400" />
                 Live Production Board
               </h2>
-              <button onClick={() => router.push('/production')} className="text-sm text-primary-400 hover:text-primary-300 flex items-center">
-                View All <ChevronRight className="w-4 h-4 ml-1" />
+              <button onClick={() => router.push('/production')} className="text-sm text-primary-400 hover:text-primary-300 flex items-center bg-primary-500/10 px-3 py-1 rounded-lg">
+                Full Schedule <ChevronRight className="w-4 h-4 ml-1" />
               </button>
             </div>
             
-            <div className="space-y-3 flex-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
               {activeBatches.length === 0 ? (
-                <div className="text-center py-10">
+                <div className="md:col-span-2 text-center py-12 border-2 border-dashed border-dark-700 rounded-xl">
                   <Factory className="w-12 h-12 text-gray-600 mx-auto mb-3" />
                   <p className="text-gray-400 font-medium">No active batches</p>
                   <p className="text-xs text-gray-500">All production lines are currently idle.</p>
@@ -218,24 +270,24 @@ export default function DashboardPage() {
                   const progress = batch.status === 'in_progress' ? 50 : batch.status === 'awaiting_qa' ? 90 : batch.status === 'completed' ? 100 : 10;
                   
                   return (
-                    <div key={batch.batch_id} onClick={() => router.push(`/production/${batch.batch_id}`)} className="p-4 bg-dark-900 border border-dark-700 rounded-lg hover:border-primary-500/50 cursor-pointer transition-colors">
-                      <div className="flex justify-between items-start mb-2">
+                    <div key={batch.batch_id} onClick={() => router.push(`/production/${batch.batch_id}`)} className="p-5 bg-dark-900 border border-dark-700 rounded-xl hover:border-primary-500/50 cursor-pointer transition-colors shadow-inner">
+                      <div className="flex justify-between items-start mb-4">
                         <div>
-                          <p className="text-white font-medium">{batch.batch_number}</p>
-                          <p className="text-xs text-gray-400">{batch.product_name}</p>
+                          <p className="text-white font-bold text-lg">{batch.batch_number}</p>
+                          <p className="text-sm text-gray-400">{batch.product_name}</p>
                         </div>
-                        <div className={`px-2 py-1 rounded text-xs font-semibold flex items-center gap-1 ${style.bg} ${style.text}`}>
+                        <div className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 border ${style.bg.replace('/10', '/20')} ${style.text} ${style.bg}`}>
                           {style.pulse && <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>}
                           {batch.status.replace('_', ' ').toUpperCase()}
                         </div>
                       </div>
-                      <div className="mt-3">
-                        <div className="flex justify-between text-xs text-gray-500 mb-1">
-                          <span>Progress</span>
-                          <span>{batch.actual_output || 0} / {batch.planned_quantity} units</span>
+                      <div className="mt-auto">
+                        <div className="flex justify-between text-sm text-gray-400 mb-2">
+                          <span>Output Progress</span>
+                          <span className="font-mono text-white">{batch.actual_output || 0} / {batch.planned_quantity}</span>
                         </div>
-                        <div className="w-full bg-dark-800 rounded-full h-1.5">
-                          <div className={`h-1.5 rounded-full ${style.bg.replace('/10', '')}`} style={{ width: `${progress}%` }}></div>
+                        <div className="w-full bg-dark-950 rounded-full h-2 border border-dark-600 overflow-hidden">
+                          <div className={`h-full rounded-full ${style.bg.replace('/10', '')} transition-all duration-1000`} style={{ width: `${progress}%` }}></div>
                         </div>
                       </div>
                     </div>
@@ -245,72 +297,105 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Low Stock Alerts */}
-          <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 flex flex-col">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-red-400" />
-                Critical Inventory Alerts
-              </h2>
-              <button onClick={() => router.push('/products?filter=low_stock')} className="text-sm text-primary-400 hover:text-primary-300 flex items-center">
-                View All <ChevronRight className="w-4 h-4 ml-1" />
+          {/* Quick Actions Panel (Tailored by Role) */}
+          <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 shadow-lg">
+            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-gray-400" />
+              Quick Actions
+            </h2>
+            
+            <div className="space-y-3">
+              {/* QA ACTIONS */}
+              {(isQA || isAdmin) && (
+                <>
+                  <button onClick={() => router.push('/qms/documents')} className="w-full p-4 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 rounded-xl font-medium transition-colors flex items-center gap-3">
+                    <FileText className="w-5 h-5" /> Master Document Register
+                  </button>
+                  <button onClick={() => router.push('/qms/ncr')} className="w-full p-4 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl font-medium transition-colors flex items-center gap-3">
+                    <AlertOctagon className="w-5 h-5" /> Open NCR Register
+                  </button>
+                </>
+              )}
+
+              {/* STANDARD OPERATIONS ACTIONS */}
+              {(!isQA || isAdmin) && (
+                <>
+                  <button onClick={() => router.push('/production')} className="w-full p-4 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-medium transition-colors flex items-center gap-3 shadow-lg shadow-primary-500/20">
+                    <PlayCircle className="w-5 h-5" /> New Production Batch
+                  </button>
+                  <button onClick={() => router.push('/inventory?action=receive')} className="w-full p-4 bg-dark-900 hover:bg-dark-700 border border-dark-600 text-white rounded-xl transition-colors flex items-center gap-3">
+                    <TruckIcon className="w-5 h-5 text-green-400" /> Receive Shipment (GRN)
+                  </button>
+                  <button onClick={() => router.push('/inventory?action=issue')} className="w-full p-4 bg-dark-900 hover:bg-dark-700 border border-dark-600 text-white rounded-xl transition-colors flex items-center gap-3">
+                    <Package className="w-5 h-5 text-blue-400" /> Issue to Production Line
+                  </button>
+                </>
+              )}
+              
+              {/* VENDOR/SALES ACTIONS */}
+              <button onClick={() => router.push('/vendor-management/suppliers')} className="w-full p-4 bg-dark-900 hover:bg-dark-700 border border-dark-600 text-white rounded-xl transition-colors flex items-center gap-3">
+                <Users className="w-5 h-5 text-purple-400" /> Approved Vendor List
               </button>
             </div>
-            <div className="space-y-3 flex-1">
+          </div>
+          
+        </div>
+
+        {/* 4. BOTTOM LISTS (Low Stock & Transactions) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Low Stock Alerts */}
+          <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-400" /> Critical Inventory Alerts
+              </h2>
+            </div>
+            <div className="space-y-2">
               {lowStockAlerts.length === 0 ? (
-                <div className="text-center py-10">
-                  <Package className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-400 font-medium">All systems normal</p>
-                  <p className="text-xs text-gray-500">No components are currently below minimum thresholds.</p>
-                </div>
+                <p className="text-gray-400 text-center py-4 text-sm">Inventory levels are healthy.</p>
               ) : (
                 lowStockAlerts.map((alert) => (
-                  <div key={alert.product_id} className="flex items-center justify-between p-4 bg-dark-900 border border-dark-700 rounded-lg">
+                  <div key={alert.product_id} className="flex items-center justify-between p-3 bg-dark-900 border border-dark-700 rounded-lg">
                     <div className="flex items-center gap-3">
-                      <div className={`w-2 h-10 rounded-full ${alert.urgency === 'critical' ? 'bg-red-500' : 'bg-yellow-500'}`}></div>
+                      <div className={`w-1.5 h-10 rounded-full ${alert.urgency === 'critical' ? 'bg-red-500' : 'bg-yellow-500'}`}></div>
                       <div>
                         <p className="text-sm font-medium text-white">{alert.product_name}</p>
-                        <p className="text-xs text-gray-400">{alert.sku} • {alert.category_name}</p>
+                        <p className="text-xs text-gray-400">{alert.sku}</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className={`text-lg font-bold ${alert.urgency === 'critical' ? 'text-red-400' : 'text-yellow-400'}`}>
+                      <p className={`text-base font-bold font-mono ${alert.urgency === 'critical' ? 'text-red-400' : 'text-yellow-400'}`}>
                         {alert.total_stock}
                       </p>
-                      <p className="text-xs text-gray-500">Min: {alert.reorder_level} {alert.base_uom}</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">Min: {alert.reorder_level}</p>
                     </div>
                   </div>
                 ))
               )}
             </div>
           </div>
-        </div>
 
-        {/* 3. WAREHOUSING & QUICK ACTIONS */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
           {/* Recent Transactions */}
-          <div className="lg:col-span-2 bg-dark-800 border border-dark-700 rounded-xl p-6">
-            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-primary-400" />
-              Recent Inventory Flow
+          <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-primary-400" /> Recent Stock Movements
             </h2>
             <div className="space-y-2">
               {recentTransactions.length === 0 ? (
                 <p className="text-gray-400 text-center py-4 text-sm">No recent transactions</p>
               ) : (
                 recentTransactions.map((txn) => (
-                  <div key={txn.transaction_id} className="flex items-center gap-4 p-3 bg-dark-900 rounded-lg">
-                    <div className={`px-2 py-1 rounded text-xs font-bold border w-24 text-center ${getTransactionTypeColor(txn.transaction_type)}`}>
-                      {txn.transaction_type.toUpperCase()}
+                  <div key={txn.transaction_id} className="flex items-center gap-4 p-3 bg-dark-900 border border-dark-700 rounded-lg">
+                    <div className={`px-2 py-1.5 rounded text-[10px] font-bold border w-20 text-center tracking-wider uppercase ${getTransactionTypeColor(txn.transaction_type)}`}>
+                      {txn.transaction_type}
                     </div>
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-white">{txn.product_name}</p>
-                      <p className="text-xs text-gray-400">
-                        {txn.quantity} {txn.uom} • {txn.from_location ? `From ${txn.from_location}` : ''} {txn.to_location ? `To ${txn.to_location}` : ''}
+                      <p className="text-sm font-medium text-white line-clamp-1">{txn.product_name}</p>
+                      <p className="text-xs text-gray-400 mt-0.5 font-mono">
+                        {txn.quantity} {txn.uom} {txn.from_location ? `← ${txn.from_location}` : ''} {txn.to_location ? `→ ${txn.to_location}` : ''}
                       </p>
                     </div>
-                    <span className="text-xs text-gray-500 whitespace-nowrap">
+                    <span className="text-xs text-gray-500 whitespace-nowrap hidden sm:block">
                       {new Date(txn.transaction_date).toLocaleDateString()}
                     </span>
                   </div>
@@ -318,31 +403,8 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-
-          {/* Quick Actions Panel */}
-          <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
-            <h2 className="text-xl font-bold text-white mb-4">Quick Actions</h2>
-            <div className="space-y-3">
-              <button onClick={() => router.push('/production')} className="w-full p-4 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-medium transition-colors flex items-center gap-3">
-                <PlayCircle className="w-5 h-5" />
-                New Production Batch
-              </button>
-              <button onClick={() => router.push('/inventory?action=receive')} className="w-full p-3 bg-dark-900 hover:bg-dark-700 border border-dark-600 text-white rounded-xl transition-colors flex items-center gap-3">
-                <TruckIcon className="w-4 h-4 text-green-400" />
-                <span className="text-sm">Receive Shipment</span>
-              </button>
-              <button onClick={() => router.push('/inventory?action=issue')} className="w-full p-3 bg-dark-900 hover:bg-dark-700 border border-dark-600 text-white rounded-xl transition-colors flex items-center gap-3">
-                <Package className="w-4 h-4 text-blue-400" />
-                <span className="text-sm">Issue to Line</span>
-              </button>
-              <button onClick={() => router.push('/inventory?action=transfer')} className="w-full p-3 bg-dark-900 hover:bg-dark-700 border border-dark-600 text-white rounded-xl transition-colors flex items-center gap-3">
-                <ArrowRightLeft className="w-4 h-4 text-purple-400" />
-                <span className="text-sm">Transfer Stock</span>
-              </button>
-            </div>
-          </div>
-          
         </div>
+
       </div>
     </DashboardLayout>
   );

@@ -207,4 +207,25 @@ router.post('/training/acknowledge', async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
+router.post('/documents', async (req, res) => {
+  try {
+    const result = await qmsService.createDocument(req.body, req.user.user_id);
+    res.status(201).json(result);
+  } catch (error) {
+    if (error.code === '23505') { // Postgres Unique Violation
+      return res.status(400).json({ error: 'A document with this code already exists.' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Also make sure you have a route to fetch sections for the dropdown:
+router.get('/sections', async (req, res) => {
+  try {
+    const sections = await qmsService.listSections();
+    res.json(sections);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 module.exports = router;

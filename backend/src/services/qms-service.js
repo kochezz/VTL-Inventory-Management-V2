@@ -2,21 +2,81 @@
 // VILAGIO ERP - QMS DOCUMENT SERVICE (PHASE 1)
 // ============================================================================
 
-const { pool } = require('./auth-service'); // Or your database config path
+const { pool } = require('./auth-service');
 const bcrypt = require('bcrypt');
+
+// --- HELPER: GENERATE HTML TEMPLATES ---
+function getTemplateForType(doc_type) {
+  let template = '';
+  switch (doc_type) {
+    case 'POL': // Policy
+      template = `
+        <h2 style="color: #0ea5e9;">1. Purpose & Objective</h2><p>State the high-level intent of this policy.</p>
+        <h2 style="color: #0ea5e9;">2. Scope</h2><p>Define who and what this policy applies to.</p>
+        <h2 style="color: #0ea5e9;">3. Policy Statement</h2><p>Outline the core rules, directives, and commitments of VTL.</p>
+        <h2 style="color: #0ea5e9;">4. Responsibilities</h2><p>List the departments/roles responsible for enforcing this policy.</p>
+        <h2 style="color: #0ea5e9;">5. Exceptions</h2><p>List any specific scenarios where this policy does not apply.</p>
+      `;
+      break;
+    case 'MAN': // Manual
+      template = `
+        <h1 style="text-align: center; color: #8b5cf6;">QUALITY SYSTEM MANUAL</h1>
+        <h2 style="color: #8b5cf6;">1. Introduction & Company Profile</h2><p>Overview of VTL operations.</p>
+        <h2 style="color: #8b5cf6;">2. Quality Policy</h2><p>Formal commitment to quality standards.</p>
+        <h2 style="color: #8b5cf6;">3. Scope of the QMS</h2><p>Boundaries and applicability.</p>
+        <h2 style="color: #8b5cf6;">4. Organizational Structure</h2><p>Leadership and departmental breakdown.</p>
+        <h2 style="color: #8b5cf6;">5. System Elements</h2><p>Map to ISO 9001 clauses (Planning, Support, Operation, Performance, Improvement).</p>
+      `;
+      break;
+    case 'FRM': // Form
+      template = `
+        <table border="1" style="width: 100%; border-collapse: collapse; border-color: #cbd5e1;">
+          <tr style="background-color: #f1f5f9;"><td style="padding: 8px;"><strong>Date:</strong></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><strong>Department:</strong></td><td style="padding: 8px;"><br><br></td></tr>
+          <tr><td colspan="4" style="padding: 8px;"><strong>Details / Input:</strong><br><br><br><br><br><br></td></tr>
+          <tr style="background-color: #f1f5f9;"><td style="padding: 8px;"><strong>Completed By:</strong></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><strong>Signature:</strong></td><td style="padding: 8px;"><br><br></td></tr>
+        </table>
+      `;
+      break;
+    case 'CHK': // Checklist
+      template = `
+        <table border="1" style="width: 100%; border-collapse: collapse; border-color: #cbd5e1;">
+          <tr style="background-color: #f1f5f9;"><th style="padding: 8px; text-align: left;">Step</th><th style="padding: 8px; text-align: left;">Task / Verification Description</th><th style="padding: 8px;">Pass</th><th style="padding: 8px;">Fail</th><th style="padding: 8px;">N/A</th><th style="padding: 8px; text-align: left;">Remarks</th></tr>
+          <tr><td style="padding: 8px;">1</td><td style="padding: 8px;">Enter task description here</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px;"></td></tr>
+          <tr><td style="padding: 8px;">2</td><td style="padding: 8px;">Enter task description here</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px;"></td></tr>
+          <tr><td style="padding: 8px;">3</td><td style="padding: 8px;">Enter task description here</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px; text-align: center;">[ ]</td><td style="padding: 8px;"></td></tr>
+        </table>
+      `;
+      break;
+    case 'LOG': // Record/Log
+      template = `
+        <table border="1" style="width: 100%; border-collapse: collapse; border-color: #cbd5e1;">
+          <tr style="background-color: #f1f5f9;"><th style="padding: 8px; text-align: left;">Date & Time</th><th style="padding: 8px; text-align: left;">Parameter Measured</th><th style="padding: 8px; text-align: left;">Value / Reading</th><th style="padding: 8px; text-align: left;">Operator Initial</th><th style="padding: 8px; text-align: left;">Verifier Initial</th><th style="padding: 8px; text-align: left;">Comments</th></tr>
+          <tr><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td></tr>
+          <tr><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td></tr>
+        </table>
+      `;
+      break;
+    case 'REG': // Register
+      template = `
+        <table border="1" style="width: 100%; border-collapse: collapse; border-color: #cbd5e1;">
+          <tr style="background-color: #f1f5f9;"><th style="padding: 8px; text-align: left;">Reference ID</th><th style="padding: 8px; text-align: left;">Date Logged</th><th style="padding: 8px; text-align: left;">Item Description</th><th style="padding: 8px; text-align: left;">Current Status</th><th style="padding: 8px; text-align: left;">Action Owner</th></tr>
+          <tr><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td><td style="padding: 8px;"><br><br></td></tr>
+        </table>
+      `;
+      break;
+    default:
+      template = `<p>Start documenting here...</p>`;
+  }
+  return template;
+}
 
 const QmsService = {
   
-  // 1. Get Dashboard Completion Stats (The "X of 121" metrics)
   async getCompletionStats() {
     try {
       const query = `
         SELECT 
-          s.section_id,
-          s.section_code,
-          s.section_name,
-          s.color_code,
-          s.sort_order,
+          s.section_id, s.section_code, s.section_name, s.color_code, s.sort_order,
           COUNT(d.doc_id) as total_docs,
           COUNT(d.doc_id) FILTER (WHERE d.status = 'RELEASED') as released_docs,
           COUNT(d.doc_id) FILTER (WHERE d.status = 'APPROVED') as approved_docs,
@@ -56,7 +116,6 @@ const QmsService = {
     }
   },
 
-  // 2. List all documents (Master Register)
   async listDocuments(filters = {}) {
     try {
       let query = `
@@ -97,7 +156,6 @@ const QmsService = {
     }
   },
 
-  // 3. Get specific document details and version history
   async getDocumentById(docId) {
     try {
       const docQuery = `
@@ -129,32 +187,34 @@ const QmsService = {
     }
   },
 
-  // 4. Create a Draft (either initial v0.1 or next revision)
   async createDraft(docId, userId) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      const docRes = await client.query('SELECT status, current_version_id FROM qms_documents WHERE doc_id = $1', [docId]);
+      const docRes = await client.query('SELECT doc_type, status, current_version_id FROM qms_documents WHERE doc_id = $1', [docId]);
       if (docRes.rows.length === 0) throw new Error('Document not found');
       
       const doc = docRes.rows[0];
       let newVersionNumber = '0.1';
       let previousContent = {};
 
-      // If document is already released, we are creating a new major/minor revision
       if (doc.status === 'RELEASED' && doc.current_version_id) {
         const prevVerRes = await client.query('SELECT version_number, content_data FROM qms_document_versions WHERE version_id = $1', [doc.current_version_id]);
         if (prevVerRes.rows.length > 0) {
           const currentVer = parseFloat(prevVerRes.rows[0].version_number);
-          newVersionNumber = (currentVer + 1.0).toFixed(1); // e.g., 1.0 -> 2.0
+          newVersionNumber = (currentVer + 1.0).toFixed(1); 
           previousContent = prevVerRes.rows[0].content_data;
         }
-      } else if (doc.status !== 'PLANNED') {
+      } else if (doc.status === 'PLANNED') {
+        // BUG FIX: If starting a draft for a seeded document, inject the correct HTML template here!
+        if (doc.doc_type !== 'SOP') {
+          previousContent = { html_content: getTemplateForType(doc.doc_type) };
+        }
+      } else {
          throw new Error(`Cannot create draft. Document is currently in ${doc.status} status.`);
       }
 
-      // Create the new draft version
       const insertVerQuery = `
         INSERT INTO qms_document_versions (doc_id, version_number, content_data, authored_by, status)
         VALUES ($1, $2, $3, $4, 'DRAFT')
@@ -162,7 +222,6 @@ const QmsService = {
       `;
       const newVerRes = await client.query(insertVerQuery, [docId, newVersionNumber, previousContent, userId]);
 
-      // Update the master document status
       await client.query(`UPDATE qms_documents SET status = 'DRAFT' WHERE doc_id = $1`, [docId]);
 
       await client.query('COMMIT');
@@ -175,7 +234,6 @@ const QmsService = {
     }
   },
 
-  // 5. Update Draft Content (Rich text JSONB)
   async updateDraft(versionId, contentData, userId) {
     try {
       const query = `
@@ -192,7 +250,6 @@ const QmsService = {
     }
   },
 
-  // 6. Submit for Review
   async submitForReview(versionId) {
     const client = await pool.connect();
     try {
@@ -209,7 +266,6 @@ const QmsService = {
         [updateVer.rows[0].doc_id]
       );
       
-      // TRIGGER EMAIL NOTIFICATION
       try {
         const notificationService = require('./notification-service');
         const authorRes = await client.query(`SELECT full_name FROM users WHERE user_id = $1`, [updateVer.rows[0].authored_by]);
@@ -237,35 +293,28 @@ const QmsService = {
     }
   },
 
-  // 7. Approve & Release Document (The Gatekeeper)
   async releaseDocument(versionId, approverId, signaturePassword) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // 1. Verify Signature
       const userRes = await client.query('SELECT password_hash FROM users WHERE user_id = $1', [approverId]);
       const valid = await bcrypt.compare(signaturePassword, userRes.rows[0].password_hash);
       if (!valid) throw new Error('Invalid digital signature password');
 
-      // 2. Get Version & Doc info
       const verRes = await client.query('SELECT doc_id, version_number FROM qms_document_versions WHERE version_id = $1', [versionId]);
       if (verRes.rows.length === 0) throw new Error('Version not found');
       const docId = verRes.rows[0].doc_id;
       const draftVer = verRes.rows[0].version_number;
 
-      // Ensure version number becomes a solid release number (e.g. 0.1 -> 1.0)
       const releaseVersion = draftVer === '0.1' ? '1.0' : draftVer; 
 
-      // 3. Mark old active version as SUPERSEDED
       await client.query(`
         UPDATE qms_document_versions 
         SET status = 'SUPERSEDED' 
         WHERE doc_id = $1 AND status = 'RELEASED'
       `, [docId]);
 
-      // 4. Mark this version as RELEASED and set effective dates
-      // Default review interval is 1 year (12 months)
       await client.query(`
         UPDATE qms_document_versions 
         SET status = 'RELEASED', 
@@ -276,14 +325,12 @@ const QmsService = {
         WHERE version_id = $3
       `, [releaseVersion, approverId, versionId]);
 
-      // 5. Update Master Document Register
       await client.query(`
         UPDATE qms_documents 
         SET status = 'RELEASED', current_version_id = $1 
         WHERE doc_id = $2
       `, [versionId, docId]);
 
-      // 6. Record Approval Audit Trail
       await client.query(`
         INSERT INTO qms_approvals (version_id, approver_id, role, status, action_at)
         VALUES ($1, $2, 'QA_MANAGER', 'APPROVED', CURRENT_TIMESTAMP)
@@ -299,9 +346,38 @@ const QmsService = {
     }
   },
 
-// ============================================================================
-  // PHASE 2: NCR & CAPA MANAGEMENT (With Digital Signatures & Emails)
-  // ============================================================================
+  async createDocument(docData, userId) {
+    const { doc_code, doc_name, doc_type, section_id, erp_link_module } = docData;
+
+    // Use our new helper to grab the table/layout
+    const template = getTemplateForType(doc_type);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const docRes = await client.query(`
+        INSERT INTO qms_documents (doc_code, doc_name, doc_type, section_id, erp_link_module, status)
+        VALUES ($1, $2, $3, $4, $5, 'DRAFT') RETURNING doc_id
+      `, [doc_code, doc_name, doc_type, section_id, erp_link_module]);
+      
+      const newDocId = docRes.rows[0].doc_id;
+
+      // JSONB injection of the HTML string
+      await client.query(`
+        INSERT INTO qms_document_versions (doc_id, version_number, content_data, status, authored_by)
+        VALUES ($1, '0.1', $2, 'DRAFT', $3)
+      `, [newDocId, { html_content: template }, userId]);
+
+      await client.query('COMMIT');
+      return { doc_id: newDocId };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
 
   // Helper function to verify signatures
   async verifySignature(userId, password) {
@@ -332,7 +408,6 @@ const QmsService = {
 
     const result = await pool.query(query, [ncrCode, source_module, source_id, description, severity, userId, assigned_to]);
     
-    // Trigger Email if assigned
     if (assigned_to) {
       try {
         const notificationService = require('./notification-service');
@@ -383,7 +458,6 @@ const QmsService = {
     const result = await pool.query(query, values);
     if (result.rows.length === 0) throw new Error('NCR not found');
 
-    // Trigger Email if re-assigned
     if (assigned_to) {
       try {
         const notificationService = require('./notification-service');
@@ -430,7 +504,6 @@ const QmsService = {
       client.release();
     }
 
-    // Trigger Email to CAPA Owner
     if (action_owner) {
       try {
         const notificationService = require('./notification-service');
@@ -486,18 +559,12 @@ const QmsService = {
     return result.rows[0];
   },
 
-  // ============================================================================
-  // PHASE 3: INTERNAL AUDITS
-  // ============================================================================
-
   async createAudit(auditData) {
     const { audit_type, audit_date, lead_auditor, scope, next_audit_date, invited_members } = auditData;
     
-    // BUG FIX: Sanitize empty date strings to NULL so Postgres doesn't crash
     const safeNextDate = next_audit_date === '' ? null : next_audit_date;
     const safeInvites = Array.isArray(invited_members) ? invited_members : [];
 
-    // Auto-generate Audit Code
     const date = new Date(audit_date || new Date());
     const year = date.getFullYear().toString().slice(-2);
     const countRes = await pool.query(`SELECT COUNT(*) FROM qms_audits WHERE audit_code LIKE 'AUD-${year}-%'`);
@@ -511,16 +578,11 @@ const QmsService = {
     `;
     const result = await pool.query(query, [auditCode, audit_type, audit_date, lead_auditor, scope, safeNextDate, safeInvites]);
 
-    // FEATURE: Send Email Invites
     if (safeInvites.length > 0) {
       try {
         const notificationService = require('./notification-service');
-        
-        // Get Lead Auditor Name
         const leadRes = await pool.query('SELECT full_name FROM users WHERE user_id = $1', [lead_auditor]);
         const leadName = leadRes.rows[0]?.full_name || 'QA Team';
-        
-        // Get Invited Emails
         const emailRes = await pool.query('SELECT email FROM users WHERE user_id = ANY($1)', [safeInvites]);
         const emails = emailRes.rows.map(r => r.email);
         
@@ -563,7 +625,6 @@ const QmsService = {
     if (scope) { updates.push(`scope = $${paramCount}`); values.push(scope); paramCount++; }
     if (invited_members) { updates.push(`invited_members = $${paramCount}`); values.push(invited_members); paramCount++; }
 
-    // BUG FIX: Handle Next Audit Date properly
     if (next_audit_date === '') {
       updates.push(`next_audit_date = NULL`);
     } else if (next_audit_date) {
@@ -578,23 +639,15 @@ const QmsService = {
     if (result.rows.length === 0) throw new Error('Audit not found');
     return result.rows[0];
   },
-  // ============================================================================
-  // PHASE 3: TRAINING MATRIX & SOP ACKNOWLEDGEMENT
-  // ============================================================================
 
   async getTrainingMatrix() {
-    // 1. Get all active users
     const usersRes = await pool.query(`SELECT user_id, full_name, role FROM users WHERE is_active = true ORDER BY full_name`);
-    
-    // 2. Get all currently RELEASED governed documents (SOPs, Policies, Manuals)
     const docsRes = await pool.query(`
       SELECT doc_id, doc_code, doc_name, current_version_id 
       FROM qms_documents 
       WHERE status = 'RELEASED' AND doc_type IN ('SOP', 'POL', 'MAN') 
       ORDER BY doc_code
     `);
-
-    // 3. Get all valid training records matching current versions
     const recordsRes = await pool.query(`
       SELECT user_id, doc_id, version_id, acknowledged_at 
       FROM qms_training_records
@@ -608,16 +661,13 @@ const QmsService = {
   },
 
   async acknowledgeDocument(userId, docId, signaturePassword) {
-    // 1. Verify Digital Signature
     await this.verifySignature(userId, signaturePassword);
 
-    // 2. Get the current released version of the document
     const docRes = await pool.query(`SELECT current_version_id FROM qms_documents WHERE doc_id = $1 AND status = 'RELEASED'`, [docId]);
     if (docRes.rows.length === 0) throw new Error('Document is not in RELEASED status or does not exist.');
 
     const versionId = docRes.rows[0].current_version_id;
 
-    // 3. Insert the training record (upsert to prevent crashes if double-clicked)
     const query = `
       INSERT INTO qms_training_records (user_id, doc_id, version_id, acknowledged_at)
       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
@@ -627,6 +677,11 @@ const QmsService = {
     await pool.query(query, [userId, docId, versionId]);
     
     return { success: true, message: 'Document successfully acknowledged.' };
+  },
+
+  async listSections() {
+    const result = await pool.query('SELECT * FROM qms_sections ORDER BY sort_order');
+    return result.rows;
   }
 };
 

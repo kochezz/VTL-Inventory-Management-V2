@@ -10,7 +10,7 @@ import {
   FileEdit, Clock, Key, X, Printer, FilePlus
 } from 'lucide-react';
 
-// The 10 standard VTL Sections
+// The 9 standard VTL Sections (Preserved exactly as you had them)
 const STANDARD_SECTIONS = [
   { id: 'purpose', title: '1. PURPOSE', desc: 'What this document governs and why it exists.' },
   { id: 'scope', title: '2. SCOPE', desc: 'Who and what this applies to. Explicit exclusions noted.' },
@@ -141,7 +141,6 @@ export default function DocumentDetailPage() {
   const isAuthor = activeVersion?.authored_by === user?.user_id;
   const canApprove = ['admin', 'qa', 'manager', 'ceo'].includes(user?.role || '');
 
-  // Helper for document type string
   const getDocTypeString = (type: string) => {
     switch(type) {
       case 'SOP': return 'STANDARD OPERATING PROCEDURE';
@@ -155,11 +154,11 @@ export default function DocumentDetailPage() {
     }
   };
 
+  // Determine if we should render the legacy SOP view or the new HTML Template view
+  const isUniversalTemplate = content.html_content !== undefined || (doc.doc_type !== 'SOP' && isDraft);
+
   return (
     <>
-      {/* ========================================================= */}
-      {/* WEB UI VIEW (Wrapped in DashboardLayout, Hidden when printing) */}
-      {/* ========================================================= */}
       <div className="print:hidden">
         <DashboardLayout>
           <div className="max-w-[1600px] mx-auto space-y-6 pb-12">
@@ -237,7 +236,7 @@ export default function DocumentDetailPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Main Document Body Editor */}
               <div className="lg:col-span-2 space-y-6">
-                <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+                <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
                   <div className="bg-dark-900 border-b border-dark-700 p-6 flex justify-between items-start">
                     <div className="flex gap-4">
                       <div className="w-16 h-16 bg-dark-950 border border-dark-700 rounded-lg flex items-center justify-center font-black text-xl text-gray-500">VTL</div>
@@ -257,7 +256,33 @@ export default function DocumentDetailPage() {
                   <div className="p-6 space-y-8 bg-dark-950 min-h-[500px]">
                     {!activeVersion ? (
                       <div className="text-center py-20 text-gray-500 italic">No content drafted yet. Click "Author First Draft" to begin.</div>
+                    ) : isUniversalTemplate ? (
+                      // =================================================================
+                      // NEW VISUAL HTML EDITOR (WYSIWYG)
+                      // =================================================================
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center border-b border-dark-700 pb-2">
+                          <h3 className="text-white font-bold">Document Visual Editor</h3>
+                          {isDraft && isAuthor && (
+                            <p className="text-xs text-primary-400 bg-primary-500/10 px-3 py-1 rounded-full border border-primary-500/20">Click directly on the document below to type</p>
+                          )}
+                        </div>
+                        
+                        <div 
+                          className={`prose prose-invert max-w-none bg-white text-black p-8 rounded border min-h-[600px] overflow-x-auto ${isDraft && isAuthor ? 'border-primary-500/50 focus:outline-none focus:ring-4 focus:ring-primary-500/30' : 'border-gray-300'}`}
+                          contentEditable={isDraft && isAuthor}
+                          suppressContentEditableWarning={true}
+                          dangerouslySetInnerHTML={{ __html: content.html_content || '<p>Start typing here...</p>' }}
+                          onBlur={(e) => {
+                            // Captures the visual changes and saves them as HTML back to state
+                            setContent({...content, html_content: e.currentTarget.innerHTML});
+                          }}
+                        />
+                      </div>
                     ) : (
+                      // =================================================================
+                      // LEGACY SOP TEXTAREA EDITOR (Preserved)
+                      // =================================================================
                       STANDARD_SECTIONS.map((sec) => (
                         <div key={sec.id} className="space-y-2">
                           <h3 className="text-white font-bold border-b border-dark-700 pb-2">{sec.title}</h3>
@@ -314,13 +339,11 @@ export default function DocumentDetailPage() {
       </div>
 
       {/* ========================================================= */}
-      {/* PRINT ONLY VIEW - FORMAL SOP TEMPLATE (ISO/GMP Format)    */}
-      {/* Rendered OUTSIDE of DashboardLayout to avoid sidebars     */}
+      {/* PRINT ONLY VIEW - FORMAL ISO DOCUMENT RENDERER            */}
       {/* ========================================================= */}
       {activeVersion && (
         <div className="hidden print:block bg-white text-black font-sans w-full max-w-5xl mx-auto p-8">
           
-          {/* VTL Official Header (Mimics Batch Record Format) */}
           <div className="border-b-2 border-black pb-4 mb-8">
             <div className="flex items-center gap-6 mb-4">
               <img 
@@ -340,7 +363,6 @@ export default function DocumentDetailPage() {
               <h2 className="text-xl font-black uppercase tracking-widest">{getDocTypeString(doc.doc_type)}</h2>
             </div>
 
-            {/* Document Metadata Table */}
             <table className="w-full text-sm border border-black">
               <tbody>
                 <tr className="border-b border-black">
@@ -367,27 +389,28 @@ export default function DocumentDetailPage() {
             </table>
           </div>
 
-          {/* Document Content */}
           <div className="space-y-6 text-sm">
-            {STANDARD_SECTIONS.map((sec) => {
-              const hasContent = !!content[sec.id];
-              // Skip empty sections if the document is released
-              if (!hasContent && !isDraft) return null;
+            {isUniversalTemplate ? (
+              <div dangerouslySetInnerHTML={{ __html: content.html_content || '' }} />
+            ) : (
+              STANDARD_SECTIONS.map((sec) => {
+                const hasContent = !!content[sec.id];
+                if (!hasContent && !isDraft) return null;
 
-              return (
-                <div key={sec.id} className="break-inside-avoid">
-                  <h3 className="font-bold text-base border-b border-black mb-2 pb-1 uppercase">
-                    {sec.title}
-                  </h3>
-                  <div className="whitespace-pre-wrap leading-relaxed text-justify px-2">
-                    {content[sec.id] || <span className="text-gray-500 italic">Not specified</span>}
+                return (
+                  <div key={sec.id} className="break-inside-avoid">
+                    <h3 className="font-bold text-base border-b border-black mb-2 pb-1 uppercase">
+                      {sec.title}
+                    </h3>
+                    <div className="whitespace-pre-wrap leading-relaxed text-justify px-2">
+                      {content[sec.id] || <span className="text-gray-500 italic">Not specified</span>}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
 
-          {/* Print Footer / Signatures */}
           <div className="mt-16 pt-6 border-t-2 border-black text-sm">
             <div className="grid grid-cols-2 gap-12 mb-6">
               <div>
