@@ -1,5 +1,5 @@
 // ============================================================================
-// VILAGIO ERP - QMS ROUTES (PHASE 1)
+// VILAGIO ERP - QMS ROUTES (PHASE 1, 2, 3)
 // ============================================================================
 
 const express = require('express');
@@ -10,7 +10,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 // All QMS routes require authentication
 router.use(authenticate);
 
-// 1. Get Dashboard Completion Stats (X of 121)
+// 1. Get Dashboard Completion Stats
 router.get('/stats', async (req, res) => {
   try {
     const stats = await qmsService.getCompletionStats();
@@ -35,7 +35,21 @@ router.get('/documents', async (req, res) => {
   }
 });
 
-// 3. Get specific document details and version history
+// 3. Auto-Sequencer (MUST BE BEFORE /documents/:id)
+router.get('/documents/next-code', authorize(['admin', 'manager', 'qa']), async (req, res) => {
+  try {
+    const { section_id, doc_type } = req.query;
+    if (!section_id || !doc_type) {
+      return res.status(400).json({ error: 'section_id and doc_type are required to auto-sequence.' });
+    }
+    const result = await qmsService.getNextDocumentCode(section_id, doc_type);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 4. Get specific document details and version history
 router.get('/documents/:id', async (req, res) => {
   try {
     const doc = await qmsService.getDocumentById(req.params.id);
@@ -45,8 +59,33 @@ router.get('/documents/:id', async (req, res) => {
   }
 });
 
-// 4. Create a Draft
-// Any authenticated user can potentially draft a document (controlled by frontend UI)
+// 5. UPDATE Document Metadata (This was missing before!)
+router.put('/documents/:id', authorize(['admin', 'manager', 'qa']), async (req, res) => {
+  try {
+    const updatedDoc = await qmsService.updateDocumentMetadata(req.params.id, req.body);
+    res.json(updatedDoc);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'A document with this code already exists.' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 6. Create a Document
+router.post('/documents', async (req, res) => {
+  try {
+    const result = await qmsService.createDocument(req.body, req.user.user_id);
+    res.status(201).json(result);
+  } catch (error) {
+    if (error.code === '23505') { 
+      return res.status(400).json({ error: 'A document with this code already exists.' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 7. Create a Draft
 router.post('/documents/:id/draft', async (req, res) => {
   try {
     const result = await qmsService.createDraft(req.params.id, req.user.user_id);
@@ -56,7 +95,7 @@ router.post('/documents/:id/draft', async (req, res) => {
   }
 });
 
-// 5. Update Draft Content (Autosave functionality)
+// 8. Update Draft Content (Autosave functionality)
 router.put('/versions/:versionId', async (req, res) => {
   try {
     const { content_data } = req.body;
@@ -67,7 +106,7 @@ router.put('/versions/:versionId', async (req, res) => {
   }
 });
 
-// 6. Submit for Review
+// 9. Submit for Review
 router.post('/versions/:versionId/submit', async (req, res) => {
   try {
     const result = await qmsService.submitForReview(req.params.versionId);
@@ -77,16 +116,13 @@ router.post('/versions/:versionId/submit', async (req, res) => {
   }
 });
 
-// 7. Approve & Release Document (The Gatekeeper)
-// Strict Authorization: Only QA, Managers, or Admins can approve documents
+// 10. Approve & Release Document 
 router.post('/versions/:versionId/approve', authorize(['admin', 'qa', 'manager', 'ceo']), async (req, res) => {
   try {
     const { signature_password } = req.body;
-    
     if (!signature_password) {
       return res.status(400).json({ error: 'Digital signature (password) is required to release documents per 21 CFR Part 11.' });
     }
-
     const result = await qmsService.releaseDocument(req.params.versionId, req.user.user_id, signature_password);
     res.json(result);
   } catch (error) {
@@ -95,10 +131,8 @@ router.post('/versions/:versionId/approve', authorize(['admin', 'qa', 'manager',
 });
 
 // ============================================================================
-// PHASE 2: NCR & CAPA ROUTES
+// NCR & CAPA ROUTES
 // ============================================================================
-
-// --- NCR Routes ---
 router.get('/ncrs', async (req, res) => {
   try {
     const filters = { status: req.query.status };
@@ -127,7 +161,6 @@ router.put('/ncrs/:id', async (req, res) => {
   }
 });
 
-// --- CAPA Routes ---
 router.get('/capas', async (req, res) => {
   try {
     const filters = { status: req.query.status };
@@ -155,10 +188,10 @@ router.put('/capas/:id', async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
-// ============================================================================
-// PHASE 3: AUDIT ROUTES
-// ============================================================================
 
+// ============================================================================
+// AUDIT ROUTES
+// ============================================================================
 router.get('/audits', async (req, res) => {
   try {
     const audits = await qmsService.listAudits();
@@ -185,10 +218,10 @@ router.put('/audits/:id', async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
-// ============================================================================
-// PHASE 3: TRAINING MATRIX ROUTES
-// ============================================================================
 
+// ============================================================================
+// TRAINING ROUTES
+// ============================================================================
 router.get('/training', async (req, res) => {
   try {
     const matrix = await qmsService.getTrainingMatrix();
@@ -207,19 +240,7 @@ router.post('/training/acknowledge', async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
-router.post('/documents', async (req, res) => {
-  try {
-    const result = await qmsService.createDocument(req.body, req.user.user_id);
-    res.status(201).json(result);
-  } catch (error) {
-    if (error.code === '23505') { // Postgres Unique Violation
-      return res.status(400).json({ error: 'A document with this code already exists.' });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
 
-// Also make sure you have a route to fetch sections for the dropdown:
 router.get('/sections', async (req, res) => {
   try {
     const sections = await qmsService.listSections();
@@ -228,4 +249,5 @@ router.get('/sections', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 module.exports = router;

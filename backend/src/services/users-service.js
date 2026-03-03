@@ -91,7 +91,6 @@ const createUser = async (userData) => {
 
 const updateUser = async (userId, userData) => {
   try {
-    // We explicitly extract system-managed fields so they don't get caught in the dynamic SQL loop
     const { 
       password, user_id, created_at, updated_at, last_login, password_hash, 
       ...fieldsToUpdate 
@@ -118,7 +117,6 @@ const updateUser = async (userId, userData) => {
       }
     }
 
-    // Handle password update separately if provided
     if (password) {
       updates.push(`password_hash = $${paramCount}`);
       values.push(await bcrypt.hash(password, 10));
@@ -128,7 +126,6 @@ const updateUser = async (userId, userData) => {
       paramCount++;
     }
 
-    // Force the updated_at timestamp safely
     updates.push(`updated_at = NOW()`);
     values.push(userId);
 
@@ -188,4 +185,153 @@ const getUserStats = async () => {
   } catch (error) { throw error; }
 };
 
-module.exports = { getAllUsers, getUserById, createUser, updateUser, deleteUser, updateUserStatus, initiatePasswordReset, getUserStats };
+// ============================================================================
+// HR HOLIDAY MANAGEMENT
+// ============================================================================
+
+const getHolidayData = async (userId) => {
+  try {
+    const year = new Date().getFullYear();
+    const totalAllowance = 15; // Base VILAGIO working days allowance
+    
+    const reqQuery = await pool.query(
+      `SELECT * FROM holiday_requests WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId]
+    );
+    
+    const requests = reqQuery.rows;
+    
+    // Calculate used days (Approved only, in current year)
+    const usedDays = requests
+      .filter(r => r.status === 'Approved' && new Date(r.start_date).getFullYear() === year)
+      .reduce((sum, r) => sum + r.days_requested, 0);
+      
+    // Calculate pending days so they don't over-request
+    const pendingDays = requests
+      .filter(r => r.status === 'Pending' && new Date(r.start_date).getFullYear() === year)
+      .reduce((sum, r) => sum + r.days_requested, 0);
+      
+    return {
+      allowance: totalAllowance,
+      used: usedDays,
+      pending: pendingDays,
+      remaining: totalAllowance - usedDays,
+      history: requests
+    };
+  } catch (error) {
+    throw error;
+  }
+};
+
+const submitHolidayRequest = async (userId, payload) => {
+  try {
+    const { start_date, end_date, days_requested } = payload;
+    
+    if (days_requested <= 0) throw new Error('Invalid date range selected.');
+
+    // 1. Get user details to find out who their manager is
+    const user = await getUserById(userId);
+    let managerEmail = null;
+    
+    // Attempt to lookup manager's email by their full name in the reports_to field
+    if (user.reports_to) {
+       const mgrQuery = await pool.query('SELECT email FROM users WHERE full_name = $1 OR user_id::text = $1 LIMIT 1', [user.reports_to]);
+       if (mgrQuery.rows.length > 0) {
+         managerEmail = mgrQuery.rows[0].email;
+       }
+    }
+    
+    // 2. Save the request to the database
+    const request_id = uuidv4();
+    const result = await pool.query(
+      `INSERT INTO holiday_requests (request_id, user_id, start_date, end_date, days_requested, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'Pending', NOW(), NOW()) RETURNING *`,
+      [request_id, userId, start_date, end_date, days_requested]
+    );
+    
+    // 3. Trigger Notification to Manager
+    try {
+      const notificationService = require('./notification-service');
+      if (notificationService.notifyHolidayRequest && managerEmail) {
+        // Send email to manager requesting approval
+        notificationService.notifyHolidayRequest(user.full_name, start_date, end_date, days_requested, managerEmail);
+      }
+    } catch(e) { 
+      console.warn('Notice: Notification service skip (Email not sent).', e.message); 
+    }
+    
+    return result.rows[0];
+  } catch (error) {
+    throw error;
+  }
+};
+
+const getPendingHolidayApprovals = async (userId) => {
+  try {
+    const user = await getUserById(userId);
+    // Managers see requests from their direct reports. Admins see all pending requests.
+    const query = `
+      SELECT hr.*, u.full_name, u.email, u.department
+      FROM holiday_requests hr
+      JOIN users u ON hr.user_id = u.user_id
+      WHERE hr.status = 'Pending' AND (u.reports_to = $1 OR $2 = 'admin')
+      ORDER BY hr.created_at ASC
+    `;
+    const result = await pool.query(query, [user.full_name, user.role]);
+    return result.rows;
+  } catch (error) {
+    throw error;
+  }
+};
+
+const respondToHolidayRequest = async (requestId, status, reviewerId) => {
+  try {
+    const reviewer = await getUserById(reviewerId);
+    
+    // Update the status
+    const result = await pool.query(
+      `UPDATE holiday_requests SET status = $1, updated_at = NOW() WHERE request_id = $2 RETURNING *`,
+      [status, requestId]
+    );
+    
+    if (result.rows.length === 0) throw new Error('Holiday request not found');
+
+    const reqData = result.rows[0];
+    const employee = await getUserById(reqData.user_id);
+
+    // Trigger Notification Email back to the employee
+    try {
+      const notificationService = require('./notification-service');
+      if (notificationService.notifyHolidayResponse) {
+        notificationService.notifyHolidayResponse(
+          employee.full_name, 
+          employee.email, 
+          reqData.start_date, 
+          reqData.end_date, 
+          status, 
+          reviewer.full_name
+        );
+      }
+    } catch(e) { 
+      console.warn('Notice: Notification email skip.', e.message); 
+    }
+
+    return reqData;
+  } catch (error) {
+    throw error;
+  }
+};
+module.exports = { 
+  getAllUsers, 
+  getUserById, 
+  createUser, 
+  updateUser, 
+  deleteUser, 
+  updateUserStatus, 
+  initiatePasswordReset, 
+  getUserStats,
+  getHolidayData, 
+  submitHolidayRequest, 
+  getPendingHolidayApprovals, 
+  respondToHolidayRequest,
+};

@@ -16,12 +16,9 @@ router.get('/me/profile', async (req, res) => {
 
 router.put('/me/profile', async (req, res) => {
   try {
-    // Normal users can only update specific personal fields + their password
     const { password, phone_number, personal_email, home_address, emergency_contacts, preferred_name } = req.body;
-    
     const payload = { phone_number, personal_email, home_address, emergency_contacts, preferred_name };
     
-    // If they provided a new password, clear the force-change flag
     if (password) {
       payload.password = password;
       payload.requires_password_change = false; 
@@ -32,6 +29,28 @@ router.put('/me/profile', async (req, res) => {
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
+});
+
+// NEW: Holiday Management Self-Service Routes
+router.get('/me/holidays', async (req, res) => {
+  try { res.json(await usersService.getHolidayData(req.user.user_id)); }
+  catch (error) { res.status(500).json({ message: error.message }); }
+});
+
+router.post('/me/holidays', async (req, res) => {
+  try { res.json(await usersService.submitHolidayRequest(req.user.user_id, req.body)); }
+  catch (error) { res.status(400).json({ message: error.message }); }
+});
+
+// MANAGER ROUTES: Holiday Approvals
+router.get('/holidays/pending', async (req, res) => {
+  try { res.json(await usersService.getPendingHolidayApprovals(req.user.user_id)); }
+  catch (error) { res.status(500).json({ message: error.message }); }
+});
+
+router.put('/holidays/:id/respond', async (req, res) => {
+  try { res.json(await usersService.respondToHolidayRequest(req.params.id, req.body.status, req.user.user_id)); }
+  catch (error) { res.status(400).json({ message: error.message }); }
 });
 
 // ============================================================================

@@ -10,6 +10,10 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
     console.log('📊 Fetching unified dashboard statistics...');
     const userId = req.user.user_id;
 
+    // Get user info to check manager routing for holidays
+    const userRes = await pool.query('SELECT full_name, role FROM users WHERE user_id = $1', [userId]);
+    const { full_name, role } = userRes.rows[0];
+
     // 1. INVENTORY STATS
     const productsQuery = `
       WITH product_stock AS (
@@ -65,7 +69,7 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
     const personalQmsResult = await pool.query(personalQmsQuery, [userId]);
     const personalStats = personalQmsResult.rows[0];
 
-    // 4. QA DEPARTMENT SPECIFIC STATS (FIXED to include 'pending_qa_review')
+    // 4. QA DEPARTMENT SPECIFIC STATS
     const qaQuery = `
       SELECT 
         (SELECT COUNT(*) FROM production_batches pb
@@ -83,6 +87,15 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
     `;
     const qaResult = await pool.query(qaQuery);
     const qaStats = qaResult.rows[0];
+
+    // 5. HOLIDAY APPROVALS (NEW)
+    const holidayQuery = `
+      SELECT COUNT(*) as pending_holidays 
+      FROM holiday_requests hr
+      JOIN users u ON hr.user_id = u.user_id
+      WHERE hr.status = 'Pending' AND (u.reports_to = $1 OR $2 = 'admin')
+    `;
+    const holidayRes = await pool.query(holidayQuery, [full_name, role]);
 
     // Compile Unified Stats Object
     const stats = {
@@ -105,7 +118,10 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
 
       // QA specific
       qa_pending_batches: parseInt(qaStats.pending_batch_release || 0),
-      qa_pending_ipqc: parseInt(qaStats.pending_ipqc_reviews || 0)
+      qa_pending_ipqc: parseInt(qaStats.pending_ipqc_reviews || 0),
+
+      // HR specific
+      pending_holidays: parseInt(holidayRes.rows[0].pending_holidays || 0)
     };
 
     res.json(stats);
@@ -118,7 +134,6 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
 // GET /api/dashboard/active-production (Get currently running batches)
 router.get('/active-production', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
   try {
-    // FIXED: Added the dynamic CASE statement so batches turn yellow on the dashboard
     const query = `
       SELECT 
         pb.batch_id, 

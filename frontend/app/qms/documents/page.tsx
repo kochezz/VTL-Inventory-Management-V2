@@ -7,7 +7,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
   Search, Filter, Eye, FileText, 
   CheckCircle2, Clock, AlertCircle, FileEdit,
-  FolderTree, BookOpen, Link, Plus, X, Save
+  FolderTree, BookOpen, Link, Plus, X, Save, RefreshCw
 } from 'lucide-react';
 
 interface QMSDocument {
@@ -41,17 +41,17 @@ function MasterDocumentRegisterContent() {
   const [documents, setDocuments] = useState<QMSDocument[]>([]);
   const [sections, setSections] = useState<QMSSection[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   
-  // Filters
   const [searchQuery, setSearchQuery] = useState(initialSearch);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [sectionFilter, setSectionFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sectionFilter, setSectionFilter] = useState('');
 
-  // Create Document State
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+
   const [newDoc, setNewDoc] = useState({
     doc_code: '',
     doc_name: '',
@@ -61,97 +61,108 @@ function MasterDocumentRegisterContent() {
   });
 
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchDocuments();
-      fetchSections();
-    }
-  }, [isAuthenticated]);
+    fetchData();
+  }, []);
 
-  const fetchDocuments = async () => {
+  // NEW AUTO-SEQUENCING EFFECT
+  useEffect(() => {
+    if (showCreateModal && newDoc.section_id && newDoc.doc_type) {
+      const fetchNextCode = async () => {
+        setIsGeneratingCode(true);
+        try {
+          const res = await api.get(`/qms/documents/next-code?section_id=${newDoc.section_id}&doc_type=${newDoc.doc_type}`);
+          if (res.data && res.data.next_code) {
+            setNewDoc(prev => ({ ...prev, doc_code: res.data.next_code }));
+          }
+        } catch (e) {
+          console.error("Failed to fetch next doc code", e);
+        } finally {
+          setIsGeneratingCode(false);
+        }
+      };
+      fetchNextCode();
+    }
+  }, [newDoc.section_id, newDoc.doc_type, showCreateModal]);
+
+
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/qms/documents');
-      setDocuments(response.data);
-    } catch (error) {
-      console.error('Failed to fetch documents:', error);
+      const [docsRes, sectionsRes] = await Promise.all([
+        api.get('/qms/documents'),
+        api.get('/qms/sections')
+      ]);
+      
+      setDocuments(docsRes.data);
+      setSections(sectionsRes.data);
+      
+      if (docsRes.data.length > 0 && !newDoc.section_id) {
+         setNewDoc(prev => ({ ...prev, section_id: sectionsRes.data[0]?.section_id || '' }));
+      }
+
+    } catch (err: any) {
+      setError('Failed to load QMS registry. Please try again.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchSections = async () => {
-    try {
-      const response = await api.get('/qms/sections');
-      setSections(response.data);
-      if (response.data.length > 0) {
-        setNewDoc(prev => ({ ...prev, section_id: response.data[0].section_id }));
-      }
-    } catch (error) {
-      console.error('Failed to fetch sections:', error);
-    }
-  };
-
   const handleCreateDocument = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCreateLoading(true);
-    setCreateError('');
-
     try {
+      setCreateLoading(true);
+      setCreateError('');
+      
       const response = await api.post('/qms/documents', newDoc);
-      // Redirect straight to the editor view for this new document!
+      
+      setShowCreateModal(false);
       router.push(`/qms/documents/${response.data.doc_id}`);
+      
     } catch (err: any) {
-      setCreateError(err.response?.data?.error || 'Failed to create document.');
+      setCreateError(err.response?.data?.error || 'Failed to create document record.');
       setCreateLoading(false);
     }
   };
 
-  // Extract unique sections for the filter dropdown
-  const uniqueSections = Array.from(new Set(documents.map(d => d.section_code))).sort();
-
-  // Apply client-side filtering
+  // Derived filtered documents
   const filteredDocs = documents.filter(doc => {
     const matchesSearch = 
-      doc.doc_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      doc.doc_name.toLowerCase().includes(searchQuery.toLowerCase());
+      doc.doc_code?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      doc.doc_name?.toLowerCase().includes(searchQuery.toLowerCase());
+      
+    const matchesStatus = statusFilter ? doc.status === statusFilter : true;
+    const matchesSection = sectionFilter ? doc.section_id === sectionFilter : true;
     
-    const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
-    const matchesType = typeFilter === 'all' || doc.doc_type === typeFilter;
-    const matchesSection = sectionFilter === 'all' || doc.section_code === sectionFilter;
-
-    return matchesSearch && matchesStatus && matchesType && matchesSection;
+    return matchesSearch && matchesStatus && matchesSection;
   });
 
-  const getStatusBadge = (status: string) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'RELEASED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-green-500/10 text-green-400 border border-green-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Released</span>;
-      case 'APPROVED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1 w-max"><CheckCircle2 className="w-3 h-3"/> Approved</span>;
-      case 'REVIEW': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 w-max"><Eye className="w-3 h-3"/> In Review</span>;
-      case 'DRAFT': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 flex items-center gap-1 w-max"><FileEdit className="w-3 h-3"/> Draft</span>;
-      case 'PLANNED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-500/10 text-gray-400 border border-gray-500/20 flex items-center gap-1 w-max"><Clock className="w-3 h-3"/> Planned</span>;
-      case 'SUPERSEDED': return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1 w-max"><AlertCircle className="w-3 h-3"/> Superseded</span>;
-      default: return <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-gray-500/10 text-gray-400 border border-gray-500/20 w-max">{status}</span>;
+      case 'RELEASED': return 'bg-green-500/10 text-green-400 border-green-500/20';
+      case 'APPROVED': return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+      case 'REVIEW': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+      case 'DRAFT': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
+      case 'PLANNED': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+      case 'SUPERSEDED': return 'bg-red-500/10 text-red-400 border-red-500/20';
+      default: return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
     }
   };
 
-  const getTypeStyle = (type: string) => {
+  const getDocTypeIcon = (type: string) => {
     switch (type) {
-      case 'POL': return 'bg-rose-500/20 text-rose-400 border-rose-500/30';
-      case 'MAN': return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
-      case 'SOP': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
-      case 'FRM': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-      case 'LOG': return 'bg-teal-500/20 text-teal-400 border-teal-500/30';
-      case 'CHK': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
-      case 'REG': return 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30';
-      default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+      case 'SOP': return <FileText className="w-5 h-5 text-blue-400" />;
+      case 'POL': return <BookOpen className="w-5 h-5 text-purple-400" />;
+      case 'FRM': return <FileEdit className="w-5 h-5 text-green-400" />;
+      case 'CHK': return <CheckCircle2 className="w-5 h-5 text-yellow-400" />;
+      case 'MAN': return <FolderTree className="w-5 h-5 text-indigo-400" />;
+      default: return <FileText className="w-5 h-5 text-gray-400" />;
     }
   };
-
-  if (!isAuthenticated) return null;
 
   return (
     <DashboardLayout>
-      <div className="max-w-[1600px] mx-auto space-y-6 pb-12">
+      <div className="p-6 max-w-[1600px] mx-auto space-y-6 pb-12">
         
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -160,160 +171,153 @@ function MasterDocumentRegisterContent() {
               <FolderTree className="w-8 h-8 text-primary-500" />
               Master Document Register
             </h1>
-            <p className="text-gray-400 mt-1">Definitive index of all controlled QMS documentation</p>
+            <p className="text-gray-400 mt-1">Central repository for all controlled QMS documents and records.</p>
           </div>
           <button 
             onClick={() => setShowCreateModal(true)}
-            className="px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg shadow-primary-500/20"
+            className="flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-bold shadow-lg shadow-primary-500/20"
           >
-            <Plus className="w-5 h-5" /> Author New Document
+            <Plus className="w-5 h-5" />
+            Plan New Document
           </button>
         </div>
 
-        <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-xl">
+        {/* Filters Row */}
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-4 shadow-lg flex flex-col lg:flex-row gap-4">
+          <div className="flex-1 relative">
+            <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search document code or title..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-dark-900 border border-dark-700 rounded-lg pl-10 pr-4 py-2.5 text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-all outline-none"
+            />
+          </div>
           
-          {/* Filters & Search Bar */}
-          <div className="p-4 border-b border-dark-700 flex flex-col md:flex-row gap-4 bg-dark-900/50">
-            
-            <div className="relative flex-1 md:max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search by Code or Title..." 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 transition-colors"
-              />
-            </div>
-
-            <div className="flex gap-4 flex-wrap">
-              <div className="relative">
-                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <select 
-                  value={sectionFilter}
-                  onChange={(e) => setSectionFilter(e.target.value)}
-                  className="w-40 pl-9 pr-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white appearance-none"
-                >
-                  <option value="all">All Sections</option>
-                  {uniqueSections.map(sec => <option key={sec} value={sec}>{sec}</option>)}
-                </select>
-              </div>
-
-              <div className="relative">
-                <BookOpen className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <select 
-                  value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value)}
-                  className="w-40 pl-9 pr-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white appearance-none"
-                >
-                  <option value="all">All Types</option>
-                  <option value="POL">Policies (POL)</option>
-                  <option value="MAN">Manuals (MAN)</option>
-                  <option value="SOP">Procedures (SOP)</option>
-                  <option value="FRM">Forms (FRM)</option>
-                  <option value="LOG">Records (LOG)</option>
-                  <option value="CHK">Checklists (CHK)</option>
-                  <option value="REG">Registers (REG)</option>
-                </select>
-              </div>
-
-              <select 
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-40 px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white"
-              >
-                <option value="all">All Statuses</option>
-                <option value="PLANNED">Planned</option>
-                <option value="DRAFT">Draft</option>
-                <option value="REVIEW">In Review</option>
-                <option value="RELEASED">Released</option>
-              </select>
-            </div>
+          <div className="w-full lg:w-48 relative">
+            <Filter className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <select
+              value={sectionFilter}
+              onChange={(e) => setSectionFilter(e.target.value)}
+              className="w-full bg-dark-900 border border-dark-700 rounded-lg pl-10 pr-4 py-2.5 text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 appearance-none outline-none"
+            >
+              <option value="">All Sections</option>
+              {sections.map(s => (
+                <option key={s.section_id} value={s.section_id}>{s.section_name}</option>
+              ))}
+            </select>
           </div>
 
-          {/* Data Table */}
+          <div className="w-full lg:w-48 relative">
+            <Filter className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full bg-dark-900 border border-dark-700 rounded-lg pl-10 pr-4 py-2.5 text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 appearance-none outline-none"
+            >
+              <option value="">All Statuses</option>
+              <option value="RELEASED">Released (Active)</option>
+              <option value="REVIEW">Under QA Review</option>
+              <option value="DRAFT">In Draft</option>
+              <option value="PLANNED">Planned</option>
+              <option value="SUPERSEDED">Superseded (Archived)</option>
+            </select>
+          </div>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p>{error}</p>
+          </div>
+        )}
+
+        {/* Documents Table */}
+        <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-dark-900/80 border-b border-dark-700 text-xs uppercase tracking-wider text-gray-400">
-                  <th className="px-6 py-4 font-medium">Doc Code</th>
-                  <th className="px-6 py-4 font-medium">Document Title</th>
-                  <th className="px-6 py-4 font-medium">Section</th>
-                  <th className="px-6 py-4 font-medium">Ver.</th>
-                  <th className="px-6 py-4 font-medium">Status</th>
-                  <th className="px-6 py-4 font-medium text-right">Actions</th>
+            <table className="w-full text-left">
+              <thead className="bg-dark-900/80 border-b border-dark-700">
+                <tr>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Document Code & Info</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Document Title</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Section & Links</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">Version</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">Status</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-dark-700">
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
-                      <div className="w-8 h-8 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin mx-auto mb-3"></div>
-                      Loading register...
+                    <td colSpan={6} className="py-16 text-center">
+                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500 mb-4"></div>
+                      <p className="text-gray-400">Loading QMS repository...</p>
                     </td>
                   </tr>
                 ) : filteredDocs.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                      No documents found matching your filters.
+                    <td colSpan={6} className="py-16 text-center">
+                      <FolderTree className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+                      <p className="text-lg font-medium text-white mb-1">No documents found</p>
+                      <p className="text-gray-500 text-sm">Adjust your filters or plan a new document.</p>
                     </td>
                   </tr>
                 ) : (
                   filteredDocs.map((doc) => (
-                    <tr key={doc.doc_id} className="hover:bg-dark-700/30 transition-colors group">
-                      
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="font-mono text-sm font-bold text-gray-200 group-hover:text-primary-400 transition-colors">{doc.doc_code}</span>
-                      </td>
-                      
-                      <td className="px-6 py-4">
+                    <tr 
+                      key={doc.doc_id} 
+                      className="hover:bg-dark-700/50 transition-colors group"
+                    >
+                      <td className="py-4 px-6">
                         <div className="flex items-center gap-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${getTypeStyle(doc.doc_type)}`}>
-                            {doc.doc_type}
-                          </span>
+                          <div className="p-2.5 bg-dark-900 border border-dark-700 rounded-lg shadow-inner">
+                            {getDocTypeIcon(doc.doc_type)}
+                          </div>
                           <div>
-                            <p className="text-white font-medium">{doc.doc_name}</p>
-                            {doc.erp_link_module && (
-                              <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                <Link className="w-3 h-3" /> Links to: {doc.erp_link_module}
-                              </p>
-                            )}
+                            <p className="font-mono font-bold text-primary-400 text-sm">{doc.doc_code}</p>
+                            <p className="text-xs text-gray-500 mt-0.5 uppercase tracking-wider">{doc.doc_type}</p>
                           </div>
                         </div>
                       </td>
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-400 flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full`} style={{ backgroundColor: doc.color_code || '#3b82f6' }}></div>
-                          {doc.section_code} - {doc.section_name}
+                      <td className="py-4 px-6">
+                        <p className="font-bold text-white text-[15px]">{doc.doc_name}</p>
+                        <p className="text-xs text-gray-500 mt-1 line-clamp-1">
+                          {doc.author_name ? `Authored by ${doc.author_name}` : 'Author Unassigned'} 
+                          {doc.effective_date && ` • Effective: ${new Date(doc.effective_date).toLocaleDateString()}`}
+                        </p>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-1 bg-dark-900 border border-dark-700 rounded text-xs font-bold text-gray-300" style={{borderLeftColor: doc.color_code, borderLeftWidth: '3px'}}>
+                            {doc.section_code}
+                          </span>
+                          {doc.erp_link_module && (
+                            <span className="px-2 py-1 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded text-xs font-medium flex items-center gap-1">
+                              <Link className="w-3 h-3"/> {doc.erp_link_module}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-4 px-6 text-center">
+                        <span className="font-mono font-bold text-gray-300 bg-dark-900 px-2 py-1 rounded">
+                          {doc.version_number ? `v${doc.version_number}` : '-'}
                         </span>
                       </td>
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {doc.version_number ? (
-                          <span className="text-sm font-mono text-gray-300 bg-dark-900 px-2 py-1 rounded border border-dark-600">v{doc.version_number}</span>
-                        ) : (
-                          <span className="text-xs text-gray-600">-</span>
-                        )}
+                      <td className="py-4 px-6 text-center">
+                        <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider shadow-sm ${getStatusColor(doc.status)}`}>
+                          {doc.status}
+                        </span>
                       </td>
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(doc.status)}
-                      </td>
-
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <td className="py-4 px-6 text-right">
                         <button 
                           onClick={() => router.push(`/qms/documents/${doc.doc_id}`)}
-                          className="px-3 py-1.5 text-sm font-medium text-white bg-dark-700 hover:bg-primary-600 rounded-lg transition-colors inline-flex items-center gap-2 border border-dark-600 hover:border-primary-500"
+                          className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all shadow-sm"
+                          title="View Document Details"
                         >
-                          {doc.status === 'PLANNED' ? (
-                            <><FileEdit className="w-4 h-4"/> Author Draft</>
-                          ) : (
-                            <><FileText className="w-4 h-4"/> View / Edit</>
-                          )}
+                          <Eye className="w-5 h-5" />
                         </button>
                       </td>
-
                     </tr>
                   ))
                 )}
@@ -321,67 +325,109 @@ function MasterDocumentRegisterContent() {
             </table>
           </div>
         </div>
+
       </div>
 
-      {/* CREATE DOCUMENT MODAL */}
+      {/* CREATE NEW DOCUMENT MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-2xl shadow-2xl">
-            <div className="flex items-center justify-between p-6 border-b border-dark-700 bg-dark-900 rounded-t-xl">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <FileEdit className="w-6 h-6 text-primary-500" /> Create New QMS Document
+                <FileEdit className="w-5 h-5 text-primary-500" />
+                Plan New QMS Document
               </h2>
               <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
             </div>
-
+            
             <form onSubmit={handleCreateDocument} className="p-6 space-y-6">
+              
               {createError && (
-                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" /> <p>{createError}</p>
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <p>{createError}</p>
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Document Code *</label>
-                  <input type="text" required value={newDoc.doc_code} onChange={(e) => setNewDoc({...newDoc, doc_code: e.target.value.toUpperCase()})} placeholder="e.g. QA-PRO-SOP-011" className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono uppercase focus:border-primary-500" />
-                  <p className="text-xs text-gray-500 mt-1">Must be unique.</p>
+              <div className="bg-dark-900 p-4 rounded-xl border border-dark-700">
+                <label className="block text-sm font-bold text-gray-300 mb-2">1. Official Document Code</label>
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    required 
+                    value={newDoc.doc_code} 
+                    onChange={(e) => setNewDoc({...newDoc, doc_code: e.target.value.toUpperCase()})} 
+                    placeholder="e.g. QA-PRO-SOP-011" 
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono uppercase focus:border-primary-500" 
+                  />
+                  {isGeneratingCode && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-primary-400">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    </div>
+                  )}
                 </div>
+                <p className="text-xs text-gray-500 mt-1">Automatically sequenced based on Section & Type.</p>
+              </div>
 
+              <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Document Type Template *</label>
-                  <select required value={newDoc.doc_type} onChange={(e) => setNewDoc({...newDoc, doc_type: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500">
-                    <option value="POL">Policy (POL)</option>
-                    <option value="MAN">Manual (MAN)</option>
-                    <option value="SOP">Standard Operating Procedure (SOP)</option>
-                    <option value="FRM">Form (FRM)</option>
-                    <option value="LOG">Record / Log (LOG)</option>
-                    <option value="CHK">Checklist (CHK)</option>
-                    <option value="REG">Register (REG)</option>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">2. Document Type</label>
+                  <select 
+                    required
+                    value={newDoc.doc_type} 
+                    onChange={(e) => setNewDoc({...newDoc, doc_type: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  >
+                    <option value="SOP">SOP - Standard Operating Procedure</option>
+                    <option value="POL">POL - Corporate Policy</option>
+                    <option value="MAN">MAN - Quality Manual</option>
+                    <option value="FRM">FRM - Standard Form</option>
+                    <option value="LOG">LOG - Record Log</option>
+                    <option value="CHK">CHK - Checklist</option>
+                    <option value="REG">REG - Master Register</option>
                   </select>
-                  <p className="text-xs text-primary-400/70 mt-1">This auto-generates the ISO layout.</p>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Document Title *</label>
-                  <input type="text" required value={newDoc.doc_name} onChange={(e) => setNewDoc({...newDoc, doc_name: e.target.value})} placeholder="e.g. Daily Line Clearance Procedure" className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500" />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">QMS Section / Department *</label>
-                  <select required value={newDoc.section_id} onChange={(e) => setNewDoc({...newDoc, section_id: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500">
-                    {sections.map(s => <option key={s.section_id} value={s.section_id}>{s.section_code} - {s.section_name}</option>)}
+                  <label className="block text-sm font-bold text-gray-300 mb-2">3. Document Title</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={newDoc.doc_name} 
+                    onChange={(e) => setNewDoc({...newDoc, doc_name: e.target.value})}
+                    placeholder="e.g. Daily Line Clearance Procedure"
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">4. Department / Section</label>
+                  <select 
+                    required
+                    value={newDoc.section_id} 
+                    onChange={(e) => setNewDoc({...newDoc, section_id: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  >
+                    <option value="">Select Section...</option>
+                    {sections.map(s => (
+                      <option key={s.section_id} value={s.section_id}>{s.section_code} - {s.section_name}</option>
+                    ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">ERP Link Module (Optional)</label>
-                  <select value={newDoc.erp_link_module} onChange={(e) => setNewDoc({...newDoc, erp_link_module: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500">
-                    <option value="">-- None --</option>
-                    <option value="Production">Production</option>
-                    <option value="Inventory">Warehouse / Inventory</option>
-                    <option value="Procurement">Procurement / AVL</option>
-                    <option value="CRM">Sales / CRM</option>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">5. ERP Module Link (Optional)</label>
+                  <select 
+                    value={newDoc.erp_link_module} 
+                    onChange={(e) => setNewDoc({...newDoc, erp_link_module: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  >
+                    <option value="">None - Standalone Document</option>
+                    <option value="Production">Production Dashboard</option>
+                    <option value="Inventory">Inventory Management</option>
+                    <option value="HR">Human Resources</option>
                     <option value="IT">Information Technology</option>
                     <option value="QC Lab">QC Lab</option>
                   </select>
@@ -390,7 +436,7 @@ function MasterDocumentRegisterContent() {
 
               <div className="pt-6 border-t border-dark-700 flex justify-end gap-3">
                 <button type="button" onClick={() => setShowCreateModal(false)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium transition-colors bg-dark-900 rounded-lg">Cancel</button>
-                <button type="submit" disabled={createLoading} className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50">
+                <button type="submit" disabled={createLoading || isGeneratingCode} className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50">
                   {createLoading ? 'Generating...' : <><Save className="w-5 h-5"/> Generate Template & Edit</>}
                 </button>
               </div>

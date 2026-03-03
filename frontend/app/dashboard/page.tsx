@@ -9,7 +9,7 @@ import {
   Package, TrendingUp, AlertCircle, TruckIcon, ArrowRightLeft,
   Settings, Clock, Activity, RefreshCw, ChevronRight, Factory, 
   ShieldCheck, PlayCircle, GraduationCap, AlertOctagon, FileText, 
-  ClipboardCheck, Users
+  ClipboardCheck, Users, CalendarDays, CheckCircle2, X
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -24,6 +24,7 @@ interface DashboardStats {
   assigned_ncrs: number;
   qa_pending_batches: number;
   qa_pending_ipqc: number;
+  pending_holidays: number;
 }
 
 interface ActiveBatch {
@@ -47,6 +48,11 @@ export default function DashboardPage() {
   const [activeBatches, setActiveBatches] = useState<ActiveBatch[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<any[]>([]);
+
+  // Holiday Modal State
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [pendingHolidays, setPendingHolidays] = useState<any[]>([]);
+  const [processingHoliday, setProcessingHoliday] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -84,6 +90,28 @@ export default function DashboardPage() {
     setRefreshing(true);
     await fetchDashboardData();
     setRefreshing(false);
+  };
+
+  const handleOpenHolidayModal = async () => {
+    setShowHolidayModal(true);
+    try {
+      const res = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/users/holidays/pending`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPendingHolidays(res.data);
+    } catch (e) { console.error(e); }
+  };
+
+  const handleHolidayResponse = async (id: string, status: string) => {
+    try {
+      setProcessingHoliday(true);
+      await axios.put(`${process.env.NEXT_PUBLIC_API_URL}/users/holidays/${id}/respond`, { status }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPendingHolidays(prev => prev.filter(h => h.request_id !== id));
+      await fetchDashboardData(); // Refresh counter on dashboard
+    } catch (e) { console.error(e); } 
+    finally { setProcessingHoliday(false); }
   };
 
   const getTransactionTypeColor = (type: string) => {
@@ -160,12 +188,12 @@ export default function DashboardPage() {
         </div>
 
         {/* 1. PERSONAL ACTION CENTER (Always visible to all users) */}
-        {(stats?.pending_training > 0 || stats?.assigned_ncrs > 0) && (
+        {(stats?.pending_training > 0 || stats?.assigned_ncrs > 0 || stats?.pending_holidays > 0) && (
           <div className="bg-dark-900 border border-dark-700 rounded-xl p-5">
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
               <Activity className="w-4 h-4" /> My Action Center
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {stats?.pending_training > 0 && (
                 <div onClick={() => router.push('/qms/training')} className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-blue-500/20 transition-colors">
                   <div className="flex items-center gap-4">
@@ -189,6 +217,20 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <ChevronRight className="w-5 h-5 text-red-400" />
+                </div>
+              )}
+
+              {/* NEW HOLIDAY ALERT CARD */}
+              {stats?.pending_holidays > 0 && (
+                <div onClick={handleOpenHolidayModal} className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-orange-500/20 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-orange-500/20 rounded-full text-orange-400"><CalendarDays className="w-6 h-6"/></div>
+                    <div>
+                      <p className="text-white font-bold text-lg">{stats.pending_holidays} Holiday Requests</p>
+                      <p className="text-orange-400 text-sm">Team members awaiting approval.</p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-orange-400" />
                 </div>
               )}
             </div>
@@ -406,6 +448,49 @@ export default function DashboardPage() {
         </div>
 
       </div>
+
+      {/* HOLIDAY APPROVAL MODAL */}
+      {showHolidayModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-start pt-20">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-3xl shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-dark-700 flex justify-between items-center bg-dark-900/50">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-orange-400"/> Pending Holiday Approvals
+              </h2>
+              <button onClick={() => setShowHolidayModal(false)} className="text-gray-400 hover:text-white"><X className="w-6 h-6"/></button>
+            </div>
+            <div className="p-6">
+               {pendingHolidays.map(req => (
+                  <div key={req.request_id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-dark-900 border border-dark-700 rounded-lg mb-3 gap-4">
+                     <div>
+                       <p className="text-white font-bold text-lg">{req.full_name}</p>
+                       <p className="text-sm text-gray-400">{req.department || 'No Dept'} • <span className="text-orange-400 font-bold">Requested {req.days_requested} days</span></p>
+                       <p className="text-sm text-gray-300 mt-1 bg-dark-950 px-3 py-1 rounded inline-block border border-dark-600">
+                         {new Date(req.start_date).toLocaleDateString()} to {new Date(req.end_date).toLocaleDateString()}
+                       </p>
+                     </div>
+                     <div className="flex gap-2 w-full sm:w-auto">
+                        <button onClick={() => handleHolidayResponse(req.request_id, 'Declined')} disabled={processingHoliday} className="flex-1 sm:flex-none px-4 py-2 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors font-medium border border-red-500/20 disabled:opacity-50">
+                          Decline
+                        </button>
+                        <button onClick={() => handleHolidayResponse(req.request_id, 'Approved')} disabled={processingHoliday} className="flex-1 sm:flex-none px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-bold flex items-center justify-center gap-2 shadow-lg shadow-green-500/20 disabled:opacity-50">
+                          <CheckCircle2 className="w-4 h-4"/> Approve
+                        </button>
+                     </div>
+                  </div>
+               ))}
+               {pendingHolidays.length === 0 && (
+                 <div className="text-center py-12">
+                   <CheckCircle2 className="w-12 h-12 text-green-500/50 mx-auto mb-3" />
+                   <p className="text-white font-bold text-lg">All caught up!</p>
+                   <p className="text-gray-400">There are no pending holiday requests.</p>
+                 </div>
+               )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </DashboardLayout>
   );
 }

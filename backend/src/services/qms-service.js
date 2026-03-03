@@ -1,8 +1,8 @@
 // ============================================================================
-// VILAGIO ERP - QMS DOCUMENT SERVICE (PHASE 1)
+// VILAGIO ERP - QMS DOCUMENT SERVICE
 // ============================================================================
 
-const { pool } = require('./auth-service');
+const { pool } = require('./auth-service'); // Or your database config path
 const bcrypt = require('bcrypt');
 
 // --- HELPER: GENERATE HTML TEMPLATES ---
@@ -187,6 +187,118 @@ const QmsService = {
     }
   },
 
+  // ============================================================================
+  // AUTO-SEQUENCING ENGINE: Get Next Available Document Code
+  // ============================================================================
+  async getNextDocumentCode(sectionId, docType) {
+    try {
+      const sectionRes = await pool.query('SELECT section_code FROM qms_sections WHERE section_id = $1', [sectionId]);
+      if (sectionRes.rows.length === 0) throw new Error('Section not found');
+      const sectionCode = sectionRes.rows[0].section_code;
+
+      const prefix = `QA-${sectionCode}-${docType}-`;
+
+      const query = `
+        SELECT doc_code 
+        FROM qms_documents 
+        WHERE doc_code LIKE $1 
+        ORDER BY doc_code DESC 
+        LIMIT 1
+      `;
+      const result = await pool.query(query, [`${prefix}%`]);
+
+      let nextNumber = 1;
+
+      if (result.rows.length > 0) {
+        const lastCode = result.rows[0].doc_code; 
+        const parts = lastCode.split('-');
+        const lastNumberStr = parts[parts.length - 1]; 
+        const lastNumber = parseInt(lastNumberStr, 10);
+        
+        if (!isNaN(lastNumber)) {
+          nextNumber = lastNumber + 1; 
+        }
+      }
+
+      const paddedNumber = String(nextNumber).padStart(3, '0');
+      const nextDocCode = `${prefix}${paddedNumber}`;
+
+      return { 
+        success: true, 
+        next_code: nextDocCode,
+        prefix_used: prefix,
+        sequence_number: nextNumber
+      };
+    } catch (error) {
+      console.error('Error generating next document code:', error);
+      throw error;
+    }
+  },
+
+  async createDocument(docData, userId) {
+    const { doc_code, doc_name, doc_type, section_id, erp_link_module } = docData;
+
+    const template = getTemplateForType(doc_type);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const docRes = await client.query(`
+        INSERT INTO qms_documents (doc_code, doc_name, doc_type, section_id, erp_link_module, status)
+        VALUES ($1, $2, $3, $4, $5, 'PLANNED') RETURNING doc_id
+      `, [doc_code, doc_name, doc_type, section_id, erp_link_module]);
+      
+      const newDocId = docRes.rows[0].doc_id;
+
+      await client.query('COMMIT');
+      return { doc_id: newDocId };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  // ============================================================================
+  // UPDATE DOCUMENT METADATA
+  // ============================================================================
+  async updateDocumentMetadata(docId, updateData) {
+    const { doc_code, doc_name, doc_type, section_id, erp_link_module } = updateData;
+    
+    try {
+      // Clean, simple SQL update for document metadata
+      const query = `
+        UPDATE qms_documents 
+        SET 
+          doc_code = $1, 
+          doc_name = $2, 
+          doc_type = $3, 
+          section_id = $4, 
+          erp_link_module = $5
+        WHERE doc_id = $6
+        RETURNING *
+      `;
+      
+      const result = await pool.query(query, [
+        doc_code, 
+        doc_name, 
+        doc_type, 
+        section_id, 
+        erp_link_module || null, 
+        docId
+      ]);
+      
+      if (result.rows.length === 0) throw new Error('Document not found');
+      
+      return result.rows[0];
+    } catch (error) {
+      console.error('Error updating document metadata:', error);
+      throw error;
+    }
+  },
+
   async createDraft(docId, userId) {
     const client = await pool.connect();
     try {
@@ -207,7 +319,6 @@ const QmsService = {
           previousContent = prevVerRes.rows[0].content_data;
         }
       } else if (doc.status === 'PLANNED') {
-        // BUG FIX: If starting a draft for a seeded document, inject the correct HTML template here!
         if (doc.doc_type !== 'SOP') {
           previousContent = { html_content: getTemplateForType(doc.doc_type) };
         }
@@ -346,40 +457,6 @@ const QmsService = {
     }
   },
 
-  async createDocument(docData, userId) {
-    const { doc_code, doc_name, doc_type, section_id, erp_link_module } = docData;
-
-    // Use our new helper to grab the table/layout
-    const template = getTemplateForType(doc_type);
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      
-      const docRes = await client.query(`
-        INSERT INTO qms_documents (doc_code, doc_name, doc_type, section_id, erp_link_module, status)
-        VALUES ($1, $2, $3, $4, $5, 'DRAFT') RETURNING doc_id
-      `, [doc_code, doc_name, doc_type, section_id, erp_link_module]);
-      
-      const newDocId = docRes.rows[0].doc_id;
-
-      // JSONB injection of the HTML string
-      await client.query(`
-        INSERT INTO qms_document_versions (doc_id, version_number, content_data, status, authored_by)
-        VALUES ($1, '0.1', $2, 'DRAFT', $3)
-      `, [newDocId, { html_content: template }, userId]);
-
-      await client.query('COMMIT');
-      return { doc_id: newDocId };
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  },
-
-  // Helper function to verify signatures
   async verifySignature(userId, password) {
     const userRes = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [userId]);
     const valid = await bcrypt.compare(password, userRes.rows[0].password_hash);

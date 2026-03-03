@@ -7,10 +7,9 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
   ArrowLeft, Save, Send, CheckCircle2, XCircle, 
   History, ShieldCheck, FileSignature, AlertCircle, 
-  FileEdit, Clock, Key, X, Printer, FilePlus
+  FileEdit, Clock, Key, X, Printer, FilePlus, RefreshCw
 } from 'lucide-react';
 
-// The 9 standard VTL Sections (Preserved exactly as you had them)
 const STANDARD_SECTIONS = [
   { id: 'purpose', title: '1. PURPOSE', desc: 'What this document governs and why it exists.' },
   { id: 'scope', title: '2. SCOPE', desc: 'Who and what this applies to. Explicit exclusions noted.' },
@@ -42,15 +41,78 @@ export default function DocumentDetailPage() {
   const [showApproval, setShowApproval] = useState(false);
   const [signature, setSignature] = useState('');
 
+  // Edit Metadata Modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [editData, setEditData] = useState({
+    doc_code: '',
+    doc_name: '',
+    doc_type: '',
+    section_id: '',
+    erp_link_module: ''
+  });
+  const [sections, setSections] = useState<any[]>([]);
+
   useEffect(() => {
     if (params.id) fetchDocument();
   }, [params.id]);
+
+  // NEW: Auto-sequence generator for the Edit Modal
+  useEffect(() => {
+    if (showEditModal && editData.section_id && editData.doc_type && doc) {
+      if (editData.section_id !== doc.section_id || editData.doc_type !== doc.doc_type) {
+        const fetchNextCode = async () => {
+          setIsGeneratingCode(true);
+          try {
+            const res = await api.get(`/qms/documents/next-code?section_id=${editData.section_id}&doc_type=${editData.doc_type}`);
+            if (res.data && res.data.next_code) {
+              setEditData(prev => ({ ...prev, doc_code: res.data.next_code }));
+            }
+          } catch (e) {
+            console.error("Failed to fetch next doc code for edit", e);
+          } finally {
+            setIsGeneratingCode(false);
+          }
+        };
+        fetchNextCode();
+      }
+    }
+  }, [editData.section_id, editData.doc_type, showEditModal, doc]);
+
+  const handleOpenEditModal = () => {
+    setEditData({
+      doc_code: doc.doc_code,
+      doc_name: doc.doc_name,
+      doc_type: doc.doc_type,
+      section_id: doc.section_id,
+      erp_link_module: doc.erp_link_module || ''
+    });
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setSaving(true);
+      await api.put(`/qms/documents/${doc.doc_id}`, editData);
+      setShowEditModal(false);
+      await fetchDocument();
+      setSuccess('Document details updated successfully.');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to update document details.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const fetchDocument = async () => {
     try {
       setLoading(true);
       const res = await api.get(`/qms/documents/${params.id}`);
       setDoc(res.data);
+
+      api.get('/qms/sections').then(res => setSections(res.data)).catch(e => console.error(e));
       
       if (res.data.versions && res.data.versions.length > 0) {
         const latest = res.data.versions[0];
@@ -154,7 +216,6 @@ export default function DocumentDetailPage() {
     }
   };
 
-  // Determine if we should render the legacy SOP view or the new HTML Template view
   const isUniversalTemplate = content.html_content !== undefined || (doc.doc_type !== 'SOP' && isDraft);
 
   return (
@@ -163,7 +224,6 @@ export default function DocumentDetailPage() {
         <DashboardLayout>
           <div className="max-w-[1600px] mx-auto space-y-6 pb-12">
             
-            {/* Top Header */}
             <div className="flex items-center gap-4">
               <button onClick={() => router.push('/qms/documents')} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
                 <ArrowLeft className="w-5 h-5 text-gray-400" />
@@ -184,7 +244,6 @@ export default function DocumentDetailPage() {
               </div>
             </div>
 
-            {/* Action Bar */}
             <div className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-wrap justify-between items-center gap-4">
               <div className="flex gap-4 text-sm text-gray-400">
                 <p><strong>Section:</strong> {doc.section_code} - {doc.section_name}</p>
@@ -211,6 +270,12 @@ export default function DocumentDetailPage() {
                   </button>
                 )}
 
+                {canApprove && (
+                  <button onClick={handleOpenEditModal} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 transition-colors">
+                    <FileEdit className="w-4 h-4"/> Edit Details
+                  </button>
+                )}
+
                 {isDraft && isAuthor && (
                   <>
                     <button onClick={handleSaveDraft} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 transition-colors">
@@ -230,11 +295,30 @@ export default function DocumentDetailPage() {
               </div>
             </div>
 
+            {activeVersion && doc.current_version_id !== activeVersion.version_id && activeVersion.status === 'SUPERSEDED' && (
+              <div className="bg-red-500/10 border-l-4 border-red-500 p-4 rounded-r-xl flex items-start gap-3 mb-6">
+                <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-red-400 font-bold">Viewing Archived Version</h3>
+                  <p className="text-red-400/80 text-sm mt-1">You are viewing Version {activeVersion.version_number} which has been SUPERSEDED. This is not the active document and is for historical reference only.</p>
+                  <button 
+                    onClick={() => {
+                      const latest = doc.versions.find((v:any) => v.version_id === doc.current_version_id) || doc.versions[0];
+                      setActiveVersion(latest);
+                      setContent(latest.content_data || {});
+                    }}
+                    className="mt-2 text-xs font-bold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded transition-colors"
+                  >
+                    Return to Active Version
+                  </button>
+                </div>
+              </div>
+            )}
+
             {success && <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 flex items-center gap-2"><CheckCircle2 className="w-5 h-5"/>{success}</div>}
             {error && <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 flex items-center gap-2"><AlertCircle className="w-5 h-5"/>{error}</div>}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Main Document Body Editor */}
               <div className="lg:col-span-2 space-y-6">
                 <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
                   <div className="bg-dark-900 border-b border-dark-700 p-6 flex justify-between items-start">
@@ -249,7 +333,7 @@ export default function DocumentDetailPage() {
                     <div className="text-right text-sm text-gray-400 space-y-1">
                       <p><strong>Doc No:</strong> {doc.doc_code}</p>
                       <p><strong>Revision:</strong> {activeVersion ? activeVersion.version_number : '-'}</p>
-                      <p><strong>Status:</strong> <span className={isReleased ? 'text-green-400' : 'text-yellow-400'}>{doc.status}</span></p>
+                      <p><strong>Status:</strong> <span className={activeVersion?.status === 'SUPERSEDED' ? 'text-red-400' : isReleased ? 'text-green-400' : 'text-yellow-400'}>{activeVersion?.status || doc.status}</span></p>
                     </div>
                   </div>
 
@@ -257,9 +341,6 @@ export default function DocumentDetailPage() {
                     {!activeVersion ? (
                       <div className="text-center py-20 text-gray-500 italic">No content drafted yet. Click "Author First Draft" to begin.</div>
                     ) : isUniversalTemplate ? (
-                      // =================================================================
-                      // NEW VISUAL HTML EDITOR (WYSIWYG)
-                      // =================================================================
                       <div className="space-y-4">
                         <div className="flex justify-between items-center border-b border-dark-700 pb-2">
                           <h3 className="text-white font-bold">Document Visual Editor</h3>
@@ -274,15 +355,11 @@ export default function DocumentDetailPage() {
                           suppressContentEditableWarning={true}
                           dangerouslySetInnerHTML={{ __html: content.html_content || '<p>Start typing here...</p>' }}
                           onBlur={(e) => {
-                            // Captures the visual changes and saves them as HTML back to state
                             setContent({...content, html_content: e.currentTarget.innerHTML});
                           }}
                         />
                       </div>
                     ) : (
-                      // =================================================================
-                      // LEGACY SOP TEXTAREA EDITOR (Preserved)
-                      // =================================================================
                       STANDARD_SECTIONS.map((sec) => (
                         <div key={sec.id} className="space-y-2">
                           <h3 className="text-white font-bold border-b border-dark-700 pb-2">{sec.title}</h3>
@@ -308,7 +385,6 @@ export default function DocumentDetailPage() {
                 </div>
               </div>
 
-              {/* Right Sidebar - Metadata & History */}
               <div className="space-y-6">
                 <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
                   <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-primary-400"/> Document Governance</h3>
@@ -322,9 +398,16 @@ export default function DocumentDetailPage() {
                 <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
                   <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><History className="w-5 h-5 text-primary-400"/> Version History</h3>
                   <div className="space-y-4">
-                    {doc.versions?.map((v: any, idx: number) => (
-                      <div key={v.version_id} className={`pl-4 border-l-2 ${idx === 0 ? 'border-primary-500' : 'border-dark-600'} relative`}>
-                        <div className={`absolute w-2 h-2 rounded-full -left-[5px] top-1.5 ${idx === 0 ? 'bg-primary-500' : 'bg-dark-600'}`}></div>
+                    {doc.versions?.map((v: any) => (
+                      <div 
+                        key={v.version_id} 
+                        onClick={() => {
+                          setActiveVersion(v);
+                          setContent(v.content_data || {});
+                        }}
+                        className={`pl-4 border-l-2 cursor-pointer transition-all hover:bg-dark-700/30 p-2 rounded-r-lg ${activeVersion?.version_id === v.version_id ? 'border-primary-500 bg-dark-700/50' : 'border-dark-600'} relative`}
+                      >
+                        <div className={`absolute w-2 h-2 rounded-full -left-[5px] top-3.5 ${activeVersion?.version_id === v.version_id ? 'bg-primary-500' : 'bg-dark-600'}`}></div>
                         <p className="text-white font-bold text-sm">Version {v.version_number}</p>
                         <p className="text-xs text-gray-400 mb-1">{v.status} • {new Date(v.created_at).toLocaleDateString()}</p>
                         <p className="text-xs text-gray-500">By {v.author_name}</p>
@@ -338,9 +421,6 @@ export default function DocumentDetailPage() {
         </DashboardLayout>
       </div>
 
-      {/* ========================================================= */}
-      {/* PRINT ONLY VIEW - FORMAL ISO DOCUMENT RENDERER            */}
-      {/* ========================================================= */}
       {activeVersion && (
         <div className="hidden print:block bg-white text-black font-sans w-full max-w-5xl mx-auto p-8">
           
@@ -437,7 +517,6 @@ export default function DocumentDetailPage() {
         </div>
       )}
 
-      {/* QA APPROVAL MODAL */}
       {showApproval && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-md overflow-hidden shadow-2xl">
@@ -472,6 +551,112 @@ export default function DocumentDetailPage() {
                 <button type="button" onClick={() => setShowApproval(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg transition-colors">Cancel</button>
                 <button type="submit" disabled={saving || !signature} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50">
                   {saving ? 'Verifying...' : 'Sign & Release'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <FileEdit className="w-5 h-5 text-primary-500" />
+                Edit Document Details
+              </h2>
+              <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
+            </div>
+            
+            <form onSubmit={handleSaveEdit} className="p-6 space-y-6">
+              
+              <div className="bg-dark-900 p-4 rounded-xl border border-dark-700">
+                <label className="block text-sm font-bold text-gray-300 mb-2">Document Code</label>
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    required 
+                    value={editData.doc_code} 
+                    onChange={(e) => setEditData({...editData, doc_code: e.target.value.toUpperCase()})} 
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono uppercase focus:border-primary-500" 
+                  />
+                  {isGeneratingCode && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-primary-400">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Document Type</label>
+                  <select 
+                    required
+                    value={editData.doc_type} 
+                    onChange={(e) => setEditData({...editData, doc_type: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  >
+                    <option value="SOP">SOP - Standard Operating Procedure</option>
+                    <option value="POL">POL - Corporate Policy</option>
+                    <option value="MAN">MAN - Quality Manual</option>
+                    <option value="FRM">FRM - Standard Form</option>
+                    <option value="LOG">LOG - Record Log</option>
+                    <option value="CHK">CHK - Checklist</option>
+                    <option value="REG">REG - Master Register</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Document Title</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={editData.doc_name} 
+                    onChange={(e) => setEditData({...editData, doc_name: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Department / Section</label>
+                  <select 
+                    required
+                    value={editData.section_id} 
+                    onChange={(e) => setEditData({...editData, section_id: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  >
+                    <option value="">Select Section...</option>
+                    {sections.map(s => (
+                      <option key={s.section_id} value={s.section_id}>{s.section_code} - {s.section_name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">ERP Module Link (Optional)</label>
+                  <select 
+                    value={editData.erp_link_module} 
+                    onChange={(e) => setEditData({...editData, erp_link_module: e.target.value})}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  >
+                    <option value="">None - Standalone Document</option>
+                    <option value="Production">Production Dashboard</option>
+                    <option value="Inventory">Inventory Management</option>
+                    <option value="HR">Human Resources</option>
+                    <option value="IT">Information Technology</option>
+                    <option value="QC Lab">QC Lab</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-dark-700 flex justify-end gap-3">
+                <button type="button" onClick={() => setShowEditModal(false)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium transition-colors bg-dark-900 rounded-lg">Cancel</button>
+                <button type="submit" disabled={saving || isGeneratingCode} className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50">
+                  {saving ? 'Saving...' : <><Save className="w-5 h-5"/> Save Changes</>}
                 </button>
               </div>
             </form>

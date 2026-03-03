@@ -62,6 +62,9 @@ export default function UsersPage() {
     return matchesSearch && matchesRole && matchesStatus;
   });
 
+  // Create a list of potential managers (you can filter this down to specific roles if needed)
+  const potentialManagers = users.filter(u => u.is_active).sort((a, b) => a.full_name.localeCompare(b.full_name));
+
   const handleAddEmergencyContact = () => {
     setFormData({ ...formData, emergency_contacts: [...(formData.emergency_contacts || []), { name: '', relationship: '', phone: '' }] });
   };
@@ -344,7 +347,26 @@ export default function UsersPage() {
                   <div className="col-span-2"><label className="block text-xs text-gray-400 mb-1">Job Title</label><input type="text" value={formData.job_title} onChange={e => setFormData({...formData, job_title: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
                   
                   <div><label className="block text-xs text-gray-400 mb-1">Department / Division</label><input type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
-                  <div><label className="block text-xs text-gray-400 mb-1">Reports to (Manager)</label><input type="text" value={formData.reports_to} onChange={e => setFormData({...formData, reports_to: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
+                  
+                  {/* === UPDATED: REPORTS TO FIELD IS NOW A DROPDOWN === */}
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Reports to (Manager)</label>
+                    <select 
+                      value={formData.reports_to} 
+                      onChange={e => setFormData({...formData, reports_to: e.target.value})} 
+                      className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white"
+                    >
+                      <option value="">Unassigned</option>
+                      {potentialManagers.map(m => (
+                        // We use full_name here because the backend lookup specifically supports looking up manager by name or ID
+                        <option key={m.user_id} value={m.full_name}>
+                          {m.full_name} ({m.role.replace('_', ' ')})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* === END UPDATE === */}
+
                   <div><label className="block text-xs text-gray-400 mb-1">Hire Date</label><input type="date" value={formData.employment_date} onChange={e => setFormData({...formData, employment_date: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
 
                   <div>
