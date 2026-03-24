@@ -266,7 +266,14 @@ export function installAuthInterceptors() {
         (original.headers as any).Authorization = `Bearer ${newToken}`;
         return api(original);
       } catch (refreshErr) {
+        // FIX: If refresh fails (or token is missing), force logout and redirect
+        console.warn('Session expired. Redirecting to login...');
         useAuth.getState().logout();
+        
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        }
+        
         return Promise.reject(refreshErr);
       }
     }

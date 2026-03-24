@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { api } from '@/hooks/useAuth'; // Uses your existing authenticated axios instance
+import { api, useAuth } from '@/hooks/useAuth'; // Added useAuth import
 
 export interface SystemSettings {
   company_name: string;
@@ -68,6 +68,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   // Load settings and rates from the BACKEND on mount
   useEffect(() => {
     const fetchSettings = async () => {
+      // FIX: Check if we actually have a token before trying to fetch protected data
+      const { token } = useAuth.getState(); 
+      if (!token) {
+        setIsLoading(false);
+        return; 
+      }
+
       try {
         setIsLoading(true);
         // Calls the new backend route we created: GET /api/settings
