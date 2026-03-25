@@ -46,7 +46,12 @@ const corsOptions = {
       .filter(url => url.length > 0);
       
     // 5. Always allow local development ports as a baseline fallback
-    allowedOrigins.push('http://localhost:3000', 'http://localhost:5173', 'https://localhost:3000');
+    allowedOrigins.push(
+      'http://localhost:3000', 
+      'http://localhost:5173', 
+      'https://localhost:3000',
+      'https://vilagio-erp-frontend.vercel.app'
+    );
 
     // 6. Check if the origin is on the list, OR if the wildcard '*' is active
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
