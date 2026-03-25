@@ -15,9 +15,12 @@ export function useCurrency() {
       return 'N/A';
     }
 
+    // safely cast settings to 'any' to bypass strict TypeScript interface checks
+    const safeSettings = settings as any;
+
     // 1. Get the target currency and rates from global settings
-    const targetCurrency = settings?.currency || 'USD';
-    const rates = settings?.exchange_rates || {};
+    const targetCurrency = safeSettings?.currency || 'USD';
+    const rates = safeSettings?.exchange_rates || {};
 
     // 2. Calculate the multiplier 
     // (If the API fails or rates are missing, it defaults to 1 so the app doesn't crash)
@@ -35,5 +38,5 @@ export function useCurrency() {
     }).format(convertedAmount);
   };
 
-  return { formatPrice, currentCurrency: settings?.currency || 'USD' };
+  return { formatPrice, currentCurrency: (settings as any)?.currency || 'USD' };
 }

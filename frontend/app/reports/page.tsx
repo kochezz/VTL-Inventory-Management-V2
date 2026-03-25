@@ -15,7 +15,6 @@ import {
   DollarSign,
   BarChart3,
   FileSpreadsheet,
-  FilePdf,
   FileCode,
   MapPin,
   RefreshCw

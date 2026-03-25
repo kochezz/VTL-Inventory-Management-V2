@@ -72,7 +72,7 @@ interface Batch {
 export default function BatchDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { isAuthenticated, token, loading: authLoading } = useAuth();
+const { isAuthenticated, token, isLoading: authLoading } = useAuth();
   
   const [batch, setBatch] = useState<Batch | null>(null);
   const [loading, setLoading] = useState(true);
@@ -316,7 +316,7 @@ export default function BatchDetailPage() {
             {batch.ipqc_checks?.some((c: any) => c.lab_report_data) && (
               <button
                 onClick={() => {
-                  const checkWithReport = batch.ipqc_checks.find((c: any) => c.lab_report_data);
+                  const checkWithReport = batch.ipqc_checks?.find((c: any) => c.lab_report_data);
                   if (checkWithReport) {
                     try {
                       // Convert Base64 to Blob for native browser rendering

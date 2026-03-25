@@ -17,6 +17,7 @@ interface QMSDocument {
   doc_type: string;
   status: string;
   erp_link_module: string;
+  section_id: string;     // <-- Added this to fix the TypeScript error
   section_code: string;
   section_name: string;
   color_code: string;
@@ -312,7 +313,7 @@ function MasterDocumentRegisterContent() {
                       <td className="py-4 px-6 text-right">
                         <button 
                           onClick={() => router.push(`/qms/documents/${doc.doc_id}`)}
-                          className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all shadow-sm"
+                          className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all shadow-sm inline-block"
                           title="View Document Details"
                         >
                           <Eye className="w-5 h-5" />

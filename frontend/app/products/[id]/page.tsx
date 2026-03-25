@@ -214,7 +214,7 @@ export default function ProductDetailPage() {
             </div>
             <p className="text-sm text-gray-400 mb-1">Total Stock</p>
             <p className="text-2xl font-bold text-white">
-              {parseInt(product.total_stock || '0').toLocaleString()}
+              {(product.total_stock || 0).toLocaleString()}
             </p>
             <p className="text-xs text-gray-500 mt-1">{product.base_uom}</p>
           </div>
@@ -228,7 +228,7 @@ export default function ProductDetailPage() {
             </div>
             <p className="text-sm text-gray-400 mb-1">Available</p>
             <p className="text-2xl font-bold text-white">
-              {parseInt(product.available_stock || '0').toLocaleString()}
+              {(product.available_stock || 0).toLocaleString()}
             </p>
             <p className="text-xs text-gray-500 mt-1">Unallocated</p>
           </div>
@@ -242,7 +242,7 @@ export default function ProductDetailPage() {
             </div>
             <p className="text-sm text-gray-400 mb-1">Cost</p>
             <p className="text-2xl font-bold text-white">
-              ${parseFloat(product.standard_cost || '0').toFixed(2)}
+              ${(product.standard_cost || 0).toFixed(2)}
             </p>
             <p className="text-xs text-gray-500 mt-1">Per unit</p>
           </div>
@@ -256,10 +256,10 @@ export default function ProductDetailPage() {
             </div>
             <p className="text-sm text-gray-400 mb-1">Price</p>
             <p className="text-2xl font-bold text-white">
-              ${parseFloat(product.selling_price || '0').toFixed(2)}
+              ${(product.selling_price || 0).toFixed(2)}
             </p>
             <p className="text-xs text-green-400 mt-1">
-              {((parseFloat(product.selling_price || '0') - parseFloat(product.standard_cost || '0')) / parseFloat(product.standard_cost || '1') * 100).toFixed(0)}% margin
+              {(((product.selling_price || 0) - (product.standard_cost || 0)) / (product.standard_cost || 1) * 100).toFixed(0)}% margin
             </p>
           </div>
         </div>
@@ -281,7 +281,7 @@ export default function ProductDetailPage() {
                 <div className="text-right">
                   <p className="text-sm text-gray-400">Reorder Level</p>
                   <p className="text-lg font-bold text-yellow-400">
-                    {parseInt(product.reorder_level).toLocaleString()}
+                    {(product.reorder_level || 0).toLocaleString()}
                   </p>
                 </div>
               )}
@@ -326,13 +326,13 @@ export default function ProductDetailPage() {
                         {location.location_type?.replace(/_/g, ' ')}
                       </td>
                       <td className="px-6 py-4 text-sm text-white text-right font-medium">
-                        {parseInt(location.quantity_on_hand || '0').toLocaleString()}
+                        {(location.quantity_on_hand || 0).toLocaleString()}
                       </td>
                       <td className="px-6 py-4 text-sm text-yellow-400 text-right">
-                        {parseInt(location.quantity_allocated || '0').toLocaleString()}
+                        {(location.quantity_allocated || 0).toLocaleString()}
                       </td>
                       <td className="px-6 py-4 text-sm text-green-400 text-right font-medium">
-                        {parseInt(location.quantity_available || '0').toLocaleString()}
+                        {(location.quantity_available || 0).toLocaleString()}
                       </td>
                     </tr>
                   ))
@@ -389,7 +389,7 @@ export default function ProductDetailPage() {
                 <div className="flex justify-between mb-2">
                   <span className="text-gray-400">Stock Level</span>
                   <span className="text-white font-medium">
-                    {((parseInt(product.total_stock || '0') / parseInt(product.reorder_level || '1')) * 100).toFixed(0)}%
+                    {(((product.total_stock || 0) / (product.reorder_level || 1)) * 100).toFixed(0)}%
                   </span>
                 </div>
                 <div className="w-full bg-dark-700 rounded-full h-2">
@@ -402,7 +402,7 @@ export default function ProductDetailPage() {
                         : 'bg-red-500'
                     }`}
                     style={{
-                      width: `${Math.min(100, (parseInt(product.total_stock || '0') / parseInt(product.reorder_level || '1')) * 100)}%`
+                      width: `${Math.min(100, (((product.total_stock || 0) / (product.reorder_level || 1)) * 100))}%`
                     }}
                   />
                 </div>
@@ -412,13 +412,13 @@ export default function ProductDetailPage() {
                 <div className="flex justify-between py-2">
                   <span className="text-gray-400">Total Inventory Value</span>
                   <span className="text-white font-medium">
-                    ${(parseFloat(product.standard_cost || '0') * parseInt(product.total_stock || '0')).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${((product.standard_cost || 0) * (product.total_stock || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between py-2">
                   <span className="text-gray-400">Potential Revenue</span>
                   <span className="text-green-400 font-medium">
-                    ${(parseFloat(product.selling_price || '0') * parseInt(product.available_stock || '0')).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${((product.selling_price || 0) * (product.available_stock || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>

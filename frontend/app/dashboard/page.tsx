@@ -188,13 +188,13 @@ export default function DashboardPage() {
         </div>
 
         {/* 1. PERSONAL ACTION CENTER (Always visible to all users) */}
-        {(stats?.pending_training > 0 || stats?.assigned_ncrs > 0 || stats?.pending_holidays > 0) && (
+        {stats && (stats.pending_training > 0 || stats.assigned_ncrs > 0 || stats.pending_holidays > 0) && (
           <div className="bg-dark-900 border border-dark-700 rounded-xl p-5">
             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
               <Activity className="w-4 h-4" /> My Action Center
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {stats?.pending_training > 0 && (
+              {stats.pending_training > 0 && (
                 <div onClick={() => router.push('/qms/training')} className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-blue-500/20 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="p-3 bg-blue-500/20 rounded-full text-blue-400"><GraduationCap className="w-6 h-6"/></div>
@@ -207,7 +207,7 @@ export default function DashboardPage() {
                 </div>
               )}
               
-              {stats?.assigned_ncrs > 0 && (
+              {stats.assigned_ncrs > 0 && (
                 <div onClick={() => router.push('/qms/ncr')} className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-red-500/20 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="p-3 bg-red-500/20 rounded-full text-red-400"><AlertOctagon className="w-6 h-6"/></div>
@@ -220,8 +220,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* NEW HOLIDAY ALERT CARD */}
-              {stats?.pending_holidays > 0 && (
+              {stats.pending_holidays > 0 && (
                 <div onClick={handleOpenHolidayModal} className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-orange-500/20 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="p-3 bg-orange-500/20 rounded-full text-orange-400"><CalendarDays className="w-6 h-6"/></div>
@@ -242,42 +241,74 @@ export default function DashboardPage() {
           {isQA ? (
             <>
               <KPICard 
-                title="Batches Awaiting Release" value={stats?.qa_pending_batches || 0} subtext="Final QA approval required" 
-                icon={ShieldCheck} colorClass="green" alert={stats?.qa_pending_batches > 0}
+                title="Batches Awaiting Release" 
+                value={stats?.qa_pending_batches ?? 0} 
+                subtext="Final QA approval required" 
+                icon={ShieldCheck} 
+                colorClass="green" 
+                alert={(stats?.qa_pending_batches ?? 0) > 0}
                 onClick={() => router.push('/production')}
               />
               <KPICard 
-                title="Pending IPQC Reviews" value={stats?.qa_pending_ipqc || 0} subtext="In-process checks awaiting sign-off" 
-                icon={ClipboardCheck} colorClass="blue" alert={stats?.qa_pending_ipqc > 0}
+                title="Pending IPQC Reviews" 
+                value={stats?.qa_pending_ipqc ?? 0} 
+                subtext="In-process checks awaiting sign-off" 
+                icon={ClipboardCheck} 
+                colorClass="blue" 
+                alert={(stats?.qa_pending_ipqc ?? 0) > 0}
                 onClick={() => router.push('/production')}
               />
               <KPICard 
-                title="Today's Output" value={(stats?.today_output || 0).toLocaleString()} subtext="Bottles produced today" 
-                icon={Factory} colorClass="purple" onClick={() => router.push('/production')}
+                title="Today's Output" 
+                value={stats?.today_output?.toLocaleString() ?? 0} 
+                subtext="Bottles produced today" 
+                icon={Factory} 
+                colorClass="purple" 
+                onClick={() => router.push('/production')}
               />
               <KPICard 
-                title="Low Stock Alerts" value={stats?.low_stock_products || 0} subtext={`${stats?.out_of_stock_products || 0} critical shortages`} 
-                icon={AlertCircle} colorClass="red" alert={stats?.low_stock_products > 0}
+                title="Low Stock Alerts" 
+                value={stats?.low_stock_products ?? 0} 
+                subtext={`${stats?.out_of_stock_products ?? 0} critical shortages`} 
+                icon={AlertCircle} 
+                colorClass="red" 
+                alert={(stats?.low_stock_products ?? 0) > 0}
                 onClick={() => router.push('/inventory')}
               />
             </>
           ) : (
             <>
               <KPICard 
-                title="Total Inventory Value" value={formatCurrency(stats?.total_inventory_value || 0, 'USD')} subtext="Current warehouse valuation" 
-                icon={TrendingUp} colorClass="green" onClick={() => router.push('/inventory')}
+                title="Total Inventory Value" 
+                value={formatCurrency(stats?.total_inventory_value ?? 0, 'USD')} 
+                subtext="Current warehouse valuation" 
+                icon={TrendingUp} 
+                colorClass="green" 
+                onClick={() => router.push('/inventory')}
               />
               <KPICard 
-                title="Today's Output" value={(stats?.today_output || 0).toLocaleString()} subtext="Bottles produced today" 
-                icon={Factory} colorClass="blue" onClick={() => router.push('/production')}
+                title="Today's Output" 
+                value={stats?.today_output?.toLocaleString() ?? 0} 
+                subtext="Bottles produced today" 
+                icon={Factory} 
+                colorClass="blue" 
+                onClick={() => router.push('/production')}
               />
               <KPICard 
-                title="Active Batches" value={stats?.active_batches || 0} subtext="Currently running on factory floor" 
-                icon={Activity} colorClass="purple" onClick={() => router.push('/production')}
+                title="Active Batches" 
+                value={stats?.active_batches ?? 0} 
+                subtext="Currently running on factory floor" 
+                icon={Activity} 
+                colorClass="purple" 
+                onClick={() => router.push('/production')}
               />
               <KPICard 
-                title="Low Stock Alerts" value={stats?.low_stock_products || 0} subtext={`${stats?.out_of_stock_products || 0} completely out of stock`} 
-                icon={AlertCircle} colorClass="red" alert={stats?.low_stock_products > 0}
+                title="Low Stock Alerts" 
+                value={stats?.low_stock_products ?? 0} 
+                subtext={`${stats?.out_of_stock_products ?? 0} completely out of stock`} 
+                icon={AlertCircle} 
+                colorClass="red" 
+                alert={(stats?.low_stock_products ?? 0) > 0}
                 onClick={() => router.push('/inventory')}
               />
             </>
