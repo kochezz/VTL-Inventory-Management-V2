@@ -23,24 +23,37 @@ const qmsRoutes = require('./src/routes/qms-routes');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// ============================================================================
+// BULLETPROOF CORS MIDDLEWARE
+// ============================================================================
 const corsOptions = {
   origin: function (origin, callback) {
+    // 1. Allow server-to-server requests or local tools (Postman/cURL)
     if (!origin) return callback(null, true);
     
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'https://localhost:3000',
-      process.env.CORS_ORIGIN
-    ];
-    
+    // 2. Automatically allow any ngrok URLs for testing
     if (origin.includes('ngrok')) {
       return callback(null, true);
     }
+
+    // 3. Safely grab the env variable (checking both plural and singular just in case)
+    const envOrigins = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '';
     
-    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+    // 4. Split the string by commas and clean up any accidental spaces
+    const allowedOrigins = envOrigins
+      .split(',')
+      .map(url => url.trim())
+      .filter(url => url.length > 0);
+      
+    // 5. Always allow local development ports as a baseline fallback
+    allowedOrigins.push('http://localhost:3000', 'http://localhost:5173', 'https://localhost:3000');
+
+    // 6. Check if the origin is on the list, OR if the wildcard '*' is active
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
+      // Log the exact URL that got rejected to the Render console for easy debugging
+      console.error(`🚨 CORS Blocked: The origin '${origin}' is not on the allowed list.`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -86,6 +99,9 @@ app.get('/health', (req, res) => {
 
 // Express Route Error handling
 app.use((err, req, res, next) => {
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'CORS Error: Origin not allowed.' });
+  }
   console.error('❌ Server error:', err.stack);
   res.status(500).json({ message: 'Something went wrong!' });
 });
@@ -99,16 +115,11 @@ app.listen(PORT, () => {
 // GLOBAL ERROR HANDLERS (Prevents Node.js from silent crashing)
 // ============================================================================
 
-// 1. Catches failed Async/Await Promises that missed a try/catch block
 process.on('unhandledRejection', (reason, promise) => {
   console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
-  // We log it, but DO NOT crash the server. It stays alive for other users.
 });
 
-// 2. Catches synchronous fat-finger errors (e.g., trying to read undefined.length)
 process.on('uncaughtException', (error) => {
   console.error('🚨 Uncaught Exception thrown:', error);
-  // For synchronous errors, memory might be corrupted.
-  // We exit(1) specifically so PM2 catches the death and restarts it instantly with a clean slate.
   process.exit(1); 
 });
