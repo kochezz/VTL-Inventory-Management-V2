@@ -91,8 +91,9 @@ const createUser = async (userData) => {
 
 const updateUser = async (userId, userData) => {
   try {
+    // FIX: Extract requires_password_change from fieldsToUpdate to prevent duplicate SQL assignments
     const { 
-      password, user_id, created_at, updated_at, last_login, password_hash, 
+      password, user_id, created_at, updated_at, last_login, password_hash, requires_password_change,
       ...fieldsToUpdate 
     } = userData;
 
@@ -117,12 +118,19 @@ const updateUser = async (userId, userData) => {
       }
     }
 
+    // FIX: Handled the field manually depending on whether a new password was provided
+    if (requires_password_change !== undefined && !password) {
+      updates.push(`requires_password_change = $${paramCount}`);
+      values.push(requires_password_change);
+      paramCount++;
+    }
+
     if (password) {
       updates.push(`password_hash = $${paramCount}`);
       values.push(await bcrypt.hash(password, 10));
       paramCount++;
       updates.push(`requires_password_change = $${paramCount}`);
-      values.push(true);
+      values.push(requires_password_change !== undefined ? requires_password_change : true);
       paramCount++;
     }
 
@@ -321,6 +329,7 @@ const respondToHolidayRequest = async (requestId, status, reviewerId) => {
     throw error;
   }
 };
+
 module.exports = { 
   getAllUsers, 
   getUserById, 
@@ -331,7 +340,7 @@ module.exports = {
   initiatePasswordReset, 
   getUserStats,
   getHolidayData, 
-  submitHolidayRequest, 
-  getPendingHolidayApprovals, 
-  respondToHolidayRequest,
+  submitHolidayRequest,
+  getPendingHolidayApprovals,
+  respondToHolidayRequest
 };
