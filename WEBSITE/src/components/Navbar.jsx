@@ -97,7 +97,7 @@ const Navbar = ({ isDark, toggleTheme }) => {
             {isDark ? '🌙' : '☀️'}
           </button>
           
-          <a href="https://app.vilag.io" target="_blank" rel="noreferrer" className="btn btn-blue" style={{padding: '10px 16px', fontSize: '.72rem'}}>
+          <a href="https://vilagio-erp-frontend.vercel.app/login" target="_blank" rel="noreferrer" className="btn btn-blue" style={{padding: '10px 16px', fontSize: '.72rem'}}>
             <img src="/images/VTL-erp.png" alt="ERP Portal" style={{width: '14px', height: '14px', filter: 'brightness(0) invert(1)'}} onError={(e) => e.target.style.display='none'} />
             VTL-ERP
           </a>

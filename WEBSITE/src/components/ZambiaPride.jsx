@@ -5,8 +5,17 @@ const ZambiaPride = () => (
     <div className="container">
       <div className="zambia-grid">
         <div className="zambia-stack r">
-          <div className="zimg-main zph-main" style={{position: 'absolute'}}><span>[ Copperbelt /<br/>Community Photo ]</span></div>
-          <div className="zimg-accent zph-accent" style={{position: 'absolute'}}><span>[ Community<br/>Photo ]</span></div>
+          {/* Replaced Placeholders with Actual Images */}
+          <img 
+            src="/images/vic-falls.jpg" 
+            alt="Copperbelt Community" 
+            className="zimg-main" 
+          />
+          <img 
+            src="/images/zed.jpg" 
+            alt="Zambian Community" 
+            className="zimg-accent" 
+          />
         </div>
         <div className="zambia-text">
           <span className="eyebrow r">Proudly Zambian</span>

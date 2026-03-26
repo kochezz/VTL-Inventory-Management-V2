@@ -47,7 +47,7 @@ export default function LoginPage() {
             />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2">
-            Inventory Management System
+            Enterprise Resource Management System
           </h1>
           <p className="text-gray-400">
             Water Bottle Production Management
