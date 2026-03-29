@@ -1,3 +1,29 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html, body {
+    /* Force the entire browser window to use your dark theme */
+    @apply bg-dark-950 text-gray-100 antialiased;
+    
+    /* Ensure the background stretches to the very bottom of the viewport */
+    min-height: 100vh;
+    min-height: 100dvh; /* Special property that accounts for mobile browser address bars! */
+  }
+  
+  /* Make the browser scrollbar dark to match the theme */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-dark-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-dark-700 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-dark-600;
+  }
+}
