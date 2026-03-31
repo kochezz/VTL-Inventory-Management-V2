@@ -9,7 +9,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 // ============================================================================
 // 1. CREATE PURCHASE ORDER
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'manager', 'admin']), async (req, res) => {
+router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
     const userId = req.user.user_id;
     const poData = req.body;
@@ -32,7 +32,11 @@ router.post('/', authenticate, authorize(['sales', 'manager', 'admin']), async (
 // ============================================================================
 router.get('/', authenticate, async (req, res) => {
   try {
-    const filters = { status: req.query.status };
+    const filters = {
+      status: req.query.status,
+      vendor_id: req.query.vendor_id
+    };
+
     const pos = await PurchaseOrderService.listPOs(filters);
     res.json(pos);
   } catch (error) {
@@ -56,15 +60,17 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // ============================================================================
-// 4. APPROVE PURCHASE ORDER (CFO & CEO TIERS)
+// 4. APPROVE PURCHASE ORDER (CFO or CEO)
 // ============================================================================
 router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), async (req, res) => {
   try {
     const poId = req.params.id;
     const approverId = req.user.user_id;
-    const { notes, signature_password, acting_role } = req.body;
+    const { signature_password, acting_role } = req.body;
 
-    if (!signature_password) return res.status(400).json({ error: 'Digital signature (password) is required.' });
+    if (!signature_password) {
+      return res.status(400).json({ error: 'Digital signature (password) is required.' });
+    }
 
     let approverRole = req.user.role.toLowerCase();
     if (approverRole === 'admin') {
@@ -77,26 +83,24 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), as
     const isValidPassword = await bcrypt.compare(signature_password, userResult.rows[0].password_hash);
     if (!isValidPassword) return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
 
-    const result = await PurchaseOrderService.approvePO(poId, approverId, approverRole, notes);
+    const result = await PurchaseOrderService.approvePO(poId, approverId, approverRole);
     
-    // Email Routing Logic
-    if (result.status === 'PENDING_CEO') {
-      // CFO approved it, but it's over $1,000, so email the CEO next
-      POEmailService.notifyPendingApproval(poId, 'ceo').catch(console.error);
-    } else if (result.status === 'APPROVED') {
-      // It reached the end of the line! Email the Sales user the good news
-      POEmailService.notifyPOResult(poId, 'APPROVED', notes).catch(console.error);
+    // Trigger Emails based on the NEW status!
+    if (result.status === 'APPROVED') {
+        POEmailService.notifyPOApproved(result.po_id).catch(console.error);
+    } else if (result.status === 'PENDING_CEO') {
+        POEmailService.notifyPendingApproval(result.po_id, 'ceo').catch(console.error);
     }
     
     res.json(result);
   } catch (error) {
     console.error('Approve PO Error:', error);
-    res.status(400).json({ error: error.message || 'Failed to approve PO' });
+    res.status(400).json({ error: error.message || 'Failed to approve Purchase Order' });
   }
 });
 
 // ============================================================================
-// 5. REJECT PURCHASE ORDER
+// 5. REJECT PURCHASE ORDER (CFO or CEO)
 // ============================================================================
 router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), async (req, res) => {
   try {
@@ -121,12 +125,12 @@ router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), asy
     const result = await PurchaseOrderService.rejectPO(poId, approverId, approverRole, reason);
     
     // Email the Sales user the bad news
-    POEmailService.notifyPOResult(poId, 'REJECTED', reason).catch(console.error);
+    POEmailService.notifyPOResolved(result.po_id).catch(console.error);
     
     res.json(result);
   } catch (error) {
     console.error('Reject PO Error:', error);
-    res.status(400).json({ error: error.message || 'Failed to reject PO' });
+    res.status(400).json({ error: error.message || 'Failed to reject Purchase Order' });
   }
 });
 

@@ -36,7 +36,8 @@ router.get('/documents', async (req, res) => {
 });
 
 // 3. Auto-Sequencer (MUST BE BEFORE /documents/:id)
-router.get('/documents/next-code', authorize(['admin', 'manager', 'qa']), async (req, res) => {
+// FIX: Added 'ceo', 'cfo'
+router.get('/documents/next-code', authorize(['admin', 'manager', 'qa', 'ceo', 'cfo']), async (req, res) => {
   try {
     const { section_id, doc_type } = req.query;
     if (!section_id || !doc_type) {
@@ -59,8 +60,9 @@ router.get('/documents/:id', async (req, res) => {
   }
 });
 
-// 5. UPDATE Document Metadata (This was missing before!)
-router.put('/documents/:id', authorize(['admin', 'manager', 'qa']), async (req, res) => {
+// 5. UPDATE Document Metadata 
+// FIX: Added 'ceo', 'cfo'
+router.put('/documents/:id', authorize(['admin', 'manager', 'qa', 'ceo', 'cfo']), async (req, res) => {
   try {
     const updatedDoc = await qmsService.updateDocumentMetadata(req.params.id, req.body);
     res.json(updatedDoc);
@@ -117,7 +119,8 @@ router.post('/versions/:versionId/submit', async (req, res) => {
 });
 
 // 10. Approve & Release Document 
-router.post('/versions/:versionId/approve', authorize(['admin', 'qa', 'manager', 'ceo']), async (req, res) => {
+// FIX: Added 'ceo', 'cfo'
+router.post('/versions/:versionId/approve', authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']), async (req, res) => {
   try {
     const { signature_password } = req.body;
     if (!signature_password) {

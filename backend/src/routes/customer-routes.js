@@ -9,7 +9,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 // 1. CREATE CUSTOMER (ONBOARDING)
 // Roles Allowed: Sales, Manager, Admin
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'manager', 'admin']), async (req, res) => {
+router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
     const userId = req.user.user_id;
     const customerData = req.body;
@@ -33,14 +33,15 @@ router.post('/', authenticate, authorize(['sales', 'manager', 'admin']), async (
 router.get('/', authenticate, async (req, res) => {
   try {
     const filters = {
-      status: req.query.status
+      status: req.query.status,
+      tier: req.query.tier
     };
 
     const customers = await CustomerService.listCustomers(filters);
     res.json(customers);
   } catch (error) {
     console.error('List Customers Error:', error);
-    res.status(500).json({ error: 'Failed to retrieve customers directory' });
+    res.status(500).json({ error: 'Failed to retrieve customers' });
   }
 });
 
@@ -60,20 +61,21 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // ============================================================================
-// 4. APPROVE CUSTOMER (Generates VTL-CUS ID)
-// Roles Allowed: CFO, Admin
+// 4. APPROVE CUSTOMER
+// Required: Digital Signature Password
+// Roles Allowed: CFO, Admin (CEO for T3)
 // ============================================================================
-router.post('/:id/approve', authenticate, authorize(['cfo', 'admin']), async (req, res) => {
+router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), async (req, res) => {
   try {
     const customerId = req.params.id;
     const approverId = req.user.user_id;
-    const { notes, signature_password } = req.body;
+    const { signature_password } = req.body;
 
     if (!signature_password) {
-      return res.status(400).json({ error: 'Digital signature (password) is required to approve credit limits and onboarding.' });
+      return res.status(400).json({ error: 'Digital signature (password) is required to approve customers.' });
     }
 
-    // 1. Verify the Approver's Password
+    // 1. Verify the Approver's Password (21 CFR Part 11 pattern, even though it's finance)
     const userResult = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [approverId]);
     if (userResult.rows.length === 0) return res.status(401).json({ error: 'User not found.' });
     
@@ -82,10 +84,10 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'admin']), async (re
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
-    // 2. Execute Approval and Generate VTL-CUS ID
-    const result = await CustomerService.approveCustomer(customerId, approverId, notes);
+    // 2. Execute Approval
+    const result = await CustomerService.approveCustomer(customerId, approverId);
     
-    // TODO: Trigger Email Notification back to the Sales Rep saying the customer is active!
+    // TODO: Trigger Email Notification back to the Sales Rep that the customer is approved!
     
     res.json(result);
   } catch (error) {
@@ -95,10 +97,11 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'admin']), async (re
 });
 
 // ============================================================================
-// 5. REJECT CUSTOMER (Return to Sales for Revision)
+// 5. REJECT CUSTOMER
+// Required: Digital Signature Password & Reason (For Revision)
 // Roles Allowed: CFO, Admin
 // ============================================================================
-router.post('/:id/reject', authenticate, authorize(['cfo', 'admin']), async (req, res) => {
+router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), async (req, res) => {
   try {
     const customerId = req.params.id;
     const approverId = req.user.user_id;

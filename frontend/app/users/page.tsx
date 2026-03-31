@@ -62,7 +62,6 @@ export default function UsersPage() {
     return matchesSearch && matchesRole && matchesStatus;
   });
 
-  // Create a list of potential managers (you can filter this down to specific roles if needed)
   const potentialManagers = users.filter(u => u.is_active).sort((a, b) => a.full_name.localeCompare(b.full_name));
 
   const handleAddEmergencyContact = () => {
@@ -159,6 +158,7 @@ export default function UsersPage() {
       engineering: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
       qa: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
       staff: 'bg-green-500/10 text-green-400 border-green-500/20',
+      operator: 'bg-orange-500/10 text-orange-400 border-orange-500/20', // NEW
       super_viewer: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
       viewer: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
     };
@@ -201,6 +201,7 @@ export default function UsersPage() {
             <option value="engineering">Engineering</option>
             <option value="qa">QA</option>
             <option value="staff">Staff</option>
+            <option value="operator">Operator</option>
             <option value="super_viewer">Super Viewer</option>
             <option value="viewer">Viewer</option>
           </select>
@@ -284,6 +285,7 @@ export default function UsersPage() {
                       <option value="engineering">Engineering</option>
                       <option value="qa">QA</option>
                       <option value="staff">Staff</option>
+                      <option value="operator">Operator (Line Staff)</option>
                       <option value="super_viewer">Super Viewer</option>
                       <option value="viewer">Viewer</option>
                     </select>
@@ -348,7 +350,6 @@ export default function UsersPage() {
                   
                   <div><label className="block text-xs text-gray-400 mb-1">Department / Division</label><input type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
                   
-                  {/* === UPDATED: REPORTS TO FIELD IS NOW A DROPDOWN === */}
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Reports to (Manager)</label>
                     <select 
@@ -358,14 +359,12 @@ export default function UsersPage() {
                     >
                       <option value="">Unassigned</option>
                       {potentialManagers.map(m => (
-                        // We use full_name here because the backend lookup specifically supports looking up manager by name or ID
                         <option key={m.user_id} value={m.full_name}>
                           {m.full_name} ({m.role.replace('_', ' ')})
                         </option>
                       ))}
                     </select>
                   </div>
-                  {/* === END UPDATE === */}
 
                   <div><label className="block text-xs text-gray-400 mb-1">Hire Date</label><input type="date" value={formData.employment_date} onChange={e => setFormData({...formData, employment_date: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
 

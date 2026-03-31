@@ -6,8 +6,8 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 // All product routes require authentication
 router.use(authenticate);
 
-// POST /api/products - Create new product (admin/manager only)
-router.post('/', authorize('admin', 'manager'), async (req, res) => {
+// POST /api/products - Create new product
+router.post('/', authorize(['admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
   try {
     const {
       sku,

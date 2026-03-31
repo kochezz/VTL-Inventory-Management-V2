@@ -9,8 +9,9 @@ const SupplierEmailService = require('../services/supplier-email-service');
 // ============================================================================
 // 1. CREATE VENDOR DRAFT
 // Roles Allowed: Sales, Admin (Per Roadmap RBAC)
+// FIX: Added 'ceo', 'cfo'
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'admin', 'manager']), async (req, res) => {
+router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
   try {
     const userId = req.user.user_id; // Extracted securely from the JWT token
     const vendorData = req.body;
@@ -62,14 +63,15 @@ router.get('/:id', authenticate, async (req, res) => {
 // ============================================================================
 // 4. SUBMIT FOR QA REVIEW
 // Roles Allowed: Sales, Admin
+// FIX: Added 'ceo', 'cfo'
 // ============================================================================
-router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager']), async (req, res) => {
+router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const updatedVendor = await SupplierService.submitForQA(vendorId);
     
     // Trigger Email Notification to QA Team 
-SupplierEmailService.notifyQAPending(updatedVendor).catch(console.error);
+    SupplierEmailService.notifyQAPending(updatedVendor).catch(console.error);
     
     res.json({ message: 'Vendor submitted for QA review successfully', vendor: updatedVendor });
   } catch (error) {
@@ -81,8 +83,9 @@ SupplierEmailService.notifyQAPending(updatedVendor).catch(console.error);
 // ============================================================================
 // 5. QA APPROVAL (With Password Verification)
 // Roles Allowed: QA, Admin
+// FIX: Added 'ceo', 'cfo'
 // ============================================================================
-router.post('/:id/approve', authenticate, authorize(['qa', 'admin']), async (req, res) => {
+router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const qaUserId = req.user.user_id;
@@ -113,7 +116,7 @@ router.post('/:id/approve', authenticate, authorize(['qa', 'admin']), async (req
     const approvedVendor = await SupplierService.approveVendor(vendorId, qaUserId, approvalData);
     
     // Trigger Email Notification to Sales Team
-SupplierEmailService.notifySalesResult(approvedVendor, approvedVendor.status).catch(console.error);
+    SupplierEmailService.notifySalesResult(approvedVendor, approvedVendor.status).catch(console.error);
     
     res.json({ 
       message: 'Vendor approved successfully and added to AVL', 
@@ -129,8 +132,9 @@ SupplierEmailService.notifySalesResult(approvedVendor, approvedVendor.status).ca
 // ============================================================================
 // 6. QA REJECTION (With Password Verification)
 // Roles Allowed: QA, Admin
+// FIX: Added 'ceo', 'cfo'
 // ============================================================================
-router.post('/:id/reject', authenticate, authorize(['qa', 'admin']), async (req, res) => {
+router.post('/:id/reject', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const qaUserId = req.user.user_id;
@@ -159,7 +163,7 @@ router.post('/:id/reject', authenticate, authorize(['qa', 'admin']), async (req,
     const rejectedVendor = await SupplierService.rejectVendor(vendorId, qaUserId, reason);
     
     // Trigger Email Notification to Sales Team
-SupplierEmailService.notifySalesResult(rejectedVendor, 'REVISION_REQUIRED').catch(console.error);
+    SupplierEmailService.notifySalesResult(rejectedVendor, 'REVISION_REQUIRED').catch(console.error);
     
     res.json({ message: 'Vendor returned to Sales for revision', vendor: rejectedVendor });
   } catch (error) {

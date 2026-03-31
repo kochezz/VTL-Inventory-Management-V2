@@ -8,7 +8,7 @@ router.use(authenticate);
 
 // POST /api/inventory/transactions - Create any inventory transaction
 // VIEWERS CANNOT CREATE TRANSACTIONS
-router.post('/transactions', authorize('admin', 'manager', 'staff'), async (req, res) => {
+router.post('/transactions', authorize(['admin', 'manager', 'staff', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     const {
       product_id,
@@ -39,22 +39,14 @@ router.post('/transactions', authorize('admin', 'manager', 'staff'), async (req,
     if (['RECEIVE', 'RETURN'].includes(transaction_type) && !to_location_id) {
       return res.status(400).json({ message: 'to_location_id is required for RECEIVE/RETURN transactions' });
     }
-
+    
     if (['ISSUE', 'DAMAGE'].includes(transaction_type) && !from_location_id) {
       return res.status(400).json({ message: 'from_location_id is required for ISSUE/DAMAGE transactions' });
     }
 
     if (transaction_type === 'TRANSFER' && (!from_location_id || !to_location_id)) {
-      return res.status(400).json({ message: 'Both from_location_id and to_location_id are required for TRANSFER' });
+      return res.status(400).json({ message: 'Both from_location_id and to_location_id are required for TRANSFER transactions' });
     }
-
-    console.log(`📦 Creating ${transaction_type} transaction:`, {
-      product_id,
-      quantity,
-      from_location_id,
-      to_location_id,
-      user: req.user.email
-    });
 
     const result = await inventoryService.createTransaction({
       product_id,
@@ -68,9 +60,7 @@ router.post('/transactions', authorize('admin', 'manager', 'staff'), async (req,
       performed_by: req.user.user_id
     });
 
-    console.log('✅ Transaction successful:', result.transaction.transaction_number);
-
-    res.json(result);
+    res.status(201).json(result);
   } catch (error) {
     console.error('❌ Transaction route error:', error.message);
     res.status(400).json({ message: error.message });
@@ -78,7 +68,6 @@ router.post('/transactions', authorize('admin', 'manager', 'staff'), async (req,
 });
 
 // GET /api/inventory/transactions - Get transaction history
-// ALL ROLES CAN VIEW (including viewer)
 router.get('/transactions', async (req, res) => {
   try {
     const filters = {
@@ -87,33 +76,23 @@ router.get('/transactions', async (req, res) => {
       location_id: req.query.location_id,
       start_date: req.query.start_date,
       end_date: req.query.end_date,
-      limit: req.query.limit ? parseInt(req.query.limit) : undefined,
-      offset: req.query.offset ? parseInt(req.query.offset) : undefined
+      limit: parseInt(req.query.limit) || 50,
+      offset: parseInt(req.query.offset) || 0
     };
 
-    console.log('📋 Fetching transaction history with filters:', filters);
-
     const result = await inventoryService.getTransactionHistory(filters);
-
-    console.log(`✅ Found ${result.transactions.length} transactions (Total: ${result.total})`);
-
     res.json(result);
   } catch (error) {
-    console.error('❌ Get transaction history route error:', error.message);
+    console.error('❌ Get transactions route error:', error.message);
     res.status(500).json({ message: error.message });
   }
 });
 
-// GET /api/inventory/locations - Get all active warehouse locations
-// ALL ROLES CAN VIEW (including viewer)
+// GET /api/inventory/locations - Get all active locations
+// ALL ROLES CAN VIEW LOCATIONS
 router.get('/locations', async (req, res) => {
   try {
-    console.log('🏢 Fetching warehouse locations');
-
     const locations = await inventoryService.getLocations();
-
-    console.log(`✅ Found ${locations.length} locations`);
-
     res.json(locations);
   } catch (error) {
     console.error('❌ Get locations route error:', error.message);
@@ -123,7 +102,7 @@ router.get('/locations', async (req, res) => {
 
 // POST /api/inventory/check-availability - Check stock availability
 // VIEWERS CANNOT CHECK AVAILABILITY (they don't need it since they can't transact)
-router.post('/check-availability', authorize('admin', 'manager', 'staff'), async (req, res) => {
+router.post('/check-availability', authorize(['admin', 'manager', 'staff', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     const { product_id, location_id, required_quantity } = req.body;
 

@@ -2,7 +2,8 @@ const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('./auth-service');
 
-const VALID_ROLES = ['admin', 'ceo', 'cfo', 'manager', 'qa', 'engineering', 'staff', 'super_viewer', 'viewer'];
+// NEW: Added 'operator' to the valid roles list
+const VALID_ROLES = ['admin', 'ceo', 'cfo', 'manager', 'qa', 'engineering', 'staff', 'operator', 'super_viewer', 'viewer'];
 
 const getAllUsers = async () => {
   try {
@@ -91,7 +92,6 @@ const createUser = async (userData) => {
 
 const updateUser = async (userId, userData) => {
   try {
-    // FIX: Extract requires_password_change from fieldsToUpdate to prevent duplicate SQL assignments
     const { 
       password, user_id, created_at, updated_at, last_login, password_hash, requires_password_change,
       ...fieldsToUpdate 
@@ -118,7 +118,6 @@ const updateUser = async (userId, userData) => {
       }
     }
 
-    // FIX: Handled the field manually depending on whether a new password was provided
     if (requires_password_change !== undefined && !password) {
       updates.push(`requires_password_change = $${paramCount}`);
       values.push(requires_password_change);
@@ -178,6 +177,7 @@ const initiatePasswordReset = async (userId) => {
 
 const getUserStats = async () => {
   try {
+    // NEW: Added Operator counting logic here
     const result = await pool.query(`
       SELECT 
         COUNT(*) as total, COUNT(*) FILTER (WHERE is_active = true) as active,
@@ -185,8 +185,8 @@ const getUserStats = async () => {
         COUNT(*) FILTER (WHERE role = 'admin') as admins, COUNT(*) FILTER (WHERE role = 'ceo') as ceos,
         COUNT(*) FILTER (WHERE role = 'cfo') as cfos, COUNT(*) FILTER (WHERE role = 'manager') as managers,
         COUNT(*) FILTER (WHERE role = 'engineering') as engineers, COUNT(*) FILTER (WHERE role = 'qa') as qa_users,
-        COUNT(*) FILTER (WHERE role = 'staff') as staff, COUNT(*) FILTER (WHERE role = 'super_viewer') as super_viewers,
-        COUNT(*) FILTER (WHERE role = 'viewer') as viewers
+        COUNT(*) FILTER (WHERE role = 'staff') as staff, COUNT(*) FILTER (WHERE role = 'operator') as operators,
+        COUNT(*) FILTER (WHERE role = 'super_viewer') as super_viewers, COUNT(*) FILTER (WHERE role = 'viewer') as viewers
       FROM users
     `);
     return result.rows[0];
@@ -200,7 +200,7 @@ const getUserStats = async () => {
 const getHolidayData = async (userId) => {
   try {
     const year = new Date().getFullYear();
-    const totalAllowance = 15; // Base VILAGIO working days allowance
+    const totalAllowance = 15; 
     
     const reqQuery = await pool.query(
       `SELECT * FROM holiday_requests WHERE user_id = $1 ORDER BY created_at DESC`,
@@ -209,12 +209,10 @@ const getHolidayData = async (userId) => {
     
     const requests = reqQuery.rows;
     
-    // Calculate used days (Approved only, in current year)
     const usedDays = requests
       .filter(r => r.status === 'Approved' && new Date(r.start_date).getFullYear() === year)
       .reduce((sum, r) => sum + r.days_requested, 0);
       
-    // Calculate pending days so they don't over-request
     const pendingDays = requests
       .filter(r => r.status === 'Pending' && new Date(r.start_date).getFullYear() === year)
       .reduce((sum, r) => sum + r.days_requested, 0);
@@ -237,11 +235,9 @@ const submitHolidayRequest = async (userId, payload) => {
     
     if (days_requested <= 0) throw new Error('Invalid date range selected.');
 
-    // 1. Get user details to find out who their manager is
     const user = await getUserById(userId);
     let managerEmail = null;
     
-    // Attempt to lookup manager's email by their full name in the reports_to field
     if (user.reports_to) {
        const mgrQuery = await pool.query('SELECT email FROM users WHERE full_name = $1 OR user_id::text = $1 LIMIT 1', [user.reports_to]);
        if (mgrQuery.rows.length > 0) {
@@ -249,7 +245,6 @@ const submitHolidayRequest = async (userId, payload) => {
        }
     }
     
-    // 2. Save the request to the database
     const request_id = uuidv4();
     const result = await pool.query(
       `INSERT INTO holiday_requests (request_id, user_id, start_date, end_date, days_requested, status, created_at, updated_at)
@@ -257,11 +252,9 @@ const submitHolidayRequest = async (userId, payload) => {
       [request_id, userId, start_date, end_date, days_requested]
     );
     
-    // 3. Trigger Notification to Manager
     try {
       const notificationService = require('./notification-service');
       if (notificationService.notifyHolidayRequest && managerEmail) {
-        // Send email to manager requesting approval
         notificationService.notifyHolidayRequest(user.full_name, start_date, end_date, days_requested, managerEmail);
       }
     } catch(e) { 
@@ -277,7 +270,6 @@ const submitHolidayRequest = async (userId, payload) => {
 const getPendingHolidayApprovals = async (userId) => {
   try {
     const user = await getUserById(userId);
-    // Managers see requests from their direct reports. Admins see all pending requests.
     const query = `
       SELECT hr.*, u.full_name, u.email, u.department
       FROM holiday_requests hr
@@ -296,7 +288,6 @@ const respondToHolidayRequest = async (requestId, status, reviewerId) => {
   try {
     const reviewer = await getUserById(reviewerId);
     
-    // Update the status
     const result = await pool.query(
       `UPDATE holiday_requests SET status = $1, updated_at = NOW() WHERE request_id = $2 RETURNING *`,
       [status, requestId]
@@ -307,7 +298,6 @@ const respondToHolidayRequest = async (requestId, status, reviewerId) => {
     const reqData = result.rows[0];
     const employee = await getUserById(reqData.user_id);
 
-    // Trigger Notification Email back to the employee
     try {
       const notificationService = require('./notification-service');
       if (notificationService.notifyHolidayResponse) {

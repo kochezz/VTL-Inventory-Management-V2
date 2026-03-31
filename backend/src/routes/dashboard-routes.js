@@ -5,7 +5,7 @@ const { pool } = require('../services/auth-service');
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 
 // GET /api/dashboard/stats - Get unified ERP dashboard statistics
-router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     console.log('📊 Fetching unified dashboard statistics...');
     const userId = req.user.user_id;
@@ -132,7 +132,7 @@ router.get('/stats', authenticate, authorize(['admin', 'manager', 'qa', 'staff',
 });
 
 // GET /api/dashboard/active-production (Get currently running batches)
-router.get('/active-production', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/active-production', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     const query = `
       SELECT 
@@ -173,7 +173,7 @@ router.get('/active-production', authenticate, authorize(['admin', 'manager', 'q
 });
 
 // GET /api/dashboard/recent-transactions
-router.get('/recent-transactions', authenticate, authorize(['admin', 'manager', 'qa', 'staff']), async (req, res) => {
+router.get('/recent-transactions', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const query = `
@@ -196,7 +196,7 @@ router.get('/recent-transactions', authenticate, authorize(['admin', 'manager', 
 });
 
 // GET /api/dashboard/low-stock-alerts
-router.get('/low-stock-alerts', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/low-stock-alerts', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const query = `
@@ -226,7 +226,7 @@ router.get('/low-stock-alerts', authenticate, authorize(['admin', 'manager', 'qa
 });
 
 // GET /api/dashboard/locations
-router.get('/locations', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer']), async (req, res) => {
+router.get('/locations', authenticate, authorize(['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo']), async (req, res) => {
   try {
     const query = `
       SELECT wl.location_id, wl.location_code, wl.location_name, wl.location_type, COUNT(DISTINCT i.product_id) as product_count,

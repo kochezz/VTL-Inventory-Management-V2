@@ -7,7 +7,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 // 1. CREATE GOODS RECEIPT NOTE (GRN)
 // Roles Allowed: Warehouse, Manager, Admin
 // ============================================================================
-router.post('/', authenticate, authorize(['warehouse', 'manager', 'admin']), async (req, res) => {
+router.post('/', authenticate, authorize(['warehouse', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
     const userId = req.user.user_id; // Extracted securely from the JWT token
     const grnData = req.body;

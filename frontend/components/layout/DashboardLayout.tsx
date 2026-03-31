@@ -33,73 +33,73 @@ const navigation: NavItem[] = [
     name: 'Dashboard', 
     href: '/dashboard', 
     icon: LayoutDashboard,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer']
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo']
   },
   { 
     name: 'Products', 
     href: '/products', 
     icon: Package,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer']
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo']
   },
   { 
     name: 'Inventory', 
     href: '/inventory', 
     icon: MapPin,
-    roles: ['admin', 'manager', 'qa', 'staff']
+    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo']
   },
   { 
     name: 'Production', 
     href: '/production', 
     icon: Factory,
-    roles: ['admin', 'manager', 'qa', 'staff']
+    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo']
   },
   { 
     name: 'Vendor Management', 
     href: '/vendor-management/suppliers', 
     icon: Building2,
-    roles: ['admin', 'manager', 'qa', 'staff'] 
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo'] 
   },
   { 
     name: 'Customers (CRM)', 
     href: '/vendor-management/customers', 
     icon: Users,
-    roles: ['admin', 'manager', 'sales', 'cfo', 'ceo', 'staff'] 
+    roles: ['admin', 'manager', 'sales', 'staff', 'ceo', 'cfo'] 
   },
   { 
     name: 'Purchase Orders', 
     href: '/vendor-management/purchase-orders', 
     icon: ShoppingCart,
-    roles: ['admin', 'manager', 'cfo', 'ceo', 'staff', 'qa'] 
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo'] 
   },
   { 
     name: 'Goods Receipts', 
     href: '/vendor-management/goods-receipts', 
     icon: PackageCheck,
-    roles: ['admin', 'manager', 'warehouse', 'staff', 'cfo'] 
+    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo'] 
   },
   { 
     name: 'Quality (QMS)', 
     href: '/qms', 
     icon: ShieldCheck,
-    roles: ['admin', 'qa', 'manager', 'ceo', 'cfo', 'engineering'] 
+    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo'] 
   },
   { 
     name: 'Analytics', 
     href: '/analytics', 
     icon: TrendingUp,
-    roles: ['admin', 'manager', 'qa', 'staff']
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo']
   },
   { 
     name: 'Reports', 
     href: '/reports', 
     icon: FileText,
-    roles: ['admin', 'manager', 'qa']
+    roles: ['admin', 'manager', 'qa', 'ceo', 'cfo']
   },
   { 
     name: 'Production Reports', 
     href: '/production-reports', 
     icon: ClipboardCheck,
-    roles: ['admin', 'manager', 'qa']
+    roles: ['admin', 'manager', 'qa', 'operator', 'ceo', 'cfo']
   },
   { 
     name: 'Users', 
