@@ -77,7 +77,7 @@ router.get('/tests', async (req, res) => {
 router.post('/tests', authorize(['admin', 'manager', 'qa', 'staff', 'operator']), async (req, res) => {
   try {
     const userId = req.user.user_id;
-    const test = await labService.createTest(req.body, userId);
+    const test = await labService.createLabTest(req.body, userId);
     res.status(201).json(test);
   } catch (err) {
     console.error('POST /lab/tests error:', err);
