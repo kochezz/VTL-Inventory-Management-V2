@@ -190,7 +190,8 @@ export default function LabTestModal({ isOpen, onClose, onSuccess, linkedBatchId
         };
       });
 
-      await api.post('/lab/tests', {
+      // Step 1: Create the test record (status: draft)
+      const createRes = await api.post('/lab/tests', {
         shift,
         batch_id: linkedBatchId || null,
         ro_system_reference: roSystemRef,
@@ -199,9 +200,18 @@ export default function LabTestModal({ isOpen, onClose, onSuccess, linkedBatchId
         parameters,
       });
 
+      const testId = createRes.data.test?.test_id;
+      if (!testId) throw new Error('Test created but no test ID returned');
+
+      // Step 2: Submit for QA review in the same action (status: draft → submitted)
+      // This is what triggers the QA email notification and unlocks the QA review modal.
+      await api.post(`/lab/tests/${testId}/submit`, {
+        signature_verified: true,
+      });
+
       onSuccess();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to create lab test');
+      setError(err.response?.data?.error || 'Failed to submit lab test for QA review');
     } finally {
       setLoading(false);
     }
@@ -245,7 +255,7 @@ export default function LabTestModal({ isOpen, onClose, onSuccess, linkedBatchId
             {[
               { id: 'record', label: '1. Record Parameters' },
               { id: 'review', label: '2. Review' },
-              { id: 'sign',   label: '3. Sign & Submit' },
+              { id: 'sign',   label: '3. Sign & Submit to QA' },
             ].map((s, i) => (
               <div key={s.id} className="flex items-center gap-2">
                 <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
@@ -597,7 +607,7 @@ export default function LabTestModal({ isOpen, onClose, onSuccess, linkedBatchId
                 {loading ? (
                   <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Verifying...</>
                 ) : (
-                  <><CheckCircle2 className="w-4 h-4" /> Sign & Submit Test</>
+                  <><CheckCircle2 className="w-4 h-4" /> Sign & Submit to QA</>
                 )}
               </button>
             </div>
