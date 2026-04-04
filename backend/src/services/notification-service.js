@@ -52,7 +52,7 @@ const sendEmail = async (to, subject, htmlContent) => {
 };
 
 // ============================================================================
-// SPECIFIC NOTIFICATION TRIGGERS
+// PRODUCTION NOTIFICATIONS (existing — unchanged)
 // ============================================================================
 
 /**
@@ -152,16 +152,13 @@ const notifyQADocumentReview = async (docCode, docName, versionNumber, authorNam
       <div style="padding: 30px; background-color: #ffffff;">
         <p style="font-size: 16px; color: #374151;">Hello QA Team,</p>
         <p style="font-size: 16px; color: #374151;">A Quality Management System (QMS) document has been drafted and submitted for your official review and approval.</p>
-        
         <div style="background-color: #f3f4f6; padding: 15px; border-radius: 6px; margin: 20px 0;">
           <p style="margin: 5px 0;"><strong>Document Code:</strong> ${docCode}</p>
           <p style="margin: 5px 0;"><strong>Document Name:</strong> ${docName}</p>
           <p style="margin: 5px 0;"><strong>Version:</strong> v${versionNumber}</p>
           <p style="margin: 5px 0;"><strong>Authored By:</strong> ${authorName}</p>
         </div>
-        
         <p style="font-size: 14px; color: #6b7280;">Please log in to the Vilagio ERP to review the contents and apply your 21 CFR Part 11 digital signature to release this document.</p>
-        
         <div style="text-align: center; margin-top: 30px;">
           <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/qms/documents" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">View in Master Register</a>
         </div>
@@ -220,6 +217,7 @@ const notifyCAPAAssigned = async (capaCode, ncrCode, actionDescription, dueDate,
   `;
   await sendEmail([assignedToEmail], `ACTION REQUIRED: Assigned to ${capaCode}`, html);
 };
+
 /**
  * Triggered when a new Internal Audit is scheduled with invited participants
  */
@@ -249,13 +247,176 @@ const notifyAuditInvite = async (auditCode, auditType, auditDate, scope, leadAud
   await sendEmail(participantEmails, `Audit Invitation: ${auditCode} (${auditType})`, html);
 };
 
-// DON'T FORGET TO EXPORT THEM:
+// ============================================================================
+// QC LAB NOTIFICATIONS (Phase B — new)
+// ============================================================================
+
+/**
+ * Triggered when a Lab Analyst submits water quality test results for QA review.
+ * Called from: lab-service.js → submitLabTest()
+ * Recipients: all active users with role qa or admin
+ */
+const notifyLabQAPendingReview = async (testNumber, shift, analystName, testDate) => {
+  const qaEmails = await getEmailsByRole(['qa', 'admin']);
+
+  const formattedDate = new Date(testDate).toLocaleDateString('en-GB', {
+    weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
+  });
+  const shiftLabel = shift.charAt(0).toUpperCase() + shift.slice(1);
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+      <div style="background-color: #3b82f6; padding: 20px; text-align: center; color: white;">
+        <h2 style="margin: 0;">🧪 Action Required: Water Quality Test Review</h2>
+        <p style="margin: 6px 0 0; font-size: 13px; opacity: 0.85;">QC Laboratory — Vilagio Technologies Ltd.</p>
+      </div>
+      <div style="padding: 24px 30px; color: #334155;">
+        <p>Hello QA Team,</p>
+        <p>A water quality test has been recorded and submitted by <strong>${analystName}</strong>. Your review and electronic sign-off is required before a Certificate of Analysis can be issued and production can commence.</p>
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0;"><strong>Test Reference:</strong> ${testNumber}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Test Date:</strong> ${formattedDate}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Shift:</strong> ${shiftLabel}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Recorded By:</strong> ${analystName}</p>
+          <p style="margin: 0;"><strong>Parameters:</strong> pH · RO Conductivity · Ozone Residue · TDS · Dissolved O₂ · Turbidity · Microbial</p>
+        </div>
+        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px;">
+          <p style="margin: 0; color: #92400e; font-size: 13px;">
+            <strong>⚡ Production is on hold</strong> until a valid Certificate of Analysis is issued for this shift. Please complete your review promptly.
+          </p>
+        </div>
+        <div style="text-align: center; margin-top: 10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/lab" style="background-color: #3b82f6; color: white; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Review in QC Lab</a>
+        </div>
+      </div>
+      <div style="background-color: #f1f5f9; padding: 12px 30px; border-top: 1px solid #e2e8f0; text-align: center;">
+        <p style="color: #94a3b8; font-size: 11px; margin: 0;">Vilagio Technologies Ltd. · www.vilag.io · GMP Compliant QC Management</p>
+      </div>
+    </div>
+  `;
+
+  await sendEmail(qaEmails, `[QC Lab] Review Required: Water Quality Test ${testNumber}`, html);
+};
+
+/**
+ * Triggered when QA rejects a water quality test — re-test required.
+ * Called from: lab-service.js → qaReview() when action === 'reject'
+ * Recipients: QA team + admin (analyst is notified via the ERP dashboard)
+ */
+const notifyLabTestRejected = async (testNumber, analystName, qaName, rejectionReason) => {
+  const recipients = await getEmailsByRole(['qa', 'admin', 'manager']);
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+      <div style="background-color: #ef4444; padding: 20px; text-align: center; color: white;">
+        <h2 style="margin: 0;">❌ Water Quality Test Rejected — Re-test Required</h2>
+        <p style="margin: 6px 0 0; font-size: 13px; opacity: 0.85;">QC Laboratory — Vilagio Technologies Ltd.</p>
+      </div>
+      <div style="padding: 24px 30px; color: #334155;">
+        <p>Hello,</p>
+        <p>A water quality test has been reviewed and <strong>rejected</strong> by QA. No Certificate of Analysis has been issued. The Lab Analyst must perform a re-test before production can proceed.</p>
+        <div style="background-color: #fef2f2; border: 1px solid #fca5a5; padding: 15px; border-radius: 6px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0;"><strong>Test Reference:</strong> ${testNumber}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Recorded By:</strong> ${analystName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Rejected By:</strong> ${qaName}</p>
+          <p style="margin: 0; color: #b91c1c;"><strong>Rejection Reason:</strong> ${rejectionReason || 'See QC Lab system for details'}</p>
+        </div>
+        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px;">
+          <p style="margin: 0; color: #92400e; font-size: 13px;">
+            <strong>Next steps:</strong> The Lab Analyst (<strong>${analystName}</strong>) must perform a new test, record all 7 parameters, and resubmit for QA sign-off. <strong>Production must not commence</strong> until a valid Certificate of Analysis is on file for this shift.
+          </p>
+        </div>
+        <div style="text-align: center; margin-top: 10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/lab" style="background-color: #ef4444; color: white; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">View in QC Lab</a>
+        </div>
+      </div>
+      <div style="background-color: #f1f5f9; padding: 12px 30px; border-top: 1px solid #e2e8f0; text-align: center;">
+        <p style="color: #94a3b8; font-size: 11px; margin: 0;">Vilagio Technologies Ltd. · www.vilag.io · GMP Compliant QC Management</p>
+      </div>
+    </div>
+  `;
+
+  await sendEmail(recipients, `[QC Lab] REJECTED: Water Quality Test ${testNumber} — Re-test Required`, html);
+};
+
+/**
+ * Triggered when QA approves a water quality test and issues a Certificate of Analysis.
+ * Called from: lab-service.js → qaReview() when action === 'approve' or 'conditional'
+ * Recipients: QA team + admin + managers (production team can now proceed)
+ */
+const notifyLabCertificateIssued = async (testNumber, certNumber, status, qaName, analystName, deviationNote) => {
+  const recipients = await getEmailsByRole(['qa', 'admin', 'manager']);
+
+  const isConditional = status === 'conditional_pass';
+  const headerColor   = isConditional ? '#f59e0b' : '#10b981';
+  const statusLabel   = isConditional ? 'CONDITIONAL PASS' : 'APPROVED — PASS';
+  const emoji         = isConditional ? '⚠️' : '✅';
+
+  const conditionalBlock = isConditional && deviationNote ? `
+    <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px;">
+      <p style="margin: 0 0 4px; color: #92400e; font-weight: bold; font-size: 13px;">⚠️ Conditional Certificate — Deviation Note</p>
+      <p style="margin: 0; color: #78350f; font-size: 13px;">${deviationNote}</p>
+      <p style="margin: 8px 0 0; color: #92400e; font-size: 12px;">
+        The Production Manager must acknowledge this deviation before commencing the production run.
+      </p>
+    </div>
+  ` : '';
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+      <div style="background-color: ${headerColor}; padding: 20px; text-align: center; color: white;">
+        <h2 style="margin: 0;">${emoji} Certificate of Analysis Issued — ${statusLabel}</h2>
+        <p style="margin: 6px 0 0; font-size: 13px; opacity: 0.85;">QC Laboratory — Vilagio Technologies Ltd.</p>
+      </div>
+      <div style="padding: 24px 30px; color: #334155;">
+        <p>Hello,</p>
+        <p>A water quality Certificate of Analysis has been signed off by <strong>${qaName}</strong>. Production may now proceed for this shift.</p>
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 6px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0; font-size: 15px;"><strong>Certificate No.: ${certNumber}</strong></p>
+          <p style="margin: 0 0 8px 0;"><strong>Test Reference:</strong> ${testNumber}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Recorded By:</strong> ${analystName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>QA Sign-off By:</strong> ${qaName}</p>
+          <p style="margin: 0; color: ${isConditional ? '#d97706' : '#059669'};"><strong>Result:</strong> ${statusLabel}</p>
+        </div>
+        ${conditionalBlock}
+        <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-bottom: 20px;">
+          <p style="margin: 0; color: #1e40af; font-size: 13px;">
+            The CoA PDF can be downloaded from the <strong>QC Lab</strong> section of the Vilagio ERP. This certificate is valid for the production shift on today's date only.
+          </p>
+        </div>
+        <div style="text-align: center; margin-top: 10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/lab" style="background-color: ${headerColor}; color: white; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">View Certificate in QC Lab</a>
+        </div>
+      </div>
+      <div style="background-color: #f1f5f9; padding: 12px 30px; border-top: 1px solid #e2e8f0; text-align: center;">
+        <p style="color: #94a3b8; font-size: 11px; margin: 0;">Vilagio Technologies Ltd. · www.vilag.io · GMP Compliant QC Management</p>
+      </div>
+    </div>
+  `;
+
+  await sendEmail(
+    recipients,
+    `[QC Lab] Certificate Issued: ${certNumber} — ${statusLabel}`,
+    html
+  );
+};
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
 module.exports = {
+  // Production
   notifyQAPendingReview,
   notifyBatchRejected,
   notifyLowStock,
+  // QMS
   notifyQADocumentReview,
-  notifyNCRAssigned, 
+  notifyNCRAssigned,
   notifyCAPAAssigned,
-  notifyAuditInvite  
+  notifyAuditInvite,
+  // QC Lab (Phase B)
+  notifyLabQAPendingReview,
+  notifyLabTestRejected,
+  notifyLabCertificateIssued,
 };

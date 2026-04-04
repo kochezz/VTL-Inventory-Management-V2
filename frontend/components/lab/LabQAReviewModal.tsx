@@ -2,12 +2,21 @@
 
 // ============================================================================
 // LAB QA REVIEW MODAL — frontend/components/lab/LabQAReviewModal.tsx
-// Handles Stage 2 (Supervisor) and Stage 3 (Manager) QA review
-// Also used as read-only view for passed/failed tests
+// ============================================================================
+// WORKFLOW:
+//   Stage 1 — Analyst records + submits (digital sig) → status: submitted
+//   Stage 2 — QA reviews + signs off                 → status: pass / conditional_pass / rejected
+//
+// QA is the single release authority. No supervisor/manager split.
+// CoA PDF download available once status = pass or conditional_pass.
 // ============================================================================
 
 import { useState, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, AlertCircle, Key, FileCheck, Shield, User, Calendar, FlaskConical, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  X, CheckCircle2, XCircle, AlertCircle, Key, FileCheck,
+  Shield, User, Calendar, FlaskConical, ChevronDown, ChevronUp,
+  Download
+} from 'lucide-react';
 import { api, useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
 
@@ -30,8 +39,7 @@ interface LabTest {
   notes: string;
   analyst_name: string;
   analyst_employee_id: string;
-  supervisor_name: string | null;
-  manager_name: string | null;
+  qa_reviewer_name: string | null;
   batch_number: string | null;
   submitted_at: string | null;
   approved_at: string | null;
@@ -57,28 +65,31 @@ interface LabTest {
   }>;
 }
 
+const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
+  draft:            { label: 'Draft',            cls: 'text-gray-400 bg-gray-400/10 border-gray-400/30' },
+  submitted:        { label: 'Awaiting QA',      cls: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
+  pass:             { label: 'QA Approved',      cls: 'text-green-400 bg-green-400/10 border-green-400/30' },
+  conditional_pass: { label: 'Conditional Pass', cls: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
+  fail:             { label: 'Failed',           cls: 'text-red-400 bg-red-400/10 border-red-400/30' },
+  rejected:         { label: 'Rejected',         cls: 'text-red-400 bg-red-400/10 border-red-400/30' },
+};
+
 function StatusPill({ status }: { status: string }) {
-  const cfg: Record<string, { label: string; cls: string }> = {
-    pass:             { label: 'Pass',              cls: 'text-green-400 bg-green-400/10 border-green-400/30' },
-    fail:             { label: 'Fail',              cls: 'text-red-400 bg-red-400/10 border-red-400/30' },
-    warning:          { label: 'Warning',           cls: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
-    conditional_pass: { label: 'Conditional Pass',  cls: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
-    pending:          { label: 'Pending',           cls: 'text-gray-400 bg-gray-400/10 border-gray-400/30' },
-    submitted:        { label: 'Submitted',         cls: 'text-blue-400 bg-blue-400/10 border-blue-400/30' },
-    manager_review:   { label: 'Manager Review',    cls: 'text-purple-400 bg-purple-400/10 border-purple-400/30' },
-    rejected:         { label: 'Rejected',          cls: 'text-red-400 bg-red-400/10 border-red-400/30' },
-  };
-  const c = cfg[status] ?? { label: status, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/30' };
+  const c = STATUS_CONFIG[status] ?? { label: status, cls: 'text-gray-400 bg-gray-400/10 border-gray-400/30' };
   return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${c.cls}`}>{c.label}</span>;
 }
 
 function ParamRow({ param }: { param: LabTest['parameters'][0] }) {
   const displayVal = param.reading_value !== null
-    ? `${param.reading_value} ${param.unit}`
-    : param.reading_text === '0' ? 'Absent' : `Present (${param.reading_text} CFU/mL)`;
+    ? `${parseFloat(String(param.reading_value)).toFixed(3).replace(/\.?0+$/, '')} ${param.unit}`
+    : param.reading_text === '0' ? 'Absent'
+    : `Present (${param.reading_text} CFU/mL)`;
 
   const specText = param.spec_min !== null || param.spec_max !== null
-    ? [param.spec_min !== null ? `≥${param.spec_min}` : '', param.spec_max !== null ? `≤${param.spec_max}` : ''].filter(Boolean).join(' – ') + ` ${param.unit}`
+    ? [
+        param.spec_min !== null ? `≥${param.spec_min}` : '',
+        param.spec_max !== null ? `≤${param.spec_max}` : '',
+      ].filter(Boolean).join(' – ') + ` ${param.unit}`
     : '0 CFU/mL (Absent)';
 
   const icon =
@@ -89,34 +100,32 @@ function ParamRow({ param }: { param: LabTest['parameters'][0] }) {
 
   return (
     <tr className={`border-b border-dark-700 ${param.status === 'fail' ? 'bg-red-500/5' : param.status === 'warning' ? 'bg-yellow-500/5' : ''}`}>
-      <td className="px-4 py-3 text-sm text-white">{param.parameter_name}</td>
-      <td className="px-4 py-3 text-sm font-mono text-gray-300 text-right">{displayVal}</td>
-      <td className="px-4 py-3 text-xs text-gray-500 text-center">{specText}</td>
-      <td className="px-4 py-3 text-center">{icon}</td>
-      <td className="px-4 py-3 text-xs text-gray-400">{param.notes ?? '—'}</td>
+      <td className="px-4 py-2.5 text-sm text-white">{param.parameter_name}</td>
+      <td className="px-4 py-2.5 text-sm font-mono text-gray-300 text-right">{displayVal}</td>
+      <td className="px-4 py-2.5 text-xs text-gray-500 text-center">{specText}</td>
+      <td className="px-4 py-2.5 text-center">{icon}</td>
+      <td className="px-4 py-2.5 text-xs text-gray-400">{param.notes ?? '—'}</td>
     </tr>
   );
 }
 
 export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }: LabQAReviewModalProps) {
   const { token, user } = useAuth();
-  const [test, setTest] = useState<LabTest | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [test, setTest]           = useState<LabTest | null>(null);
+  const [loading, setLoading]     = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [action, setAction] = useState<'approve' | 'reject' | 'conditional' | null>(null);
-  const [comments, setComments] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError]         = useState('');
+  const [action, setAction]       = useState<'approve' | 'reject' | 'conditional' | null>(null);
+  const [comments, setComments]   = useState('');
   const [deviationNote, setDeviationNote] = useState('');
   const [signature, setSignature] = useState('');
   const [showParams, setShowParams] = useState(true);
 
   useEffect(() => {
     if (!isOpen || !testId) return;
-    setError('');
-    setAction(null);
-    setComments('');
-    setDeviationNote('');
-    setSignature('');
+    setError(''); setAction(null); setComments('');
+    setDeviationNote(''); setSignature('');
     setLoading(true);
 
     api.get(`/lab/tests/${testId}`)
@@ -139,47 +148,69 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
     }
   };
 
-  const determineUserStage = () => {
-    if (!test) return null;
-    const role = user?.role;
-    if (test.overall_status === 'submitted' && ['admin', 'manager', 'qa'].includes(role)) return 2;
-    if (test.overall_status === 'manager_review' && ['admin', 'manager'].includes(role)) return 3;
-    return null;
-  };
+  // QA can act if test is 'submitted' and user has QA/admin/manager role
+  const canAct = test?.overall_status === 'submitted' &&
+    ['admin', 'manager', 'qa'].includes(user?.role || '');
 
-  const handleAction = async () => {
-    if (!action || !signature.trim()) { setError('Please select an action and enter your digital signature.'); return; }
-    if (action === 'conditional' && !deviationNote.trim()) { setError('A deviation note is mandatory for a conditional action.'); return; }
+  const isCertified = ['pass', 'conditional_pass'].includes(test?.overall_status || '');
+
+  const handleQAAction = async () => {
+    if (!action || !signature.trim()) {
+      setError('Please select an action and enter your digital signature.');
+      return;
+    }
+    if (action === 'conditional' && !deviationNote.trim()) {
+      setError('A deviation note is mandatory for a conditional approval.');
+      return;
+    }
+    if (action === 'reject' && !comments.trim()) {
+      setError('A rejection reason is required.');
+      return;
+    }
 
     setError('');
     setSubmitting(true);
-
     const verified = await verifySignature();
     if (!verified) { setSubmitting(false); return; }
 
     try {
-      const stage = determineUserStage();
-      const endpoint = stage === 2 ? `/lab/tests/${testId}/supervisor-review` : `/lab/tests/${testId}/manager-signoff`;
-
-      await api.post(endpoint, {
+      await api.post(`/lab/tests/${testId}/qa-review`, {
         action,
-        comments: comments || null,
+        comments:       comments || null,
         deviation_note: deviationNote || null,
         signature_verified: true,
       });
-
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to submit review');
+      setError(err.response?.data?.error || 'Failed to submit QA review');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const userStage = test ? determineUserStage() : null;
-  const isReadOnly = !userStage;
-  const canAct = !!userStage;
+  const downloadCoA = async () => {
+    if (!test) return;
+    setDownloading(true);
+    try {
+      const response = await axios.get(
+        `${process.env.NEXT_PUBLIC_API_URL}/lab/tests/${testId}/certificate/pdf`,
+        { headers: { Authorization: `Bearer ${token}` }, responseType: 'blob' }
+      );
+      const url  = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href  = url;
+      link.setAttribute('download', `CoA_${test.certificate_number || test.test_number}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError('Failed to download certificate. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -196,22 +227,27 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
               </div>
               <div>
                 <h2 className="text-lg font-bold text-white">
-                  {loading ? 'Loading...' : test?.test_number ?? 'Lab Test'}
+                  {loading ? 'Loading...' : (test?.test_number ?? 'Lab Test')}
                 </h2>
                 <div className="flex items-center gap-2 mt-1">
                   {test && <StatusPill status={test.overall_status} />}
-                  {userStage === 2 && <span className="text-xs text-yellow-400 font-medium">· Your review required (Stage 2)</span>}
-                  {userStage === 3 && <span className="text-xs text-purple-400 font-medium">· Your sign-off required (Stage 3)</span>}
+                  {canAct && (
+                    <span className="text-xs text-yellow-400 font-medium">· QA review required</span>
+                  )}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {test?.certificate_number && (
+              {/* CoA Download — only when certified */}
+              {isCertified && (
                 <button
-                  onClick={() => window.open(`/api/lab/tests/${testId}/certificate`, '_blank')}
-                  className="px-3 py-1.5 bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                  onClick={downloadCoA}
+                  disabled={downloading}
+                  className="px-3 py-1.5 bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 rounded-lg text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
                 >
-                  <FileCheck className="w-4 h-4" /> Certificate
+                  {downloading
+                    ? <><div className="w-3.5 h-3.5 border-2 border-green-400 border-t-transparent rounded-full animate-spin" /> Generating...</>
+                    : <><Download className="w-3.5 h-3.5" /> Download CoA</>}
                 </button>
               )}
               <button onClick={onClose} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
@@ -236,10 +272,29 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
 
           {test && (
             <>
-              {/* Meta */}
+              {/* Certificate banner — shown when certified */}
+              {isCertified && test.certificate_number && (
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 flex items-center gap-3">
+                  <FileCheck className="w-5 h-5 text-green-400 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-green-400 font-semibold text-sm">Certificate Issued</p>
+                    <p className="text-green-300 text-xs font-mono">{test.certificate_number}</p>
+                  </div>
+                  <button
+                    onClick={downloadCoA}
+                    disabled={downloading}
+                    className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    {downloading ? 'Generating...' : 'Download CoA PDF'}
+                  </button>
+                </div>
+              )}
+
+              {/* Meta grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                 {[
-                  { icon: Calendar, label: 'Test Date', value: new Date(test.test_date).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) },
+                  { icon: Calendar, label: 'Test Date', value: new Date(test.test_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) },
                   { icon: User,     label: 'Shift',     value: <span className="capitalize">{test.shift}</span> },
                   { icon: User,     label: 'Analyst',   value: test.analyst_name },
                   { icon: Shield,   label: 'RO System', value: test.ro_system_reference || '—' },
@@ -253,33 +308,30 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
 
               {/* Overall result banner */}
               <div className={`rounded-lg p-4 border flex items-center gap-3 ${
-                test.overall_status === 'pass' || test.overall_status === 'conditional_pass'
-                  ? 'bg-green-500/10 border-green-500/30'
-                  : test.overall_status === 'fail' || test.overall_status === 'rejected'
-                  ? 'bg-red-500/10 border-red-500/30'
-                  : 'bg-yellow-500/10 border-yellow-500/30'
+                isCertified ? 'bg-green-500/10 border-green-500/30'
+                : test.overall_status === 'rejected' ? 'bg-red-500/10 border-red-500/30'
+                : test.overall_status === 'submitted' ? 'bg-yellow-500/10 border-yellow-500/30'
+                : 'bg-dark-700 border-dark-600'
               }`}>
-                {test.parameters.filter(p => p.status === 'fail').length === 0
+                {isCertified
                   ? <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />
-                  : <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-                }
+                  : test.overall_status === 'submitted'
+                  ? <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
+                  : <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />}
                 <div>
-                  <p className="font-medium text-white">
-                    {test.parameters.filter(p => p.status === 'pass').length} / {test.parameters.length} parameters passed
+                  <p className="font-medium text-white text-sm">
+                    {test.parameters.filter(p => p.status === 'pass').length} / {test.parameters.length} parameters pass specification
                   </p>
                   <p className="text-xs text-gray-400">
-                    {test.parameters.filter(p => p.status === 'fail').length > 0
-                      ? `${test.parameters.filter(p => p.status === 'fail').length} failed · `
-                      : ''}
-                    {test.parameters.filter(p => p.status === 'warning').length > 0
-                      ? `${test.parameters.filter(p => p.status === 'warning').length} warnings`
-                      : 'No warnings'}
+                    {test.parameters.filter(p => p.status === 'fail').length > 0 && `${test.parameters.filter(p => p.status === 'fail').length} failed · `}
+                    {test.parameters.filter(p => p.status === 'warning').length > 0 && `${test.parameters.filter(p => p.status === 'warning').length} near limit`}
+                    {test.parameters.every(p => p.status === 'pass') && 'All within specification'}
                   </p>
                 </div>
-                {test.certificate_number && (
+                {test.qa_reviewer_name && (
                   <div className="ml-auto text-right">
-                    <p className="text-xs text-gray-400">Certificate</p>
-                    <p className="text-sm font-mono text-green-400">{test.certificate_number}</p>
+                    <p className="text-xs text-gray-400">QA Reviewed by</p>
+                    <p className="text-sm text-white">{test.qa_reviewer_name}</p>
                   </div>
                 )}
               </div>
@@ -298,11 +350,9 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-t border-b border-dark-700 bg-dark-800">
-                          <th className="px-4 py-2 text-left text-gray-400 font-medium">Parameter</th>
-                          <th className="px-4 py-2 text-right text-gray-400 font-medium">Reading</th>
-                          <th className="px-4 py-2 text-center text-gray-400 font-medium">Spec</th>
-                          <th className="px-4 py-2 text-center text-gray-400 font-medium">Result</th>
-                          <th className="px-4 py-2 text-left text-gray-400 font-medium">Note</th>
+                          {['Parameter', 'Reading', 'Spec Limit', 'Result', 'Note'].map(h => (
+                            <th key={h} className="px-4 py-2 text-left text-gray-400 font-medium text-xs">{h}</th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody>
@@ -313,27 +363,34 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
                 )}
               </div>
 
-              {/* Approval trail */}
+              {/* Review trail */}
               {test.approvals.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-semibold text-gray-300">Review Trail</h3>
                   {test.approvals.map(approval => (
-                    <div key={approval.stage} className="bg-dark-900 rounded-lg p-3 border border-dark-700 flex items-start gap-3">
+                    <div key={`${approval.stage}-${approval.actioned_at}`} className="bg-dark-900 rounded-lg p-3 border border-dark-700 flex items-start gap-3">
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ${
                         approval.action === 'approve' || approval.action === 'submit' ? 'bg-green-500/20 text-green-400' :
-                        approval.action === 'reject' ? 'bg-red-500/20 text-red-400' :
+                        approval.action === 'reject'  ? 'bg-red-500/20 text-red-400' :
                         'bg-yellow-500/20 text-yellow-400'
                       }`}>{approval.stage}</div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm text-white">{approval.actioned_by_name} <span className="text-gray-500">({approval.actioned_by_employee_id})</span></p>
-                          <p className="text-xs text-gray-500">{new Date(approval.actioned_at).toLocaleString('en-GB')}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm text-white">
+                            {approval.actioned_by_name}
+                            <span className="text-gray-500 text-xs ml-1">({approval.actioned_by_employee_id})</span>
+                          </p>
+                          <p className="text-xs text-gray-500 flex-shrink-0">
+                            {new Date(approval.actioned_at).toLocaleString('en-GB')}
+                          </p>
                         </div>
-                        <p className="text-xs text-gray-400 capitalize mt-0.5">{approval.action}</p>
+                        <p className="text-xs text-gray-400 capitalize mt-0.5">
+                          {approval.stage === 1 ? 'Analyst submission' : 'QA review'} — {approval.action}
+                        </p>
                         {approval.comments && <p className="text-xs text-gray-300 mt-1">{approval.comments}</p>}
                         {approval.deviation_note && (
                           <div className="mt-1 px-2 py-1 bg-yellow-500/10 rounded text-xs text-yellow-300">
-                            Deviation: {approval.deviation_note}
+                            Deviation note: {approval.deviation_note}
                           </div>
                         )}
                       </div>
@@ -342,86 +399,93 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
                 </div>
               )}
 
-              {/* QA Action Block — only shown if this user needs to act */}
+              {/* QA Action Block */}
               {canAct && (
                 <div className="space-y-4 pt-2 border-t border-dark-700">
-                  <h3 className="text-sm font-semibold text-gray-300">
-                    {userStage === 2 ? 'Stage 2 — Supervisor Review' : 'Stage 3 — Manager Sign-off & Certificate'}
-                  </h3>
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-300">QA Review & Sign-off</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      As QA, your sign-off is the final authority. Approving will issue a numbered Certificate of Analysis.
+                    </p>
+                  </div>
 
-                  {/* Action selection */}
                   {!action ? (
                     <div className="flex gap-3">
-                      <button onClick={() => setAction('approve')} className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2">
-                        <CheckCircle2 className="w-4 h-4" /> Approve
+                      <button
+                        onClick={() => setAction('approve')}
+                        className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle2 className="w-4 h-4" /> Approve & Issue CoA
                       </button>
                       {test.parameters.some(p => p.status === 'fail' || p.status === 'warning') && (
-                        <button onClick={() => setAction('conditional')} className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2">
-                          <AlertCircle className="w-4 h-4" /> Conditional
+                        <button
+                          onClick={() => setAction('conditional')}
+                          className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                        >
+                          <AlertCircle className="w-4 h-4" /> Conditional Pass
                         </button>
                       )}
-                      <button onClick={() => setAction('reject')} className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => setAction('reject')}
+                        className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                      >
                         <XCircle className="w-4 h-4" /> Reject
                       </button>
                     </div>
                   ) : (
                     <div className="space-y-3">
+                      {/* Selected action indicator */}
                       <div className={`px-3 py-2 rounded-lg text-sm font-medium inline-flex items-center gap-2 ${
-                        action === 'approve' ? 'bg-green-500/10 text-green-400' :
-                        action === 'reject'  ? 'bg-red-500/10 text-red-400' :
+                        action === 'approve'     ? 'bg-green-500/10 text-green-400' :
+                        action === 'reject'      ? 'bg-red-500/10 text-red-400' :
                         'bg-yellow-500/10 text-yellow-400'
                       }`}>
                         {action === 'approve' ? <CheckCircle2 className="w-4 h-4" /> : action === 'reject' ? <XCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                        Action: <span className="capitalize">{action}</span>
+                        <span className="capitalize">{action === 'approve' ? 'Approve & Issue Certificate of Analysis' : action === 'reject' ? 'Reject — Re-test required' : 'Conditional Pass'}</span>
                         <button onClick={() => { setAction(null); setComments(''); setDeviationNote(''); }} className="ml-2 text-xs opacity-60 hover:opacity-100">change</button>
                       </div>
 
+                      {/* Comments / rejection reason */}
                       <div>
-                        <label className="block text-xs font-medium text-gray-400 mb-1">Comments</label>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">
+                          {action === 'reject' ? 'Rejection Reason *' : 'QA Comments (optional)'}
+                        </label>
                         <textarea
                           value={comments}
                           onChange={e => setComments(e.target.value)}
                           rows={2}
-                          placeholder="Optional review comments..."
-                          className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-primary-500 resize-none"
+                          placeholder={action === 'reject' ? 'Detail why this test is rejected and what re-test is required...' : 'Optional QA review comments...'}
+                          className={`w-full px-3 py-2 border rounded-lg text-white text-sm focus:outline-none resize-none ${
+                            action === 'reject'
+                              ? 'bg-red-500/10 border-red-500/30 focus:border-red-500'
+                              : 'bg-dark-900 border-dark-600 focus:border-primary-500'
+                          }`}
                         />
                       </div>
 
+                      {/* Deviation note — mandatory for conditional */}
                       {action === 'conditional' && (
                         <div>
-                          <label className="block text-xs font-medium text-yellow-400 mb-1">Deviation Note * (mandatory for conditional)</label>
+                          <label className="block text-xs font-medium text-yellow-400 mb-1">Deviation Note * (mandatory)</label>
                           <textarea
                             value={deviationNote}
                             onChange={e => setDeviationNote(e.target.value)}
                             rows={2}
-                            placeholder="Document the justification for conditional approval..."
+                            placeholder="Document the justification for issuing a conditional certificate despite out-of-spec parameters..."
                             className="w-full px-3 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-white text-sm focus:outline-none focus:border-yellow-500 resize-none"
                           />
                         </div>
                       )}
 
-                      {action === 'reject' && (
-                        <div>
-                          <label className="block text-xs font-medium text-red-400 mb-1">Rejection Reason *</label>
-                          <textarea
-                            value={comments}
-                            onChange={e => setComments(e.target.value)}
-                            rows={2}
-                            placeholder="Detail why this test is being rejected..."
-                            className="w-full px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-white text-sm focus:outline-none focus:border-red-500 resize-none"
-                          />
-                        </div>
-                      )}
-
-                      {/* Digital Signature */}
+                      {/* Digital signature */}
                       <div className="bg-dark-900 rounded-lg p-4 border border-dark-700">
                         <h4 className="text-xs font-semibold text-white mb-2 flex items-center gap-2">
                           <Key className="w-3.5 h-3.5 text-primary-400" />
-                          {userStage === 2 ? 'QA Supervisor' : 'QA Manager'} Electronic Signature
+                          QA Electronic Signature — 21 CFR Part 11
                         </h4>
                         <p className="text-xs text-gray-400 mb-3">
-                          Enter your login password to electronically sign this {action} per 21 CFR Part 11.
-                          {userStage === 3 && action !== 'reject' && ' A water quality certificate will be generated upon confirmation.'}
+                          Enter your login password to electronically sign this QA review.
+                          {action !== 'reject' && ' A numbered Certificate of Analysis will be generated and issued.'}
                         </p>
                         <input
                           type="password"
@@ -429,6 +493,7 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
                           onChange={e => { setSignature(e.target.value); setError(''); }}
                           placeholder="Enter your login password"
                           className="w-full px-4 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono tracking-widest text-sm"
+                          onKeyDown={e => { if (e.key === 'Enter' && signature && !submitting) handleQAAction(); }}
                         />
                       </div>
                     </div>
@@ -442,30 +507,49 @@ export default function LabQAReviewModal({ testId, isOpen, onClose, onSuccess }:
         {/* Footer */}
         {canAct && action && (
           <div className="p-6 border-t border-dark-700 flex-shrink-0 flex gap-3">
-            <button onClick={() => { setAction(null); setSignature(''); setError(''); }} disabled={submitting} className="flex-1 py-2.5 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors">
+            <button
+              onClick={() => { setAction(null); setSignature(''); setError(''); }}
+              disabled={submitting}
+              className="flex-1 py-2.5 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors"
+            >
               Cancel
             </button>
             <button
-              onClick={handleAction}
-              disabled={submitting || !signature.trim() || (action === 'conditional' && !deviationNote.trim()) || (action === 'reject' && !comments.trim())}
+              onClick={handleQAAction}
+              disabled={
+                submitting || !signature.trim() ||
+                (action === 'conditional' && !deviationNote.trim()) ||
+                (action === 'reject' && !comments.trim())
+              }
               className={`flex-1 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-white ${
-                action === 'approve' ? 'bg-green-500 hover:bg-green-600' :
-                action === 'reject'  ? 'bg-red-500 hover:bg-red-600' :
+                action === 'approve'     ? 'bg-green-500 hover:bg-green-600' :
+                action === 'reject'      ? 'bg-red-500 hover:bg-red-600' :
                 'bg-yellow-500 hover:bg-yellow-600'
               }`}
             >
-              {submitting ? (
-                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Verifying...</>
-              ) : (
-                <>{action === 'approve' ? <CheckCircle2 className="w-4 h-4" /> : action === 'reject' ? <XCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                Sign & {action === 'approve' ? 'Approve' : action === 'reject' ? 'Reject' : 'Conditionally Approve'}</>
-              )}
+              {submitting
+                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Verifying...</>
+                : <>
+                    {action === 'approve' ? <CheckCircle2 className="w-4 h-4" /> : action === 'reject' ? <XCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                    Sign & {action === 'approve' ? 'Issue Certificate' : action === 'reject' ? 'Reject Test' : 'Conditionally Approve'}
+                  </>}
             </button>
           </div>
         )}
+
         {!canAct && test && (
-          <div className="p-4 border-t border-dark-700 flex-shrink-0">
-            <button onClick={onClose} className="w-full py-2.5 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors">
+          <div className="p-4 border-t border-dark-700 flex-shrink-0 flex gap-3">
+            {isCertified && (
+              <button
+                onClick={downloadCoA}
+                disabled={downloading}
+                className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                {downloading ? 'Generating PDF...' : `Download Certificate of Analysis`}
+              </button>
+            )}
+            <button onClick={onClose} className="flex-1 py-2.5 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium transition-colors">
               Close
             </button>
           </div>

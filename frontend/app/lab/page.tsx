@@ -37,8 +37,8 @@ interface LabTest {
 
 interface LabStats {
   tests_today: number;
-  pending_supervisor: number;
-  pending_manager: number;
+  pending_qa_review: number;
+  pending_qa_review: number;
   valid_certs_today: number;
   failures_this_week: number;
   rejected_this_week: number;
@@ -147,8 +147,8 @@ export default function LabPage() {
             {[
               { label: 'Tests Today',       value: stats.tests_today,         color: 'text-white' },
               { label: 'Valid Certs Today', value: stats.valid_certs_today,   color: 'text-green-400' },
-              { label: 'Pending Supervisor',value: stats.pending_supervisor,  color: 'text-yellow-400' },
-              { label: 'Pending Manager',   value: stats.pending_manager,     color: 'text-blue-400' },
+              { label: 'Awaiting QA Review',value: stats.pending_qa_review,  color: 'text-yellow-400' },
+              { label: 'Drafts In Progress',value: stats.drafts_in_progress,  color: 'text-blue-400' },
               { label: 'Failures (7d)',     value: stats.failures_this_week,  color: 'text-red-400' },
               { label: 'Rejected (7d)',     value: stats.rejected_this_week,  color: 'text-red-400' },
             ].map(s => (
@@ -161,12 +161,12 @@ export default function LabPage() {
         )}
 
         {/* Pending Actions Banner */}
-        {stats && (stats.pending_supervisor > 0 || stats.pending_manager > 0) && (
+        {stats && (stats.pending_qa_review > 0 || stats.pending_qa_review > 0) && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 flex items-center gap-3">
             <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
             <p className="text-yellow-300 text-sm">
-              {stats.pending_supervisor > 0 && `${stats.pending_supervisor} test(s) awaiting Supervisor review. `}
-              {stats.pending_manager > 0 && `${stats.pending_manager} test(s) awaiting Manager sign-off.`}
+              {stats.pending_qa_review > 0 && `${stats.pending_qa_review} test(s) awaiting Supervisor review. `}
+              {stats.pending_qa_review > 0 && `${stats.pending_qa_review} test(s) awaiting Manager sign-off.`}
             </p>
           </div>
         )}
@@ -177,8 +177,7 @@ export default function LabPage() {
             {[
               { value: '', label: 'All Tests' },
               { value: 'draft', label: 'Draft' },
-              { value: 'submitted', label: 'Awaiting Supervisor' },
-              { value: 'manager_review', label: 'Awaiting Manager' },
+              { value: 'submitted', label: 'Awaiting QA Review' },
               { value: 'pass', label: 'Passed' },
               { value: 'conditional_pass', label: 'Conditional' },
               { value: 'fail', label: 'Failed' },

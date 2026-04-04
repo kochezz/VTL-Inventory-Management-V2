@@ -4,16 +4,15 @@
 // ============================================================================
 
 const express = require('express');
-const router = express.Router();
+const router  = express.Router();
 const { authenticate, authorize } = require('../middleware/auth-middleware');
-const labService = require('../services/lab-service');
+const labService  = require('../services/lab-service');
+const labPdfService = require('../services/lab-pdf-service');
 
-// Apply JWT auth to all lab routes
 router.use(authenticate);
 
-// ── Parameter Specs ──────────────────────────────────────────────────────────
+// ── Parameter Specs ───────────────────────────────────────────────────────────
 
-// GET /api/lab/specs  — all authenticated users
 router.get('/specs', async (req, res) => {
   try {
     const specs = await labService.getParameterSpecs();
@@ -24,13 +23,10 @@ router.get('/specs', async (req, res) => {
   }
 });
 
-// PUT /api/lab/specs/:code  — managers only
 router.put('/specs/:code', authorize(['admin', 'manager']), async (req, res) => {
   try {
     const specs = await labService.updateParameterSpec(
-      req.params.code,
-      req.body,
-      req.user.user_id
+      req.params.code, req.body, req.user.user_id
     );
     res.json({ specs, message: 'Specification updated successfully' });
   } catch (err) {
@@ -41,7 +37,6 @@ router.put('/specs/:code', authorize(['admin', 'manager']), async (req, res) => 
 
 // ── Dashboard Stats ───────────────────────────────────────────────────────────
 
-// GET /api/lab/stats
 router.get('/stats', async (req, res) => {
   try {
     const stats = await labService.getLabDashboardStats();
@@ -53,9 +48,8 @@ router.get('/stats', async (req, res) => {
 });
 
 // ── Today's Valid Certificates — Gate 1 integration ──────────────────────────
-// NOTE: defined BEFORE /tests/:id to avoid route conflict
+// NOTE: Must be before /tests/:id to avoid route conflict
 
-// GET /api/lab/tests/today/valid
 router.get('/tests/today/valid', async (req, res) => {
   try {
     const certificates = await labService.getTodaysValidCertificates();
@@ -68,7 +62,6 @@ router.get('/tests/today/valid', async (req, res) => {
 
 // ── Test CRUD ─────────────────────────────────────────────────────────────────
 
-// GET /api/lab/tests
 router.get('/tests', async (req, res) => {
   try {
     const tests = await labService.listLabTests(req.query);
@@ -79,7 +72,6 @@ router.get('/tests', async (req, res) => {
   }
 });
 
-// POST /api/lab/tests
 router.post('/tests', authorize(['admin', 'manager', 'qa', 'staff', 'operator']), async (req, res) => {
   try {
     if (!req.body.parameters || req.body.parameters.length === 0) {
@@ -93,7 +85,6 @@ router.post('/tests', authorize(['admin', 'manager', 'qa', 'staff', 'operator'])
   }
 });
 
-// GET /api/lab/tests/:id
 router.get('/tests/:id', async (req, res) => {
   try {
     const test = await labService.getLabTestById(req.params.id);
@@ -105,9 +96,9 @@ router.get('/tests/:id', async (req, res) => {
   }
 });
 
-// ── Workflow Actions ──────────────────────────────────────────────────────────
+// ── Stage 1: Analyst submits results ─────────────────────────────────────────
+// Any authenticated lab user can submit their own test
 
-// POST /api/lab/tests/:id/submit  — Stage 1: Analyst submits
 router.post('/tests/:id/submit', authorize(['admin', 'manager', 'qa', 'staff', 'operator']), async (req, res) => {
   try {
     const { signature_verified } = req.body;
@@ -115,44 +106,67 @@ router.post('/tests/:id/submit', authorize(['admin', 'manager', 'qa', 'staff', '
       return res.status(400).json({ error: 'Digital signature verification is required' });
     }
     const test = await labService.submitLabTest(req.params.id, req.user.user_id, true);
-    res.json({ test, message: 'Test submitted for QA Supervisor review' });
+    res.json({ test, message: 'Results submitted. Awaiting QA review.' });
   } catch (err) {
     console.error('POST /lab/tests/:id/submit error:', err);
     res.status(400).json({ error: err.message || 'Failed to submit lab test' });
   }
 });
 
-// POST /api/lab/tests/:id/supervisor-review  — Stage 2
-router.post('/tests/:id/supervisor-review', authorize(['admin', 'manager', 'qa']), async (req, res) => {
+// ── Stage 2: QA Review & Sign-off ────────────────────────────────────────────
+// Only QA, admin, and managers can release results
+// This is the single authority gate — no supervisor/manager split
+
+router.post('/tests/:id/qa-review', authorize(['admin', 'manager', 'qa']), async (req, res) => {
   try {
     const { action, comments, deviation_note, signature_verified } = req.body;
-    if (!action) return res.status(400).json({ error: 'Action is required: approve / reject / conditional' });
-    if (!signature_verified) return res.status(400).json({ error: 'Digital signature verification is required' });
-
-    const test = await labService.supervisorReview(
-      req.params.id, req.user.user_id, action, comments, deviation_note, true
+    if (!action) {
+      return res.status(400).json({ error: 'Action is required: approve / reject / conditional' });
+    }
+    if (!signature_verified) {
+      return res.status(400).json({ error: 'Digital signature verification is required' });
+    }
+    const test = await labService.qaReview(
+      req.params.id, req.user.user_id,
+      action, comments, deviation_note, true
     );
-    res.json({ test, message: `Test ${action}d by QA Supervisor` });
+    const msg = action === 'reject'
+      ? 'Test rejected. Re-test required.'
+      : `Certificate ${test.certificate_number} issued successfully.`;
+    res.json({ test, message: msg });
   } catch (err) {
-    console.error('POST /lab/tests/:id/supervisor-review error:', err);
-    res.status(400).json({ error: err.message || 'Failed to process supervisor review' });
+    console.error('POST /lab/tests/:id/qa-review error:', err);
+    res.status(400).json({ error: err.message || 'Failed to process QA review' });
   }
 });
 
-// POST /api/lab/tests/:id/manager-signoff  — Stage 3
-router.post('/tests/:id/manager-signoff', authorize(['admin', 'manager']), async (req, res) => {
-  try {
-    const { action, comments, deviation_note, signature_verified } = req.body;
-    if (!action) return res.status(400).json({ error: 'Action is required: approve / reject / conditional' });
-    if (!signature_verified) return res.status(400).json({ error: 'Digital signature verification is required' });
+// ── CoA PDF Generation ────────────────────────────────────────────────────────
+// Only available after QA has approved (status: pass or conditional_pass)
 
-    const test = await labService.managerSignoff(
-      req.params.id, req.user.user_id, action, comments, deviation_note, true
+router.get('/tests/:id/certificate/pdf', async (req, res) => {
+  try {
+    const test = await labService.getLabTestById(req.params.id);
+    if (!test) {
+      return res.status(404).json({ error: 'Lab test not found' });
+    }
+    if (!['pass', 'conditional_pass'].includes(test.overall_status)) {
+      return res.status(400).json({
+        error: 'Certificate can only be generated for QA-approved tests'
+      });
+    }
+
+    const logoPath = require('path').join(__dirname, '../../public/logo-black.png');
+    const pdfBuffer = await labPdfService.generateCoAPDF(test, logoPath);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="CoA_${test.certificate_number || test.test_number}.pdf"`
     );
-    res.json({ test, message: `Certificate ${action === 'reject' ? 'rejected' : 'issued'} by QA Manager` });
+    res.send(pdfBuffer);
   } catch (err) {
-    console.error('POST /lab/tests/:id/manager-signoff error:', err);
-    res.status(400).json({ error: err.message || 'Failed to process manager sign-off' });
+    console.error('GET /lab/tests/:id/certificate/pdf error:', err);
+    res.status(500).json({ error: 'Failed to generate certificate PDF' });
   }
 });
 
