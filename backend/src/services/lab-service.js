@@ -146,12 +146,13 @@ async function getLabTestById(testId) {
       lwt.*,
       analyst.full_name     AS analyst_name,
       analyst.employee_id   AS analyst_employee_id,
-      qa.full_name          AS qa_reviewer_name,
-      qa.employee_id        AS qa_reviewer_employee_id,
-      pb.batch_number
+      pb.batch_number,
+      -- qa_reviewer_id may not exist if db_workflow_fix.sql hasn't been run yet
+      -- We resolve it separately to avoid crashing if the column is missing
+      NULL::text            AS qa_reviewer_name,
+      NULL::text            AS qa_reviewer_employee_id
     FROM lab_water_tests lwt
     JOIN  users analyst      ON lwt.analyst_id       = analyst.user_id
-    LEFT JOIN users qa       ON lwt.qa_reviewer_id   = qa.user_id
     LEFT JOIN production_batches pb ON lwt.batch_id  = pb.batch_id
     WHERE lwt.test_id = $1
   `, [testId]);
@@ -178,8 +179,29 @@ async function getLabTestById(testId) {
     ORDER BY lqa.stage, lqa.actioned_at
   `, [testId]);
 
+  const testRow = testResult.rows[0];
+
+  // Resolve qa_reviewer_name from qa_reviewer_id if the column exists
+  // This avoids crashing if db_workflow_fix.sql hasn't been run on this environment
+  if (testRow.qa_reviewer_id) {
+    try {
+      const qaUser = await query(
+        'SELECT full_name, employee_id FROM users WHERE user_id = $1',
+        [testRow.qa_reviewer_id]
+      );
+      if (qaUser.rows.length > 0) {
+        testRow.qa_reviewer_name = qaUser.rows[0].full_name;
+        testRow.qa_reviewer_employee_id = qaUser.rows[0].employee_id;
+      }
+    } catch (e) {
+      // Column doesn't exist yet — graceful fallback
+      testRow.qa_reviewer_name = null;
+      testRow.qa_reviewer_employee_id = null;
+    }
+  }
+
   return {
-    ...testResult.rows[0],
+    ...testRow,
     parameters: paramsResult.rows,
     approvals:  approvalsResult.rows
   };
@@ -210,7 +232,6 @@ async function listLabTests(filters = {}) {
       lwt.created_at, lwt.submitted_at, lwt.approved_at,
       analyst.full_name    AS analyst_name,
       analyst.employee_id  AS analyst_employee_id,
-      qa.full_name         AS qa_reviewer_name,
       pb.batch_number,
       COUNT(ltp.param_id)                                       AS total_params,
       COUNT(CASE WHEN ltp.status = 'pass'    THEN 1 END)        AS params_passed,
@@ -218,7 +239,6 @@ async function listLabTests(filters = {}) {
       COUNT(CASE WHEN ltp.status = 'warning' THEN 1 END)        AS params_warning
     FROM lab_water_tests lwt
     JOIN  users analyst     ON lwt.analyst_id      = analyst.user_id
-    LEFT JOIN users qa      ON lwt.qa_reviewer_id  = qa.user_id
     LEFT JOIN production_batches pb ON lwt.batch_id = pb.batch_id
     LEFT JOIN lab_test_parameters ltp ON lwt.test_id = ltp.test_id
     ${where}
@@ -227,7 +247,7 @@ async function listLabTests(filters = {}) {
       lwt.overall_status, lwt.certificate_number, lwt.pdf_url,
       lwt.created_at, lwt.submitted_at, lwt.approved_at,
       analyst.full_name, analyst.employee_id,
-      qa.full_name, pb.batch_number
+      pb.batch_number
     ORDER BY lwt.test_date DESC, lwt.created_at DESC
     LIMIT $${idx++} OFFSET $${idx++}
   `, values);
@@ -285,14 +305,20 @@ async function submitLabTest(testId, analystId, signatureVerified) {
   // Pattern mirrors production-service.js submitForQA() notification block.
   // Wrapped in try/catch + .catch() so email failure never crashes the workflow.
   try {
+    console.log('📧 Triggering lab QA pending review notification for:', test.test_number);
     notificationService.notifyLabQAPendingReview(
       test.test_number,
       test.shift,
-      test.analyst_name,
+      test.analyst_name || 'Lab Analyst',
       test.test_date
-    ).catch(e => console.error('📧 Lab QA pending review email failed:', e));
+    ).then(() => {
+      console.log('📧 Lab QA pending review email sent successfully');
+    }).catch(e => {
+      console.error('📧 Lab QA pending review email FAILED:', e.message);
+      console.error('📧 Full error:', e);
+    });
   } catch (e) {
-    console.error('📧 Failed to trigger lab QA pending review email:', e);
+    console.error('📧 Failed to trigger lab QA pending review email:', e.message);
   }
   return getLabTestById(testId);
 }

@@ -74,7 +74,7 @@ const notifyQAPendingReview = async (batchNumber, productName, submittedBy) => {
           <p style="margin: 0;"><strong>Product:</strong> ${productName}</p>
         </div>
         <p>Please log in to the Vilagio ERP to review the IPQC records and provide your electronic signature.</p>
-        <a href="${process.env.FRONTEND_URL}/production" style="display: inline-block; background-color: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px;">Go to Dashboard</a>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/production" style="display: inline-block; background-color: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px;">Go to Dashboard</a>
       </div>
     </div>
   `;
@@ -129,7 +129,7 @@ const notifyLowStock = async (productName, sku, currentStock, reorderLevel) => {
           <p style="margin: 0 0 10px 0; color: #b45309;"><strong>Current Stock:</strong> ${currentStock}</p>
           <p style="margin: 0;"><strong>Reorder Threshold:</strong> ${reorderLevel}</p>
         </div>
-        <a href="${process.env.FRONTEND_URL}/inventory" style="display: inline-block; background-color: #f59e0b; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px;">Review Inventory</a>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/inventory" style="display: inline-block; background-color: #f59e0b; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px;">Review Inventory</a>
       </div>
     </div>
   `;
