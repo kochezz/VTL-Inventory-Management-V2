@@ -24,8 +24,7 @@ interface LabTest {
   certificate_number: string | null;
   analyst_name: string;
   analyst_employee_id: string;
-  supervisor_name: string | null;
-  manager_name: string | null;
+  qa_reviewer_name: string | null;
   batch_number: string | null;
   total_params: number;
   params_passed: number;
@@ -38,20 +37,19 @@ interface LabTest {
 interface LabStats {
   tests_today: number;
   pending_qa_review: number;
-  pending_qa_review: number;
+  drafts_in_progress: number;
   valid_certs_today: number;
   failures_this_week: number;
   rejected_this_week: number;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
-  draft:           { label: 'Draft',              color: 'text-gray-400 bg-gray-400/10 border-gray-400/30',     icon: Clock },
-  submitted:       { label: 'Awaiting QA', color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: Clock },
-  manager_review:  { label: 'Awaiting Manager',    color: 'text-blue-400 bg-blue-400/10 border-blue-400/30',    icon: Shield },
-  pass:            { label: 'Passed — Cert Issued', color: 'text-green-400 bg-green-400/10 border-green-400/30', icon: CheckCircle2 },
-  conditional_pass:{ label: 'Conditional Pass',    color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: AlertCircle },
-  fail:            { label: 'Failed',              color: 'text-red-400 bg-red-400/10 border-red-400/30',       icon: XCircle },
-  rejected:        { label: 'Rejected',            color: 'text-red-400 bg-red-400/10 border-red-400/30',       icon: XCircle },
+  draft:            { label: 'Draft',               color: 'text-gray-400 bg-gray-400/10 border-gray-400/30',      icon: Clock },
+  submitted:        { label: 'Awaiting QA Review',  color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: Clock },
+  pass:             { label: 'Passed — Cert Issued', color: 'text-green-400 bg-green-400/10 border-green-400/30',   icon: CheckCircle2 },
+  conditional_pass: { label: 'Conditional Pass',    color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: AlertCircle },
+  fail:             { label: 'Failed',              color: 'text-red-400 bg-red-400/10 border-red-400/30',         icon: XCircle },
+  rejected:         { label: 'Rejected',            color: 'text-red-400 bg-red-400/10 border-red-400/30',         icon: XCircle },
 };
 
 function StatusBadge({ status }: { status: string }) {
