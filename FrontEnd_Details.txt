@@ -1,0 +1,111 @@
+C:.
+|   .env.local
+|   .gitignore
+|   eslint.config.mjs
+|   folder_structure.txt
+|   FrontendTree.txt
+|   next-env.d.ts
+|   next.config.js
+|   package-lock.json
+|   package.json
+|   postcss.config.mjs
+|   README.md
+|   tailwind.config.js
+|   tsconfig.json
+|
++---app
+|   |   favicon.ico
+|   |   globals.css
+|   |   layout.tsx
+|   |   page.tsx
+|   |
+|   +---dashboard
+|   |       page.tsx
+|   |
+|   +---inventory
+|   |       page.tsx
+|   |
+|   +---inventory-test
+|   |       page.tsx
+|   |
+|   +---login
+|   |       page.tsx
+|   |
+|   \---products
+|       |   page.tsx
+|       |
+|       \---[id]
+|               page.tsx
+|
++---components
+|   +---inventory
+|   |       AdjustmentForm.tsx
+|   |       IssueForm.tsx
+|   |       ReceiveForm.tsx
+|   |       TransactionHistory.tsx
+|   |       TransferForm.tsx
+|   |
+|   \---layout
+|           DashboardLayout.tsx
+|
++---dashboard
+|   |   package.json
+|   |   README.md
+|   |
+|   +---assets
+|   +---public
+|   \---src
+|       +---components
+|       |   +---admin
+|       |   +---common
+|       |   +---inventory
+|       |   \---reports
+|       +---contexts
+|       +---hooks
+|       +---pages
+|       |   +---admin
+|       |   +---auth
+|       |   +---inventory
+|       |   +---production
+|       |   \---reports
+|       +---services
+|       +---styles
+|       \---utils
+|
++---hooks
+|       useAuth.ts
+|
++---node_modules
+|
++---public
+|       file.svg
+|       globe.svg
+|       logo-black.png
+|       logo-white.png
+|       next.svg
+|       vercel.svg
+|       window.svg
+|
+\---scanner-app
+    |   index.html
+    |   package.json
+    |   README.md
+    |
+    +---assets
+    |   +---icons
+    |   \---images
+    +---public
+    \---src
+        +---components
+        |   +---common
+        |   \---scanner
+        +---contexts
+        +---navigation
+        +---screens
+        |   +---auth
+        |   +---count
+        |   +---issue
+        |   +---receive
+        |   \---transfer
+        +---services
+        \---utils

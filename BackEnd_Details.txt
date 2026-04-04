@@ -1,0 +1,89 @@
+C:.
+|   .env
+|   .env.example
+|   audit_cols.log
+|   auth-missing-tables.sql
+|   auth-schema.sql
+|   Backendtree.txt
+|   cols.log
+|   cols.txt
+|   constraints.log
+|   create-admin.js
+|   enum.log
+|   error.log
+|   output.txt
+|   package-lock.json
+|   package.json
+|   README.md
+|   server.js
+|   system-health.js
+|   tables.log
+|   test-db-connection.js
+|   test-db-locations.js
+|   test-error-handler.js
+|   test-excel-report.js
+|   test-integration.js
+|   test-inventory.js
+|   test-validators.js
+|
++---scripts
+|       fix-db-schema.js
+|       inspect-audit.js
+|       inspect-cols.js
+|       inspect-constraints.js
+|       inspect-enum.js
+|       inspect-tables.js
+|       test-transaction-api.js
+|       test-transaction-local.js
+|       verify-data.js
+|
++---src
+|   +---api
+|   |   |   server.js
+|   |   |
+|   |   +---controllers
+|   |   +---middleware
+|   |   \---routes
+|   |           auth.js
+|   |
+|   +---auth
+|   +---config
+|   |       database.js
+|   |
+|   +---mcp
+|   |   +---servers
+|   |   |       inventory-server.js
+|   |   |
+|   |   \---tools
+|   |           advanced-inventory-tools.js
+|   |           batch-tools.js
+|   |           reporting-tools.js
+|   |
+|   +---middleware
+|   |       auth-middleware.js
+|   |       authenticate.js
+|   |
+|   +---models
+|   +---routes
+|   |       auth-routes.js
+|   |       inventory-routes.js
+|   |       products-routes.js
+|   |
+|   +---services
+|   |       auth-service.js
+|   |       batch-service.js
+|   |       inventory-service.js
+|   |       products-service.js
+|   |       reporting-service.js
+|   |       transaction-service.js
+|   |
+|   \---utils
+|           auth.js
+|           db-enhanced.js
+|           db.js
+|           error-handler.js
+|           validators.js
+|
+\---tests
+    +---integration
+    \---unit
