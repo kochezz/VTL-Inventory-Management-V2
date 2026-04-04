@@ -155,7 +155,10 @@ router.get('/tests/:id/certificate/pdf', async (req, res) => {
       });
     }
 
-    const logoPath = require('path').join(__dirname, '../../public/logo-black.png');
+    // __dirname = src/routes/ — go up 3 levels to project root, then into public/
+    // This matches the path structure used by production-reporting-service.js
+    const path = require('path');
+    const logoPath = path.join(__dirname, '../../../public/logo-black.png');
     const pdfBuffer = await labPdfService.generateCoAPDF(test, logoPath);
 
     res.setHeader('Content-Type', 'application/pdf');

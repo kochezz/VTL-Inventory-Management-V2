@@ -102,29 +102,36 @@ function formatReadingValue(p) {
 
 function formatSpecLimit(p) {
   // Spec limit column now includes unit — no separate Unit column needed
-  if (p.is_pass_fail) return '0 CFU/mL (Absent required)';
+  if (p.is_pass_fail) return 'Absent (0 CFU/mL required)';
   const parts = [];
-  if (p.spec_min !== null && p.spec_min !== undefined) parts.push(`≥ ${parseFloat(p.spec_min)}`);
-  if (p.spec_max !== null && p.spec_max !== undefined) parts.push(`≤ ${parseFloat(p.spec_max)}`);
+  if (p.spec_min !== null && p.spec_min !== undefined) parts.push(`>= ${parseFloat(p.spec_min)}`);
+  if (p.spec_max !== null && p.spec_max !== undefined) parts.push(`<= ${parseFloat(p.spec_max)}`);
   const limits = parts.join(' – ');
   return limits ? `${limits} ${p.unit || ''}`.trim() : '—';
 }
 
 // ── Logo path resolution — same pattern as production-reporting-service.js ────
 function resolveLogoPath(passedLogoPath) {
-  // Try the passed path first, then common fallback locations
+  // Ordered list of candidate paths — works regardless of where the service file lives
+  // __dirname for lab-pdf-service.js = backend/src/services/
   const candidates = [
-    passedLogoPath,
-    path.join(__dirname, '../../public/logo-black.png'),
-    path.join(__dirname, '../../../public/logo-black.png'),
-    path.join(process.cwd(), 'public/logo-black.png'),
+    passedLogoPath,                                                    // passed by route
+    path.join(__dirname, '../../public/logo-black.png'),               // src/services/ → root/public
+    path.join(__dirname, '../../../public/logo-black.png'),            // extra level up
+    path.join(process.cwd(), 'public/logo-black.png'),                 // process cwd
+    path.join(process.cwd(), '../public/logo-black.png'),              // one above cwd
+    '/opt/render/project/src/public/logo-black.png',                   // Render deployment path
   ].filter(Boolean);
 
   for (const candidate of candidates) {
     try {
-      if (candidate && fs.existsSync(candidate)) return candidate;
+      if (candidate && fs.existsSync(candidate)) {
+        console.log('CoA PDF: logo found at:', candidate);
+        return candidate;
+      }
     } catch (e) {}
   }
+  console.warn('CoA PDF: logo not found in any candidate path — generating without logo');
   return null;
 }
 

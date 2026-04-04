@@ -46,7 +46,7 @@ interface LabStats {
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft:           { label: 'Draft',              color: 'text-gray-400 bg-gray-400/10 border-gray-400/30',     icon: Clock },
-  submitted:       { label: 'Awaiting Supervisor', color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: Clock },
+  submitted:       { label: 'Awaiting QA', color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: Clock },
   manager_review:  { label: 'Awaiting Manager',    color: 'text-blue-400 bg-blue-400/10 border-blue-400/30',    icon: Shield },
   pass:            { label: 'Passed — Cert Issued', color: 'text-green-400 bg-green-400/10 border-green-400/30', icon: CheckCircle2 },
   conditional_pass:{ label: 'Conditional Pass',    color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30', icon: AlertCircle },
