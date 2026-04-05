@@ -5,12 +5,22 @@ const { pool } = require('../config/database');
 // Create reusable transporter object using standard SMTP transport
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
+  port: parseInt(process.env.SMTP_PORT || '587'),
+  secure: parseInt(process.env.SMTP_PORT || '587') === 465,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+});
+
+// Log SMTP config on startup (masks password) so Render logs confirm vars are loaded
+console.log('📧 SMTP config loaded:', {
+  host: process.env.SMTP_HOST || 'NOT SET',
+  port: process.env.SMTP_PORT || 'NOT SET',
+  user: process.env.SMTP_USER || 'NOT SET',
+  pass: process.env.SMTP_PASS ? `set (${process.env.SMTP_PASS.length} chars)` : 'NOT SET',
+  from: process.env.EMAIL_FROM || 'NOT SET',
+  frontend: process.env.FRONTEND_URL || 'NOT SET',
 });
 
 /**
@@ -36,18 +46,30 @@ const getEmailsByRole = async (roles) => {
  * Core function to send an email
  */
 const sendEmail = async (to, subject, htmlContent) => {
-  if (!to || to.length === 0) return; // Don't send if no recipients
+  if (!to || to.length === 0) {
+    console.warn('📧 sendEmail called with no recipients — skipping. Subject:', subject);
+    return;
+  }
+
+  console.log(`📧 Attempting to send: "${subject}" to [${to.join(', ')}]`);
 
   try {
     const info = await transporter.sendMail({
       from: `"Vilagio ERP" <${process.env.EMAIL_FROM}>`,
-      to: to.join(', '), // Joins array of emails: "qa1@vilag.io, qa2@vilag.io"
+      to: to.join(', '),
       subject: subject,
       html: htmlContent,
     });
-    console.log(`✉️ Email sent: ${subject} [${info.messageId}]`);
+    console.log(`✉️  Email sent successfully: ${subject} [messageId: ${info.messageId}]`);
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    console.error('❌ sendEmail FAILED:', {
+      subject,
+      recipients: to,
+      errorCode: error.code,
+      errorMessage: error.message,
+      responseCode: error.responseCode,
+      response: error.response,
+    });
   }
 };
 
