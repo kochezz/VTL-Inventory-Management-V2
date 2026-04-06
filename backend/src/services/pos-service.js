@@ -52,7 +52,7 @@ async function getProductLocations(productId) {
       AND i.quantity_available > 0
       AND wl.is_active = true
     ORDER BY i.quantity_available DESC
-  `, [productId]);
+  `);
   return result.rows;
 }
 
@@ -211,25 +211,25 @@ async function listSessions(filters = {}) {
 
 async function createTransaction(data, cashierId) {
   const {
-    session_id,
-    customer_id,
-    customer_name,
-    lines,
-    order_discount_type,
-    order_discount_value,
-    payment_method,
-    amount_tendered,
-    cash_amount,
-    mobile_amount,
-    card_amount,
-    receipt_email_address,
-    notes,
+    session_id, customer_id, customer_name, lines,
+    order_discount_type, order_discount_value, payment_method,
+    amount_tendered, cash_amount, mobile_amount, card_amount,
+    receipt_email_address, notes,
   } = data;
 
   if (!lines || lines.length === 0) throw new Error('At least one product line is required');
 
-  const receiptRes = await query(`SELECT generate_receipt_number() AS receipt_number`);
-  const receiptNumber = receiptRes.rows[0].receipt_number;
+  // ========================================================================
+  // THE FIX: Bypass the broken database function and generate receipt number natively
+  // ========================================================================
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const seqRes = await query(`
+    SELECT COUNT(*) as count 
+    FROM sales_transactions 
+    WHERE DATE(transaction_date) = CURRENT_DATE
+  `);
+  const nextSeq = parseInt(seqRes.rows[0].count) + 1;
+  const receiptNumber = `RCPT-${dateStr}-${String(nextSeq).padStart(4, '0')}`;
 
   let subtotal = 0;
   const evaluatedLines = lines.map(line => {
@@ -252,6 +252,7 @@ async function createTransaction(data, cashierId) {
     ? Math.max(0, parseFloat(amount_tendered || 0) - totalAmount)
     : 0;
 
+  // Insert the core transaction
   const txResult = await query(`
     INSERT INTO sales_transactions (
       receipt_number, session_id, cashier_id, customer_id, customer_name,
@@ -290,6 +291,7 @@ async function createTransaction(data, cashierId) {
   const transaction = txResult.rows[0];
 
   for (const line of evaluatedLines) {
+    // Insert lines
     await query(`
       INSERT INTO sales_transaction_lines (
         transaction_id, product_id, quantity, unit_price,
@@ -306,6 +308,7 @@ async function createTransaction(data, cashierId) {
       line.uom || 'piece',
     ]);
 
+    // Deplete inventory
     await query(`
       UPDATE inventory
       SET quantity_on_hand = quantity_on_hand - $1,
@@ -313,49 +316,28 @@ async function createTransaction(data, cashierId) {
       WHERE product_id = $2 AND location_id = $3
     `, [parseFloat(line.quantity), line.product_id, line.location_id]);
 
+    // Log the movement (Reverted to the correct native schema)
     try {
       await query(`
         INSERT INTO inventory_transactions (
-          transaction_id, transaction_number, transaction_type_id,
+          transaction_id, transaction_type,
           product_id, quantity, uom,
           from_location_id, transaction_date,
           performed_by, reference_document_number,
           reference_document_type, status, created_at
         ) VALUES (
-          $1, $2, (SELECT transaction_type_id FROM transaction_types WHERE type_name = 'sale' LIMIT 1),
-          $3, $4, $5,
-          $6, NOW(),
-          $7, $8,
+          $1, 'sale',
+          $2, $3, $4,
+          $5, NOW(),
+          $6, $7,
           'sales_receipt', 'completed', NOW()
         )
       `, [
-        uuidv4(), receiptNumber, line.product_id, parseFloat(line.quantity), line.uom || 'piece',
+        uuidv4(), line.product_id, parseFloat(line.quantity), line.uom || 'piece',
         line.location_id, cashierId, receiptNumber,
       ]);
     } catch (e) {
-      // Fallback if 'sale' transaction type isn't defined, use 'issue'
-      try {
-        await query(`
-          INSERT INTO inventory_transactions (
-            transaction_id, transaction_number, transaction_type_id,
-            product_id, quantity, uom,
-            from_location_id, transaction_date,
-            performed_by, reference_document_number,
-            reference_document_type, status, created_at
-          ) VALUES (
-            $1, $2, (SELECT transaction_type_id FROM transaction_types WHERE type_name = 'issue' LIMIT 1),
-            $3, $4, $5,
-            $6, NOW(),
-            $7, $8,
-            'sales_receipt', 'completed', NOW()
-          )
-        `, [
-          uuidv4(), receiptNumber, line.product_id, parseFloat(line.quantity), line.uom || 'piece',
-          line.location_id, cashierId, receiptNumber,
-        ]);
-      } catch (e2) {
-        console.error('⚠️ Inventory transaction log failed (sale still completed):', e2.message);
-      }
+      console.error('⚠️ Inventory transaction log failed (sale still completed):', e.message);
     }
 
     try {
@@ -377,6 +359,7 @@ async function createTransaction(data, cashierId) {
     }
   }
 
+  // Update session totals
   if (session_id) {
     await query(`
       UPDATE pos_sessions
@@ -387,6 +370,7 @@ async function createTransaction(data, cashierId) {
     `, [totalAmount, session_id]);
   }
 
+  // Fire receipt email
   if (receipt_email_address) {
     try {
       await sendReceiptEmail(transaction.transaction_id, receipt_email_address);
@@ -533,9 +517,8 @@ async function sendReceiptEmail(transactionId, emailAddress) {
   const { Resend } = require('resend');
   const resend = new Resend(process.env.SMTP_PASS);
 
-  // VAT Calculation (Prices are VAT Inclusive)
   const totalInclVat = parseFloat(tx.total_amount);
-  const totalExclVat = totalInclVat / 1.16; // Extract 16% VAT
+  const totalExclVat = totalInclVat / 1.16; 
   const vatAmount = totalInclVat - totalExclVat;
 
   const lineRows = tx.lines.map(l => `
