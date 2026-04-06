@@ -1,10 +1,5 @@
 'use client';
 
-// ============================================================================
-// DASHBOARD LAYOUT — frontend/components/layout/DashboardLayout.tsx
-// Updated: Added QC Lab nav item (Phase B)
-// ============================================================================
-
 import { useAuth } from '@/hooks/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
 import { 
@@ -22,7 +17,9 @@ import {
   ShoppingCart,
   PackageCheck,
   ShieldCheck,
-  FlaskConical,   // ← Phase B: QC Lab
+  ShoppingBag,
+  FlaskConical
+
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -58,20 +55,6 @@ const navigation: NavItem[] = [
     icon: Factory,
     roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo']
   },
-  // ── Phase B: QC Lab ──────────────────────────────────────────────────────
-  {
-    name: 'QC Lab',
-    href: '/lab',
-    icon: FlaskConical,
-    roles: ['admin', 'manager', 'qa'],
-  },
-  // ─────────────────────────────────────────────────────────────────────────
-  { 
-    name: 'Quality (QMS)', 
-    href: '/qms', 
-    icon: ShieldCheck,
-    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo'] 
-  },
   { 
     name: 'Vendor Management', 
     href: '/vendor-management/suppliers', 
@@ -95,6 +78,24 @@ const navigation: NavItem[] = [
     href: '/vendor-management/goods-receipts', 
     icon: PackageCheck,
     roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo'] 
+  },
+  { 
+    name: 'QC Lab', 
+    href: '/lab', 
+    icon: FlaskConical,
+    roles: ['admin', 'manager', 'qa'] 
+  },
+  { 
+    name: 'Sales / POS', 
+    href: '/sales/pos', 
+    icon: ShoppingBag,
+    roles: ['admin', 'manager', 'sales', 'staff'] 
+  },
+  { 
+    name: 'Quality (QMS)', 
+    href: '/qms', 
+    icon: ShieldCheck,
+    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo'] 
   },
   { 
     name: 'Analytics', 
@@ -197,6 +198,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {allowedNavItems.map((item) => {
+              // Highlight if we are on the exact path OR a true sub-path (e.g., /production/123)
+              // The addition of the '/' in startsWith prevents /production-reports from triggering /production
               const isActive = pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false);
               
               return (
