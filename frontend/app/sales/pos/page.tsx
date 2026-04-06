@@ -58,8 +58,16 @@ interface Customer {
   trading_name: string;
   legal_name: string;
   email: string;
+  phone: string;
   tier: string;
+  tier_name: string;
+  territory: string;
   customer_type: string;
+  payment_terms: string;
+  credit_limit: number;
+  total_transactions: number;
+  lifetime_value: number;
+  last_purchase_date: string | null;
 }
 
 interface POSSession {
@@ -876,14 +884,28 @@ export default function POSPage() {
                 )}
               </div>
               {customer ? (
-                <div className="flex items-center gap-3 p-3 bg-dark-900 rounded-lg">
-                  <div className="w-8 h-8 bg-primary-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                    <User className="w-4 h-4 text-primary-400" />
+                <div className="bg-dark-900 rounded-lg p-3 border border-dark-600 space-y-2">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 bg-primary-500/20 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <User className="w-4 h-4 text-primary-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-white truncate">{customer.trading_name}</p>
+                      <p className="text-xs text-gray-400">{customer.vtl_customer_id} · {customer.tier_name || customer.tier}</p>
+                      {customer.territory && <p className="text-xs text-gray-500">{customer.territory}</p>}
+                    </div>
+                    {customer.total_transactions > 0 && (
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs text-green-400 font-medium">{customer.total_transactions} orders</p>
+                        <p className="text-xs text-gray-500">${parseFloat(String(customer.lifetime_value||0)).toFixed(2)} LTV</p>
+                      </div>
+                    )}
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-white truncate">{customer.trading_name}</p>
-                    <p className="text-xs text-gray-400">{customer.vtl_customer_id} · {customer.tier}</p>
-                  </div>
+                  {customer.payment_terms && customer.payment_terms !== 'Cash' && (
+                    <div className="px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-xs text-amber-400">
+                      {customer.payment_terms} account · Credit: ${parseFloat(String(customer.credit_limit||0)).toFixed(2)}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="relative">
@@ -905,8 +927,21 @@ export default function POSPage() {
                             setShowCustomerDrop(false); setCustomerResults([]);
                           }}
                           className="w-full text-left px-4 py-3 hover:bg-dark-700 border-b border-dark-700 last:border-0 transition-colors">
-                          <p className="text-sm font-medium text-white">{c.trading_name}</p>
-                          <p className="text-xs text-gray-400">{c.vtl_customer_id} · {c.tier}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-white truncate">{c.trading_name}</p>
+                              <p className="text-xs text-gray-400">{c.vtl_customer_id} · {c.tier_name || c.tier} · {c.territory || '—'}</p>
+                            </div>
+                            {c.total_transactions > 0 && (
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-xs text-green-400 font-medium">{c.total_transactions} orders</p>
+                                <p className="text-xs text-gray-500">${parseFloat(String(c.lifetime_value || 0)).toFixed(2)}</p>
+                              </div>
+                            )}
+                          </div>
+                          {c.payment_terms && c.payment_terms !== 'Cash' && (
+                            <p className="text-xs text-amber-400 mt-0.5">{c.payment_terms} account · Credit: ${parseFloat(String(c.credit_limit || 0)).toFixed(2)}</p>
+                          )}
                         </button>
                       ))}
                     </div>

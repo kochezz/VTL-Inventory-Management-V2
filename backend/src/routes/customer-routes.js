@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('../services/auth-service'); 
 const CustomerService = require('../services/customer-service');
 const { authenticate, authorize } = require('../middleware/auth-middleware');
+const { Resend } = require('resend');
 
 // ============================================================================
 // 1. CREATE CUSTOMER (ONBOARDING)
@@ -27,7 +28,63 @@ router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'c
 });
 
 // ============================================================================
-// 2. FETCH CUSTOMERS LIST (CRM Directory)
+// 2. SEND ONBOARDING REQUEST EMAIL
+// Triggered from POS or CRM when a prospect is not yet registered
+// Roles Allowed: Sales, Staff, Manager, Admin
+// ============================================================================
+router.post('/onboarding-request', authenticate, authorize(['sales', 'staff', 'manager', 'admin', 'ceo']), async (req, res) => {
+  try {
+    const {
+      to_email,
+      contact_name,
+      business_name,
+      phone,
+      tier,
+      territory,
+      cashier_note,
+      sent_by,
+      email_html,
+      email_subject,
+    } = req.body;
+
+    if (!to_email || !to_email.includes('@')) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+    if (!email_html) {
+      return res.status(400).json({ error: 'Email content is required' });
+    }
+
+    const resend = new Resend(process.env.SMTP_PASS);
+
+    const { data, error } = await resend.emails.send({
+      from: process.env.EMAIL_FROM
+        ? `Vilagio Technologies Ltd. <${process.env.EMAIL_FROM}>`
+        : 'Vilagio Technologies Ltd. <noreply@vilag.io>',
+      to:      [to_email.trim()],
+      subject: email_subject || 'FreshDrip Water — Customer Account Registration Request',
+      html:    email_html,
+    });
+
+    if (error) {
+      console.error('❌ Onboarding request email failed:', error);
+      return res.status(500).json({ error: `Email delivery failed: ${error.message}` });
+    }
+
+    console.log(`📧 Onboarding request sent to ${to_email} by ${sent_by || req.user?.full_name} [id: ${data?.id}]`);
+
+    res.json({
+      message: `Onboarding request sent to ${to_email}`,
+      email_id: data?.id,
+    });
+
+  } catch (err) {
+    console.error('POST /customers/onboarding-request error:', err);
+    res.status(500).json({ error: err.message || 'Failed to send onboarding request' });
+  }
+});
+
+// ============================================================================
+// 3. FETCH CUSTOMERS LIST (CRM Directory)
 // Roles Allowed: All authenticated users
 // ============================================================================
 router.get('/', authenticate, async (req, res) => {
@@ -46,7 +103,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // ============================================================================
-// 3. GET SINGLE CUSTOMER DETAILS
+// 4. GET SINGLE CUSTOMER DETAILS
 // Roles Allowed: All authenticated users
 // ============================================================================
 router.get('/:id', authenticate, async (req, res) => {
@@ -61,7 +118,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // ============================================================================
-// 4. APPROVE CUSTOMER
+// 5. APPROVE CUSTOMER
 // Required: Digital Signature Password
 // Roles Allowed: CFO, Admin (CEO for T3)
 // ============================================================================
@@ -75,7 +132,7 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), as
       return res.status(400).json({ error: 'Digital signature (password) is required to approve customers.' });
     }
 
-    // 1. Verify the Approver's Password (21 CFR Part 11 pattern, even though it's finance)
+    // Verify the Approver's Password (21 CFR Part 11 pattern)
     const userResult = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [approverId]);
     if (userResult.rows.length === 0) return res.status(401).json({ error: 'User not found.' });
     
@@ -84,7 +141,6 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), as
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
-    // 2. Execute Approval
     const result = await CustomerService.approveCustomer(customerId, approverId);
     
     // TODO: Trigger Email Notification back to the Sales Rep that the customer is approved!
@@ -97,7 +153,7 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), as
 });
 
 // ============================================================================
-// 5. REJECT CUSTOMER
+// 6. REJECT CUSTOMER
 // Required: Digital Signature Password & Reason (For Revision)
 // Roles Allowed: CFO, Admin
 // ============================================================================
@@ -110,7 +166,7 @@ router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), asy
     if (!reason) return res.status(400).json({ error: 'Rejection reason is required' });
     if (!signature_password) return res.status(400).json({ error: 'Digital signature (password) is required.' });
 
-    // 1. Verify the Approver's Password
+    // Verify the Approver's Password
     const userResult = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [approverId]);
     if (userResult.rows.length === 0) return res.status(401).json({ error: 'User not found.' });
     
@@ -119,7 +175,6 @@ router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), asy
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
-    // 2. Execute Rejection
     const result = await CustomerService.rejectCustomer(customerId, approverId, reason);
     
     // TODO: Trigger Email Notification back to the Sales Rep with the revision notes.
