@@ -137,18 +137,25 @@ export default function ProductsPage() {
   const handleExport = () => {
     const csvHeaders = ['SKU','Product Name','Category','Stock','Status','Cost USD','Cost ZMW','Price USD','Price ZMW','UOM'];
     
-    const csvRows = filteredProducts.map(p => [
-      p.sku,
-      p.product_name,
-      p.category_name,
-      p.total_stock || 0,
-      p.stock_status,
-      parsePrice(p.standard_cost).toFixed(2),
-      (parsePrice(p.standard_cost) * exchangeRate).toFixed(2),
-      parsePrice(p.selling_price).toFixed(2),
-      (p.selling_price_zmw || (parsePrice(p.selling_price) * exchangeRate)).toFixed(2),
-      p.base_uom
-    ]);
+    const csvRows = filteredProducts.map(p => {
+      // Safely parse the ZMW price into a strict Number, or calculate it if it doesn't exist
+      const priceZmw = p.selling_price_zmw 
+        ? parsePrice(p.selling_price_zmw) 
+        : parsePrice(p.selling_price) * exchangeRate;
+
+      return [
+        p.sku,
+        p.product_name,
+        p.category_name,
+        p.total_stock || 0,
+        p.stock_status,
+        parsePrice(p.standard_cost).toFixed(2),
+        (parsePrice(p.standard_cost) * exchangeRate).toFixed(2),
+        parsePrice(p.selling_price).toFixed(2),
+        priceZmw.toFixed(2), // Now 100% guaranteed to be a number!
+        p.base_uom
+      ];
+    });
 
     const csvContent = [
       csvHeaders.join(','),
