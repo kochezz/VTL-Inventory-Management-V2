@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react';
 import { X, Package, MapPin, Box, TrendingUp, Calendar, Tag } from 'lucide-react';
 import axios from 'axios';
-import { useSettings } from '@/hooks/useSettings';
 
 interface ProductDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   productId: string;
   token: string;
+  currency: 'USD' | 'ZMW';
+  exchangeRate: number;
 }
 
 interface InventoryLocation {
@@ -32,6 +33,7 @@ interface ProductDetail {
   base_uom: string;
   standard_cost: number | string;
   selling_price: number | string;
+  selling_price_zmw: number | string | null;
   reorder_level: number;
   is_active: boolean;
   total_stock: number;
@@ -47,9 +49,10 @@ export default function ProductDetailModal({
   isOpen,
   onClose,
   productId,
-  token
+  token,
+  currency,
+  exchangeRate
 }: ProductDetailModalProps) {
-  const { formatCurrency } = useSettings();
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -77,12 +80,19 @@ export default function ProductDetailModal({
     }
   };
 
-  const parsePrice = (price: number | string): number => {
+  const parsePrice = (price: number | string | undefined | null): number => {
+    if (price == null) return 0;
     if (typeof price === 'number') return price;
-    if (typeof price === 'string') {
-      return parseFloat(price.replace('$', '').replace(',', '')) || 0;
+    return parseFloat(price.replace('$', '').replace(',', '')) || 0;
+  };
+
+  // Dynamic currency formatter matching the parent page
+  const formatPrice = (usdPrice: number | string, zmwPrice?: number | string | null) => {
+    if (currency === 'ZMW') {
+      if (zmwPrice && Number(zmwPrice) > 0) return `K${Number(zmwPrice).toFixed(2)}`;
+      return `K${(parsePrice(usdPrice) * exchangeRate).toFixed(2)}`;
     }
-    return 0;
+    return `$${parsePrice(usdPrice).toFixed(2)}`;
   };
 
   if (!isOpen) return null;
@@ -161,32 +171,29 @@ export default function ProductDetailModal({
                 </div>
               </div>
 
-              {/* Pricing */}
+              {/* Pricing & Costs */}
               <div className="bg-dark-900 rounded-lg p-6 border border-dark-700">
                 <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-primary-400" />
-                  Pricing & Costs
+                  Pricing & Costs ({currency})
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div>
                     <label className="text-sm text-gray-400">Standard Cost</label>
                     <p className="text-2xl text-white font-bold mt-1">
-                      {formatCurrency(parsePrice(product.standard_cost), 'USD')}
+                      {formatPrice(product.standard_cost)}
                     </p>
                   </div>
                   <div>
                     <label className="text-sm text-gray-400">Selling Price</label>
                     <p className="text-2xl text-green-400 font-bold mt-1">
-                      {formatCurrency(parsePrice(product.selling_price), 'USD')}
+                      {formatPrice(product.selling_price, product.selling_price_zmw)}
                     </p>
                   </div>
                   <div>
                     <label className="text-sm text-gray-400">Margin</label>
                     <p className="text-2xl text-primary-400 font-bold mt-1">
-                      {formatCurrency(
-                        parsePrice(product.selling_price) - parsePrice(product.standard_cost),
-                        'USD'
-                      )}
+                      {formatPrice(parsePrice(product.selling_price) - parsePrice(product.standard_cost))}
                     </p>
                   </div>
                 </div>
@@ -230,7 +237,7 @@ export default function ProductDetailModal({
                 </div>
               </div>
 
-              {/* Inventory by Location */}
+              {/* Inventory by Location (RESTORED!) */}
               <div className="bg-dark-900 rounded-lg p-6 border border-dark-700">
                 <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                   <MapPin className="w-5 h-5 text-primary-400" />
@@ -241,21 +248,11 @@ export default function ProductDetailModal({
                     <table className="w-full">
                       <thead className="bg-dark-950">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                            Location
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
-                            Type
-                          </th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">
-                            On Hand
-                          </th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">
-                            Allocated
-                          </th>
-                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">
-                            Available
-                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Location</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Type</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">On Hand</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Allocated</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Available</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-dark-700">
@@ -294,14 +291,12 @@ export default function ProductDetailModal({
                   <div className="text-center py-8">
                     <MapPin className="w-12 h-12 text-gray-600 mx-auto mb-3" />
                     <p className="text-gray-400">No inventory in any location</p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      Use Inventory → Receive to add stock
-                    </p>
+                    <p className="text-sm text-gray-500 mt-1">Use Inventory → Receive to add stock</p>
                   </div>
                 )}
               </div>
 
-              {/* Metadata */}
+              {/* Metadata (RESTORED!) */}
               <div className="bg-dark-900 rounded-lg p-6 border border-dark-700">
                 <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                   <Calendar className="w-5 h-5 text-primary-400" />

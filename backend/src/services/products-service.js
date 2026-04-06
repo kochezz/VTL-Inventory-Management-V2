@@ -16,7 +16,6 @@ const createProduct = async (productData) => {
       is_active
     } = productData;
 
-    // Check if SKU already exists
     const existingProduct = await pool.query(
       'SELECT product_id FROM products WHERE sku = $1',
       [sku]
@@ -26,7 +25,6 @@ const createProduct = async (productData) => {
       throw new Error(`Product with SKU "${sku}" already exists`);
     }
 
-    // Insert new product
     const result = await pool.query(
       `INSERT INTO products (
         product_id,
@@ -58,7 +56,6 @@ const createProduct = async (productData) => {
     );
 
     console.log(`✅ Product created: ${sku} - ${product_name}`);
-
     return result.rows[0];
   } catch (error) {
     console.error('❌ Create product error:', error.message);
@@ -81,6 +78,7 @@ const getProducts = async (filters = {}) => {
           p.base_uom,
           p.standard_cost,
           p.selling_price,
+          p.selling_price_zmw,
           p.reorder_level,
           p.is_active,
           COALESCE(SUM(i.quantity_on_hand), 0) as total_stock,
@@ -104,6 +102,7 @@ const getProducts = async (filters = {}) => {
           p.base_uom,
           p.standard_cost,
           p.selling_price,
+          p.selling_price_zmw,
           p.reorder_level,
           p.is_active,
           p.created_at,
@@ -116,28 +115,24 @@ const getProducts = async (filters = {}) => {
     const values = [];
     let paramCount = 1;
 
-    // Filter by category
     if (filters.category_id) {
       conditions.push(`category_id = $${paramCount}`);
       values.push(filters.category_id);
       paramCount++;
     }
 
-    // Filter by active status
     if (filters.is_active !== undefined) {
       conditions.push(`is_active = $${paramCount}`);
       values.push(filters.is_active);
       paramCount++;
     }
 
-    // Filter by stock status
     if (filters.stock_status) {
       conditions.push(`stock_status = $${paramCount}`);
       values.push(filters.stock_status);
       paramCount++;
     }
 
-    // Search by SKU, name, or description
     if (filters.search) {
       conditions.push(`(
         sku ILIKE $${paramCount} OR 
@@ -152,22 +147,17 @@ const getProducts = async (filters = {}) => {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    // Sorting
     const sortBy = filters.sort_by || 'sku';
     const sortOrder = filters.sort_order || 'ASC';
     query += ` ORDER BY ${sortBy} ${sortOrder}`;
 
-    // Pagination
     const limit = filters.limit || 50;
     const offset = filters.offset || 0;
     query += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
     values.push(limit, offset);
 
-    console.log('🔍 Executing products query...');
     const result = await pool.query(query, values);
-    console.log(`✅ Query returned ${result.rows.length} products`);
 
-    // Get total count for pagination
     let countQuery = `
       WITH product_stock AS (
         SELECT 
@@ -204,7 +194,6 @@ const getProducts = async (filters = {}) => {
   }
 };
 
-// Get single product by ID
 const getProductById = async (productId) => {
   try {
     const query = `
@@ -230,7 +219,6 @@ const getProductById = async (productId) => {
 
     const product = result.rows[0];
 
-    // Get inventory by location
     const inventoryQuery = `
       SELECT 
         i.*,
@@ -256,7 +244,6 @@ const getProductById = async (productId) => {
   }
 };
 
-// Get product by SKU
 const getProductBySKU = async (sku) => {
   try {
     const query = `
@@ -287,7 +274,6 @@ const getProductBySKU = async (sku) => {
   }
 };
 
-// Get all categories
 const getCategories = async () => {
   try {
     const query = `
@@ -303,7 +289,6 @@ const getCategories = async () => {
     `;
 
     const result = await pool.query(query);
-    console.log(`✅ Found ${result.rows.length} categories`);
     return result.rows;
   } catch (error) {
     console.error('❌ Get categories error:', error.message);
@@ -311,21 +296,15 @@ const getCategories = async () => {
   }
 };
 
-// Helper function to determine stock status
 const getStockStatus = (currentStock, reorderLevel) => {
   const stock = parseInt(currentStock) || 0;
   const reorder = parseInt(reorderLevel) || 1000;
   
-  if (stock === 0) {
-    return 'out_of_stock';
-  } else if (stock <= reorder) {
-    return 'low_stock';
-  } else {
-    return 'in_stock';
-  }
+  if (stock === 0) return 'out_of_stock';
+  if (stock <= reorder) return 'low_stock';
+  return 'in_stock';
 };
 
-// Get product statistics
 const getProductStats = async () => {
   try {
     const statsQuery = `
