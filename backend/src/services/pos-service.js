@@ -17,6 +17,7 @@ async function getPOSProducts() {
       p.sku,
       p.product_name,
       p.selling_price,
+      p.selling_price_zmw,
       p.standard_cost,
       p.base_uom,
       COALESCE(SUM(i.quantity_available), 0) AS total_available
@@ -29,7 +30,7 @@ async function getPOSProducts() {
     )
     AND p.is_active = true
     GROUP BY p.product_id, p.sku, p.product_name,
-             p.selling_price, p.standard_cost, p.base_uom
+             p.selling_price, p.selling_price_zmw, p.standard_cost, p.base_uom
     ORDER BY p.product_name
   `);
   return result.rows;

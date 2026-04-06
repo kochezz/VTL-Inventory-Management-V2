@@ -26,6 +26,7 @@ interface POSProduct {
   sku: string;
   product_name: string;
   selling_price: number;
+  selling_price_zmw: number | null;
   base_uom: string;
   total_available: number;
 }
@@ -38,6 +39,8 @@ interface ProductLocation {
   quantity_available: number;
   uom: string;
 }
+
+type Currency = 'USD' | 'ZMW';
 
 interface CartLine {
   product_id: string;
@@ -98,6 +101,13 @@ interface Transaction {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const fmtCurrency = (n: number | string, currency: Currency) => {
+  const val = parseFloat(String(n || 0));
+  return currency === 'ZMW'
+    ? `K${val.toFixed(2)}`
+    : `$${val.toFixed(2)}`;
+};
+// Keep fmt as a backwards-compat alias — replaced by fmtCurrency in the POS UI
 const fmt = (n: number | string) => `$${parseFloat(String(n || 0)).toFixed(2)}`;
 
 const PAYMENT_METHODS = [
@@ -109,7 +119,7 @@ const PAYMENT_METHODS = [
 
 // ── ProductCard ───────────────────────────────────────────────────────────────
 
-function ProductCard({ product, onAdd }: { product: POSProduct; onAdd: (p: POSProduct) => void }) {
+function ProductCard({ product, onAdd, currency }: { product: POSProduct; onAdd: (p: POSProduct) => void; currency: Currency }) {
   const outOfStock = product.total_available <= 0;
   return (
     <button
@@ -135,7 +145,7 @@ function ProductCard({ product, onAdd }: { product: POSProduct; onAdd: (p: POSPr
       </div>
       <p className="text-sm font-medium text-white leading-tight mb-1">{product.product_name}</p>
       <p className="text-xs text-gray-500 mb-2">{product.sku}</p>
-      <p className="text-base font-bold text-primary-400">{fmt(product.selling_price)}</p>
+      <p className="text-base font-bold text-primary-400">{fmtCurrency(currency === 'ZMW' && product.selling_price_zmw ? product.selling_price_zmw : product.selling_price, currency)}</p>
     </button>
   );
 }
@@ -209,13 +219,14 @@ function LocationPickerModal({
 // ── PaymentModal ──────────────────────────────────────────────────────────────
 
 function PaymentModal({
-  subtotal, cartLines, session, customer, token, onComplete, onClose,
+  subtotal, cartLines, session, customer, token, currency, onComplete, onClose,
 }: {
   subtotal: number;
   cartLines: CartLine[];
   session: POSSession | null;
   customer: Customer | null;
   token: string | null;
+  currency: Currency;
   onComplete: (tx: Transaction) => void;
   onClose: () => void;
 }) {
@@ -243,7 +254,7 @@ function PaymentModal({
   const splitShort  = method === 'mixed' ? finalTotal - splitSum : 0;
 
   const canPay = (() => {
-    if (method === 'cash')   return parseFloat(tendered || '0') >= finalTotal;
+    if (method === 'cash')   return parseFloat(tendered || '0') >= finalTotal - 0.005; // allow exact match
     if (method === 'mobile') return true;
     if (method === 'card')   return true;
     if (method === 'mixed')  return splitShort <= 0.01;
@@ -327,16 +338,16 @@ function PaymentModal({
           {/* Summary */}
           <div className="bg-dark-900 rounded-xl p-4 space-y-2">
             <div className="flex justify-between text-sm text-gray-400">
-              <span>Subtotal</span><span>{fmt(subtotal)}</span>
+              <span>Subtotal</span><span>{fmtCurrency(subtotal, currency)}</span>
             </div>
             {orderDiscAmt > 0 && (
               <div className="flex justify-between text-sm text-green-400">
-                <span>Discount</span><span>-{fmt(orderDiscAmt)}</span>
+                <span>Discount</span><span>-{fmtCurrency(orderDiscAmt, currency)}</span>
               </div>
             )}
             <div className="flex justify-between text-xl font-bold text-white border-t border-dark-700 pt-2">
               <span>Total</span>
-              <span className="text-primary-400">{fmt(finalTotal)}</span>
+              <span className="text-primary-400">{fmtCurrency(finalTotal, currency)}</span>
             </div>
           </div>
 
@@ -363,13 +374,13 @@ function PaymentModal({
               <label className="block text-xs font-medium text-gray-400 mb-1">Amount Tendered</label>
               <input type="number" min={finalTotal} step="0.01"
                 value={tendered} onChange={e => setTendered(e.target.value)}
-                placeholder={`Min: ${fmt(finalTotal)}`}
+                placeholder={`Min: ${fmtCurrency(finalTotal, currency)}`}
                 className="w-full px-3 py-2.5 bg-dark-900 border border-dark-600 rounded-lg text-white text-lg font-mono"
               />
               {change > 0.005 && (
                 <div className="mt-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex justify-between">
                   <span className="text-green-400 text-sm font-medium">Change</span>
-                  <span className="text-green-400 text-lg font-bold">{fmt(change)}</span>
+                  <span className="text-green-400 text-lg font-bold">{fmtCurrency(change, currency)}</span>
                 </div>
               )}
             </div>
@@ -429,7 +440,7 @@ function PaymentModal({
             className="flex-1 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
             {submitting
               ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Processing...</>
-              : <><CheckCircle2 className="w-4 h-4" />Complete — {fmt(finalTotal)}</>
+              : <><CheckCircle2 className="w-4 h-4" />Complete — {fmtCurrency(finalTotal, currency)}</>
             }
           </button>
         </div>
@@ -699,6 +710,7 @@ export default function POSPage() {
   const [stats, setStats]         = useState<any>(null);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
+  const [currency, setCurrency]   = useState<Currency>('USD');
 
   const [locationPicker, setLocationPicker] = useState<POSProduct | null>(null);
   const [showPayment, setShowPayment]       = useState(false);
@@ -769,7 +781,9 @@ export default function POSPage() {
         location_id:   loc.location_id,
         location_name: loc.location_name,
         quantity:      1,
-        unit_price:    parseFloat(String(product.selling_price)),
+        unit_price:    currency === 'ZMW' && product.selling_price_zmw
+          ? parseFloat(String(product.selling_price_zmw))
+          : parseFloat(String(product.selling_price)),
         line_discount: 0,
         uom:           loc.uom,
         max_available: loc.quantity_available,
@@ -815,9 +829,30 @@ export default function POSPage() {
               <p className="text-xs text-gray-400">FreshDrip Water Sales Terminal</p>
             </div>
           </div>
-          <button onClick={loadData} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
-            <RefreshCw className="w-4 h-4 text-gray-400" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Currency toggle */}
+            <div className="flex items-center bg-dark-800 border border-dark-700 rounded-xl p-1">
+              {(['USD', 'ZMW'] as Currency[]).map(c => (
+                <button
+                  key={c}
+                  onClick={() => { setCurrency(c); setCart([]); }}
+                  title={c === 'ZMW' ? 'Switch to Zambian Kwacha — clears cart' : 'Switch to US Dollar — clears cart'}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                    currency === c
+                      ? c === 'ZMW'
+                        ? 'bg-green-500 text-white shadow'
+                        : 'bg-blue-500 text-white shadow'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {c === 'USD' ? '$ USD' : 'K ZMW'}
+                </button>
+              ))}
+            </div>
+            <button onClick={loadData} className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
+              <RefreshCw className="w-4 h-4 text-gray-400" />
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -861,7 +896,7 @@ export default function POSPage() {
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {products.map(p => (
-                  <ProductCard key={p.product_id} product={p} onAdd={handleAddProduct} />
+                  <ProductCard key={p.product_id} product={p} onAdd={handleAddProduct} currency={currency} />
                 ))}
               </div>
             )}
@@ -988,7 +1023,19 @@ export default function POSPage() {
                             className="w-7 h-7 flex items-center justify-center hover:bg-dark-700 rounded-l-lg text-gray-400 hover:text-white transition-colors">
                             <Minus className="w-3 h-3" />
                           </button>
-                          <span className="w-7 text-center text-sm font-bold text-white">{line.quantity}</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max={line.max_available}
+                            value={line.quantity}
+                            onChange={e => {
+                              const val = parseInt(e.target.value) || 1;
+                              const updated = [...cart];
+                              updated[idx].quantity = Math.min(Math.max(1, val), line.max_available);
+                              setCart([...updated]);
+                            }}
+                            className="w-12 text-center text-sm font-bold text-white bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-primary-500 rounded"
+                          />
                           <button onClick={() => updateQty(idx, 1)}
                             disabled={line.quantity >= line.max_available}
                             className="w-7 h-7 flex items-center justify-center hover:bg-dark-700 rounded-r-lg text-gray-400 hover:text-white transition-colors disabled:opacity-40">
@@ -1005,7 +1052,7 @@ export default function POSPage() {
                           />
                         </div>
                         <span className="text-sm font-bold text-primary-400 flex-shrink-0 w-14 text-right">
-                          {fmt(line.unit_price * line.quantity - line.line_discount)}
+                          {fmtCurrency(line.unit_price * line.quantity - line.line_discount, currency)}
                         </span>
                       </div>
                     </div>
@@ -1017,14 +1064,14 @@ export default function POSPage() {
                 <div className="p-4 border-t border-dark-700 space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Subtotal</span>
-                    <span className="text-white font-bold">{fmt(cartSubtotal)}</span>
+                    <span className="text-white font-bold">{fmtCurrency(cartSubtotal, currency)}</span>
                   </div>
                   <button
                     onClick={() => setShowPayment(true)}
                     disabled={!session}
                     className="w-full py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                     <CreditCard className="w-4 h-4" />
-                    {session ? `Pay — ${fmt(cartSubtotal)}` : 'Open a session first'}
+                    {session ? `Pay — ${fmtCurrency(cartSubtotal, currency)}` : 'Open a session first'}
                   </button>
                   {!session && (
                     <p className="text-xs text-amber-400 text-center">Open a cashier session above to process sales</p>
@@ -1053,6 +1100,7 @@ export default function POSPage() {
           session={session}
           customer={customer}
           token={token}
+          currency={currency}
           onComplete={tx => { setShowPayment(false); setCompletedTx(tx); }}
           onClose={() => setShowPayment(false)}
         />
