@@ -107,7 +107,6 @@ const fmtCurrency = (n: number | string, currency: Currency) => {
     ? `K${val.toFixed(2)}`
     : `$${val.toFixed(2)}`;
 };
-// Keep fmt as a backwards-compat alias — replaced by fmtCurrency in the POS UI
 const fmt = (n: number | string) => `$${parseFloat(String(n || 0)).toFixed(2)}`;
 
 const PAYMENT_METHODS = [
@@ -153,12 +152,13 @@ function ProductCard({ product, onAdd, currency }: { product: POSProduct; onAdd:
 // ── LocationPickerModal ───────────────────────────────────────────────────────
 
 function LocationPickerModal({
-  product, onSelect, onClose, token,
+  product, onSelect, onClose, token, currency
 }: {
   product: POSProduct;
   onSelect: (loc: ProductLocation) => void;
   onClose: () => void;
   token: string | null;
+  currency: Currency;
 }) {
   const [locations, setLocations] = useState<ProductLocation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -254,7 +254,7 @@ function PaymentModal({
   const splitShort  = method === 'mixed' ? finalTotal - splitSum : 0;
 
   const canPay = (() => {
-    if (method === 'cash')   return parseFloat(tendered || '0') >= finalTotal - 0.005; // allow exact match
+    if (method === 'cash')   return parseFloat(tendered || '0') >= finalTotal - 0.005;
     if (method === 'mobile') return true;
     if (method === 'card')   return true;
     if (method === 'mixed')  return splitShort <= 0.01;
@@ -322,14 +322,14 @@ function PaymentModal({
                       ? 'bg-primary-500 border-primary-500 text-white'
                       : 'bg-dark-900 border-dark-600 text-gray-400'
                   }`}>
-                  {t === 'none' ? 'None' : t === 'percentage' ? '% Off' : '$ Off'}
+                  {t === 'none' ? 'None' : t === 'percentage' ? '% Off' : `${currency === 'ZMW' ? 'K' : '$'} Off`}
                 </button>
               ))}
             </div>
             {discType !== 'none' && (
               <input type="number" min="0"
                 value={discValue} onChange={e => setDiscValue(e.target.value)}
-                placeholder={discType === 'percentage' ? 'e.g. 10 for 10% off' : 'e.g. 5.00 off total'}
+                placeholder={discType === 'percentage' ? 'e.g. 10 for 10% off' : `e.g. 5.00 off total`}
                 className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm"
               />
             )}
@@ -409,7 +409,7 @@ function PaymentModal({
                 splitShort <= 0.01 ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
               }`}>
                 <span>{splitShort <= 0.01 ? 'Fully covered' : `Remaining to collect`}</span>
-                <span className="font-bold">{splitShort <= 0.01 ? '✓' : fmt(splitShort)}</span>
+                <span className="font-bold">{splitShort <= 0.01 ? '✓' : fmtCurrency(splitShort, currency)}</span>
               </div>
             </div>
           )}
@@ -452,10 +452,12 @@ function PaymentModal({
 // ── ReceiptModal ──────────────────────────────────────────────────────────────
 
 function ReceiptModal({
-  transaction, token, onClose, onNewSale,
+  transaction, token, currency, formatStat, onClose, onNewSale,
 }: {
   transaction: Transaction;
   token: string | null;
+  currency: Currency;
+  formatStat: (amount: number | string) => string;
   onClose: () => void;
   onNewSale: () => void;
 }) {
@@ -501,23 +503,23 @@ function ReceiptModal({
             {transaction.lines.map((l: any, i: number) => (
               <div key={i} className="flex justify-between text-gray-300">
                 <span className="truncate pr-2">{l.product_name} × {l.quantity}</span>
-                <span className="flex-shrink-0">{fmt(l.line_total)}</span>
+                <span className="flex-shrink-0">{formatStat(l.line_total)}</span>
               </div>
             ))}
             {parseFloat(String(transaction.order_discount_amount)) > 0 && (
               <div className="flex justify-between text-green-400 border-t border-dark-700 pt-2">
                 <span>Discount</span>
-                <span>-{fmt(transaction.order_discount_amount)}</span>
+                <span>-{formatStat(transaction.order_discount_amount)}</span>
               </div>
             )}
             <div className="flex justify-between font-bold text-white border-t border-dark-700 pt-2 text-base">
               <span>Total</span>
-              <span className="text-primary-400">{fmt(transaction.total_amount)}</span>
+              <span className="text-primary-400">{formatStat(transaction.total_amount)}</span>
             </div>
             <p className="text-gray-500 text-xs">
               {transaction.payment_method.charAt(0).toUpperCase() + transaction.payment_method.slice(1)} payment
               {parseFloat(String(transaction.change_given)) > 0.005 &&
-                ` · Change: ${fmt(transaction.change_given)}`}
+                ` · Change: ${formatStat(transaction.change_given)}`}
             </p>
           </div>
 
@@ -567,10 +569,11 @@ function ReceiptModal({
 // ── SessionManager ────────────────────────────────────────────────────────────
 
 function SessionManager({
-  session, token, onSessionChange,
+  session, token, formatStat, onSessionChange,
 }: {
   session: POSSession | null;
   token: string | null;
+  formatStat: (amount: number | string) => string;
   onSessionChange: (s: POSSession | null) => void;
 }) {
   const [showOpen, setShowOpen]     = useState(false);
@@ -659,7 +662,7 @@ function SessionManager({
       <div className="grid grid-cols-2 gap-2 text-xs mb-3">
         <div className="bg-dark-800 rounded-lg p-2">
           <p className="text-gray-500 mb-0.5">Revenue</p>
-          <p className="text-white font-bold">{fmt(session.total_sales_amount)}</p>
+          <p className="text-white font-bold">{formatStat(session.total_sales_amount)}</p>
         </div>
         <div className="bg-dark-800 rounded-lg p-2">
           <p className="text-gray-500 mb-0.5">Transactions</p>
@@ -719,6 +722,20 @@ export default function POSPage() {
   const [customerSearch, setCustomerSearch]     = useState('');
   const [customerResults, setCustomerResults]   = useState<Customer[]>([]);
   const [showCustomerDrop, setShowCustomerDrop] = useState(false);
+
+  // Dynamic exchange rate based on DB prices (fallback to 27)
+  const exchangeRate = products.length > 0 && products[0].selling_price_zmw 
+    ? (products[0].selling_price_zmw / products[0].selling_price) 
+    : 27;
+
+  // Global formatter for generic DB amounts (like session revenue)
+  const formatStat = (amountInUSD: number | string) => {
+    const val = parseFloat(String(amountInUSD || 0));
+    if (currency === 'ZMW') {
+      return `K${(val * exchangeRate).toFixed(2)}`;
+    }
+    return `$${val.toFixed(2)}`;
+  };
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/login');
@@ -781,9 +798,8 @@ export default function POSPage() {
         location_id:   loc.location_id,
         location_name: loc.location_name,
         quantity:      1,
-        unit_price:    currency === 'ZMW' && product.selling_price_zmw
-          ? parseFloat(String(product.selling_price_zmw))
-          : parseFloat(String(product.selling_price)),
+        // Always store USD in cart base unit_price so the backend processes it smoothly
+        unit_price:    parseFloat(String(product.selling_price)),
         line_discount: 0,
         uom:           loc.uom,
         max_available: loc.quantity_available,
@@ -801,11 +817,13 @@ export default function POSPage() {
 
   const updateDiscount = (idx: number, val: string) => {
     const updated = [...cart];
-    updated[idx].line_discount = parseFloat(val || '0');
+    // Convert ZMW discount back to USD if in ZMW mode so DB is always stored in USD
+    const discountVal = parseFloat(val || '0');
+    updated[idx].line_discount = currency === 'ZMW' ? discountVal / exchangeRate : discountVal;
     setCart(updated);
   };
 
-  const cartSubtotal = cart.reduce((s, l) => s + (l.unit_price * l.quantity - l.line_discount), 0);
+  const cartSubtotalUSD = cart.reduce((s, l) => s + (l.unit_price * l.quantity - l.line_discount), 0);
 
   const handleNewSale = () => {
     setCart([]); setCustomer(null); setCompletedTx(null);
@@ -835,8 +853,7 @@ export default function POSPage() {
               {(['USD', 'ZMW'] as Currency[]).map(c => (
                 <button
                   key={c}
-                  onClick={() => { setCurrency(c); setCart([]); }}
-                  title={c === 'ZMW' ? 'Switch to Zambian Kwacha — clears cart' : 'Switch to US Dollar — clears cart'}
+                  onClick={() => setCurrency(c)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${
                     currency === c
                       ? c === 'ZMW'
@@ -859,9 +876,9 @@ export default function POSPage() {
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label: 'Revenue Today',    value: fmt(stats.revenue_today),      icon: BarChart3,   cls: 'bg-green-500/10 text-green-400' },
-              { label: 'Sales Today',      value: String(stats.sales_today),     icon: ShoppingBag, cls: 'bg-blue-500/10 text-blue-400'  },
-              { label: 'Month Revenue',    value: fmt(stats.revenue_this_month), icon: Receipt,     cls: 'bg-purple-500/10 text-purple-400' },
+              { label: 'Revenue Today',    value: formatStat(stats.revenue_today),      icon: BarChart3,   cls: 'bg-green-500/10 text-green-400' },
+              { label: 'Sales Today',      value: String(stats.sales_today),            icon: ShoppingBag, cls: 'bg-blue-500/10 text-blue-400'  },
+              { label: 'Month Revenue',    value: formatStat(stats.revenue_this_month), icon: Receipt,     cls: 'bg-purple-500/10 text-purple-400' },
               { label: 'Customers Today',  value: String(stats.unique_customers_today), icon: User, cls: 'bg-amber-500/10 text-amber-400' },
             ].map(s => (
               <div key={s.label} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center gap-3">
@@ -906,7 +923,7 @@ export default function POSPage() {
           <div className="space-y-3">
 
             {/* Session */}
-            <SessionManager session={session} token={token} onSessionChange={setSession} />
+            <SessionManager session={session} token={token} formatStat={formatStat} onSessionChange={setSession} />
 
             {/* Customer */}
             <div className="bg-dark-800 border border-dark-700 rounded-xl p-4">
@@ -932,13 +949,13 @@ export default function POSPage() {
                     {customer.total_transactions > 0 && (
                       <div className="text-right flex-shrink-0">
                         <p className="text-xs text-green-400 font-medium">{customer.total_transactions} orders</p>
-                        <p className="text-xs text-gray-500">${parseFloat(String(customer.lifetime_value||0)).toFixed(2)} LTV</p>
+                        <p className="text-xs text-gray-500">{formatStat(customer.lifetime_value)} LTV</p>
                       </div>
                     )}
                   </div>
                   {customer.payment_terms && customer.payment_terms !== 'Cash' && (
                     <div className="px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-xs text-amber-400">
-                      {customer.payment_terms} account · Credit: ${parseFloat(String(customer.credit_limit||0)).toFixed(2)}
+                      {customer.payment_terms} account · Credit: {formatStat(customer.credit_limit)}
                     </div>
                   )}
                 </div>
@@ -970,12 +987,12 @@ export default function POSPage() {
                             {c.total_transactions > 0 && (
                               <div className="text-right flex-shrink-0">
                                 <p className="text-xs text-green-400 font-medium">{c.total_transactions} orders</p>
-                                <p className="text-xs text-gray-500">${parseFloat(String(c.lifetime_value || 0)).toFixed(2)}</p>
+                                <p className="text-xs text-gray-500">{formatStat(c.lifetime_value)}</p>
                               </div>
                             )}
                           </div>
                           {c.payment_terms && c.payment_terms !== 'Cash' && (
-                            <p className="text-xs text-amber-400 mt-0.5">{c.payment_terms} account · Credit: ${parseFloat(String(c.credit_limit || 0)).toFixed(2)}</p>
+                            <p className="text-xs text-amber-400 mt-0.5">{c.payment_terms} account · Credit: {formatStat(c.credit_limit)}</p>
                           )}
                         </button>
                       ))}
@@ -1010,7 +1027,7 @@ export default function POSPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-white truncate">{line.product_name}</p>
-                          <p className="text-xs text-gray-500">{line.location_name} · {fmt(line.unit_price)} each</p>
+                          <p className="text-xs text-gray-500">{line.location_name} · {formatStat(line.unit_price)} each</p>
                         </div>
                         <button onClick={() => setCart(cart.filter((_, i) => i !== idx))}
                           className="p-1 hover:bg-dark-700 rounded text-gray-500 hover:text-red-400 transition-colors flex-shrink-0">
@@ -1045,14 +1062,14 @@ export default function POSPage() {
                         <div className="flex items-center gap-1 flex-1">
                           <Tag className="w-3 h-3 text-gray-600 flex-shrink-0" />
                           <input type="number" min="0" step="0.01"
-                            value={line.line_discount || ''}
+                            value={(currency === 'ZMW' ? line.line_discount * exchangeRate : line.line_discount) || ''}
                             onChange={e => updateDiscount(idx, e.target.value)}
                             placeholder="Disc."
                             className="w-full px-2 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-gray-300 font-mono min-w-0"
                           />
                         </div>
                         <span className="text-sm font-bold text-primary-400 flex-shrink-0 w-14 text-right">
-                          {fmtCurrency(line.unit_price * line.quantity - line.line_discount, currency)}
+                          {formatStat(line.unit_price * line.quantity - line.line_discount)}
                         </span>
                       </div>
                     </div>
@@ -1064,14 +1081,14 @@ export default function POSPage() {
                 <div className="p-4 border-t border-dark-700 space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Subtotal</span>
-                    <span className="text-white font-bold">{fmtCurrency(cartSubtotal, currency)}</span>
+                    <span className="text-white font-bold">{formatStat(cartSubtotalUSD)}</span>
                   </div>
                   <button
                     onClick={() => setShowPayment(true)}
                     disabled={!session}
                     className="w-full py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                     <CreditCard className="w-4 h-4" />
-                    {session ? `Pay — ${fmtCurrency(cartSubtotal, currency)}` : 'Open a session first'}
+                    {session ? `Pay — ${formatStat(cartSubtotalUSD)}` : 'Open a session first'}
                   </button>
                   {!session && (
                     <p className="text-xs text-amber-400 text-center">Open a cashier session above to process sales</p>
@@ -1088,6 +1105,7 @@ export default function POSPage() {
         <LocationPickerModal
           product={locationPicker}
           token={token}
+          currency={currency}
           onSelect={loc => handleLocationSelect(locationPicker, loc)}
           onClose={() => setLocationPicker(null)}
         />
@@ -1095,7 +1113,7 @@ export default function POSPage() {
 
       {showPayment && (
         <PaymentModal
-          subtotal={cartSubtotal}
+          subtotal={currency === 'ZMW' ? cartSubtotalUSD * exchangeRate : cartSubtotalUSD}
           cartLines={cart}
           session={session}
           customer={customer}
@@ -1110,6 +1128,8 @@ export default function POSPage() {
         <ReceiptModal
           transaction={completedTx}
           token={token}
+          currency={currency}
+          formatStat={formatStat}
           onClose={() => { setCompletedTx(null); loadData(); }}
           onNewSale={handleNewSale}
         />

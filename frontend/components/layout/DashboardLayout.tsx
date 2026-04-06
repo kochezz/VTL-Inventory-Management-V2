@@ -18,8 +18,8 @@ import {
   PackageCheck,
   ShieldCheck,
   ShoppingBag,
-  FlaskConical
-
+  FlaskConical,
+  BadgeDollarSign
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -90,6 +90,12 @@ const navigation: NavItem[] = [
     href: '/sales/pos', 
     icon: ShoppingBag,
     roles: ['admin', 'manager', 'sales', 'staff'] 
+  },
+  { 
+    name: 'Global Pricing', 
+    href: '/pricing', 
+    icon: BadgeDollarSign,
+    roles: ['admin', 'ceo', 'cfo'] 
   },
   { 
     name: 'Quality (QMS)', 

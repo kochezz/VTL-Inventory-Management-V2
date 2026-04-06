@@ -9,7 +9,6 @@ const notificationService = require('./notification-service');
 
 // ── Products & Inventory ──────────────────────────────────────────────────────
 
-// Get all 7 active POS SKUs with their total stock across all locations
 async function getPOSProducts() {
   const result = await query(`
     SELECT
@@ -25,7 +24,7 @@ async function getPOSProducts() {
     LEFT JOIN inventory i ON p.product_id = i.product_id
     WHERE p.sku IN (
       'FD-500ML-REGULAR','FD-500ML-PREMIUM','FD-750ML-REGULAR',
-      'FD-5GAL-REGULAR','SACHET-WATER-500ML',
+      'FD-5GAL-NEW','FD-5GAL-REFILL','SACHET-WATER-500ML',
       'ICE-SPHERE-1200G','ICE-SPHERE-3600G'
     )
     AND p.is_active = true
@@ -36,7 +35,6 @@ async function getPOSProducts() {
   return result.rows;
 }
 
-// Get stock breakdown by location for a specific product (for cashier to pick from)
 async function getProductLocations(productId) {
   const result = await query(`
     SELECT
@@ -61,10 +59,6 @@ async function getProductLocations(productId) {
 // ── Customer Search ───────────────────────────────────────────────────────────
 
 async function searchCustomers(searchTerm) {
-  // Searches the full CRM customers table with tier, contact, territory and
-  // purchase history so the cashier has full context at the point of sale.
-  // Returns active customers only — pending/revision customers are excluded
-  // since they have not yet been approved for account trading.
   const result = await query(`
     SELECT
       c.customer_id,
@@ -79,7 +73,6 @@ async function searchCustomers(searchTerm) {
       c.customer_type,
       c.payment_terms,
       c.credit_limit,
-      -- Sales history from completed transactions
       COUNT(st.transaction_id)        AS total_transactions,
       COALESCE(SUM(st.total_amount), 0) AS lifetime_value,
       MAX(st.transaction_date)        AS last_purchase_date
@@ -101,7 +94,6 @@ async function searchCustomers(searchTerm) {
       c.email, c.phone, c.tier, c.tier_name, c.territory,
       c.customer_type, c.payment_terms, c.credit_limit
     ORDER BY
-      -- Prioritise customers with purchase history (most recent buyers first)
       MAX(st.transaction_date) DESC NULLS LAST,
       c.trading_name ASC
     LIMIT 15
@@ -112,7 +104,6 @@ async function searchCustomers(searchTerm) {
 // ── Session Management ────────────────────────────────────────────────────────
 
 async function openSession(cashierId, openingFloat) {
-  // Check no session already open for this cashier
   const existing = await query(`
     SELECT session_id FROM pos_sessions
     WHERE cashier_id = $1 AND status = 'open'
@@ -159,14 +150,9 @@ async function closeSession(sessionId, cashierId, closingCash, notes) {
   if (session.rows.length === 0) throw new Error('Session not found');
   if (session.rows[0].status !== 'open') throw new Error('Session is already closed');
 
-  // Calculate variance
   const expectedCash = parseFloat(session.rows[0].opening_float || 0) +
                        parseFloat(session.rows[0].total_sales_amount || 0);
-  const variance = parseFloat(closingCash) - expectedCash;
 
-  // Note: variance is a GENERATED ALWAYS AS STORED column in pos_sessions.
-  // The DB computes it automatically as (closing_cash - expected_cash).
-  // Never set it explicitly in UPDATE — only set closing_cash and expected_cash.
   const result = await query(`
     UPDATE pos_sessions
     SET status        = 'closed',
@@ -228,10 +214,10 @@ async function createTransaction(data, cashierId) {
     session_id,
     customer_id,
     customer_name,
-    lines,                  // [{ product_id, location_id, quantity, unit_price, line_discount }]
-    order_discount_type,    // none | percentage | fixed
+    lines,
+    order_discount_type,
     order_discount_value,
-    payment_method,         // cash | mobile | card | mixed
+    payment_method,
     amount_tendered,
     cash_amount,
     mobile_amount,
@@ -242,11 +228,9 @@ async function createTransaction(data, cashierId) {
 
   if (!lines || lines.length === 0) throw new Error('At least one product line is required');
 
-  // Generate receipt number
   const receiptRes = await query(`SELECT generate_receipt_number() AS receipt_number`);
   const receiptNumber = receiptRes.rows[0].receipt_number;
 
-  // Calculate totals
   let subtotal = 0;
   const evaluatedLines = lines.map(line => {
     const lineSubtotal = parseFloat(line.unit_price) * parseFloat(line.quantity);
@@ -256,7 +240,6 @@ async function createTransaction(data, cashierId) {
     return { ...line, lineSubtotal, lineDiscount, lineTotal };
   });
 
-  // Order-level discount
   let orderDiscountAmount = 0;
   if (order_discount_type === 'percentage' && order_discount_value > 0) {
     orderDiscountAmount = subtotal * (parseFloat(order_discount_value) / 100);
@@ -265,12 +248,10 @@ async function createTransaction(data, cashierId) {
   }
   const totalAmount = subtotal - orderDiscountAmount;
 
-  // Change calculation for cash
   const changGiven = payment_method === 'cash'
     ? Math.max(0, parseFloat(amount_tendered || 0) - totalAmount)
     : 0;
 
-  // Insert transaction header
   const txResult = await query(`
     INSERT INTO sales_transactions (
       receipt_number, session_id, cashier_id, customer_id, customer_name,
@@ -308,9 +289,7 @@ async function createTransaction(data, cashierId) {
 
   const transaction = txResult.rows[0];
 
-  // Insert line items + deduct inventory
   for (const line of evaluatedLines) {
-    // Insert line
     await query(`
       INSERT INTO sales_transaction_lines (
         transaction_id, product_id, quantity, unit_price,
@@ -327,7 +306,6 @@ async function createTransaction(data, cashierId) {
       line.uom || 'piece',
     ]);
 
-    // Deduct from inventory at the chosen location
     await query(`
       UPDATE inventory
       SET quantity_on_hand = quantity_on_hand - $1,
@@ -335,8 +313,6 @@ async function createTransaction(data, cashierId) {
       WHERE product_id = $2 AND location_id = $3
     `, [parseFloat(line.quantity), line.product_id, line.location_id]);
 
-    // Log inventory transaction — transaction_number is auto-generated by trigger
-    // Try 'sale' first (added by migration), fall back to 'issue' if ENUM not updated yet
     try {
       await query(`
         INSERT INTO inventory_transactions (
@@ -353,16 +329,10 @@ async function createTransaction(data, cashierId) {
           'sales_receipt', 'completed', NOW()
         )
       `, [
-        uuidv4(),
-        line.product_id,
-        parseFloat(line.quantity),
-        line.uom || 'piece',
-        line.location_id,
-        cashierId,
-        receiptNumber,
+        uuidv4(), line.product_id, parseFloat(line.quantity), line.uom || 'piece',
+        line.location_id, cashierId, receiptNumber,
       ]);
     } catch (e) {
-      // Fall back to 'issue' if 'sale' ENUM value not yet added
       try {
         await query(`
           INSERT INTO inventory_transactions (
@@ -379,21 +349,14 @@ async function createTransaction(data, cashierId) {
             'sales_receipt', 'completed', NOW()
           )
         `, [
-          uuidv4(),
-          line.product_id,
-          parseFloat(line.quantity),
-          line.uom || 'piece',
-          line.location_id,
-          cashierId,
-          receiptNumber,
+          uuidv4(), line.product_id, parseFloat(line.quantity), line.uom || 'piece',
+          line.location_id, cashierId, receiptNumber,
         ]);
       } catch (e2) {
-        // If inventory logging fails entirely, log but don't block the sale
-        console.error('⚠️  Inventory transaction log failed (sale still completed):', e2.message);
+        console.error('⚠️ Inventory transaction log failed (sale still completed):', e2.message);
       }
     }
 
-    // Check low stock and alert
     try {
       const stockCheck = await query(`
         SELECT i.quantity_on_hand, p.reorder_point, p.product_name, p.sku
@@ -413,7 +376,6 @@ async function createTransaction(data, cashierId) {
     }
   }
 
-  // Update session totals
   if (session_id) {
     await query(`
       UPDATE pos_sessions
@@ -424,7 +386,6 @@ async function createTransaction(data, cashierId) {
     `, [totalAmount, session_id]);
   }
 
-  // Email receipt if requested
   if (receipt_email_address) {
     try {
       await sendReceiptEmail(transaction.transaction_id, receipt_email_address);
@@ -515,7 +476,6 @@ async function voidTransaction(transactionId, cashierId, reason) {
   if (!tx) throw new Error('Transaction not found');
   if (tx.status === 'voided') throw new Error('Transaction is already voided');
 
-  // Reverse inventory deductions
   for (const line of tx.lines) {
     await query(`
       UPDATE inventory
@@ -525,7 +485,6 @@ async function voidTransaction(transactionId, cashierId, reason) {
     `, [parseFloat(line.quantity), line.product_id, line.inventory_location_id]);
   }
 
-  // Update session totals
   if (tx.session_id) {
     await query(`
       UPDATE pos_sessions
@@ -573,14 +532,16 @@ async function sendReceiptEmail(transactionId, emailAddress) {
   const { Resend } = require('resend');
   const resend = new Resend(process.env.SMTP_PASS);
 
+  // VAT Calculation (Prices are VAT Inclusive)
+  const totalInclVat = parseFloat(tx.total_amount);
+  const totalExclVat = totalInclVat / 1.16; // Extract 16% VAT
+  const vatAmount = totalInclVat - totalExclVat;
+
   const lineRows = tx.lines.map(l => `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;">${l.product_name}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;">${l.quantity}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">$${parseFloat(l.unit_price).toFixed(2)}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:#dc2626;">
-        ${parseFloat(l.line_discount) > 0 ? `-$${parseFloat(l.line_discount).toFixed(2)}` : '—'}
-      </td>
       <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600;">$${parseFloat(l.line_total).toFixed(2)}</td>
     </tr>`
   ).join('');
@@ -589,7 +550,8 @@ async function sendReceiptEmail(transactionId, emailAddress) {
     <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
       <div style="background:#0F172A;padding:24px;text-align:center;">
         <h1 style="color:#FFFFFF;margin:0;font-size:20px;letter-spacing:1px;">VILAGIO</h1>
-        <p style="color:#94A3B8;margin:4px 0 0;font-size:12px;">FreshDrip Water — Official Receipt</p>
+        <p style="color:#94A3B8;margin:4px 0 0;font-size:12px;">Tax Invoice / Official Receipt</p>
+        <p style="color:#94A3B8;margin:4px 0 0;font-size:11px;">TPIN: 1001923847 (Example)</p>
       </div>
       <div style="padding:24px;">
         <div style="background:#F8FAFC;border-radius:6px;padding:16px;margin-bottom:20px;">
@@ -605,23 +567,28 @@ async function sendReceiptEmail(transactionId, emailAddress) {
               <th style="padding:10px 12px;color:#fff;text-align:left;">Product</th>
               <th style="padding:10px 12px;color:#fff;text-align:center;">Qty</th>
               <th style="padding:10px 12px;color:#fff;text-align:right;">Price</th>
-              <th style="padding:10px 12px;color:#fff;text-align:right;">Discount</th>
               <th style="padding:10px 12px;color:#fff;text-align:right;">Total</th>
             </tr>
           </thead>
           <tbody>${lineRows}</tbody>
         </table>
         <div style="margin-top:16px;border-top:2px solid #e2e8f0;padding-top:16px;">
+          
           <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748B;margin-bottom:6px;">
-            <span>Subtotal</span><span>$${parseFloat(tx.subtotal).toFixed(2)}</span>
+            <span>Subtotal (Excl. VAT)</span><span>$${totalExclVat.toFixed(2)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748B;margin-bottom:6px;">
+            <span>VAT (16%)</span><span>$${vatAmount.toFixed(2)}</span>
           </div>
           ${parseFloat(tx.order_discount_amount) > 0 ? `
           <div style="display:flex;justify-content:space-between;font-size:13px;color:#dc2626;margin-bottom:6px;">
-            <span>Discount</span><span>-$${parseFloat(tx.order_discount_amount).toFixed(2)}</span>
+            <span>Discount Applied</span><span>-$${parseFloat(tx.order_discount_amount).toFixed(2)}</span>
           </div>` : ''}
+
           <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;color:#0F172A;margin-top:8px;border-top:1px solid #e2e8f0;padding-top:8px;">
-            <span>Total</span><span>$${parseFloat(tx.total_amount).toFixed(2)}</span>
+            <span>Total (Incl. VAT)</span><span>$${totalInclVat.toFixed(2)}</span>
           </div>
+          
           <div style="margin-top:12px;font-size:12px;color:#64748B;">
             Payment: <strong style="color:#0F172A;">${tx.payment_method.charAt(0).toUpperCase() + tx.payment_method.slice(1)}</strong>
             ${parseFloat(tx.change_given) > 0 ? ` · Change: <strong>$${parseFloat(tx.change_given).toFixed(2)}</strong>` : ''}
@@ -629,16 +596,15 @@ async function sendReceiptEmail(transactionId, emailAddress) {
         </div>
       </div>
       <div style="background:#F1F5F9;padding:16px;text-align:center;border-top:1px solid #e2e8f0;">
-        <p style="color:#94A3B8;font-size:11px;margin:0;">
-          Vilagio Technologies Ltd. · Thank you for your purchase · www.vilag.io
-        </p>
+        <p style="color:#94A3B8;font-size:11px;margin:0;">Prices are inclusive of 16% VAT.</p>
+        <p style="color:#94A3B8;font-size:11px;margin:4px 0 0;">Vilagio Trading Limited · www.vilag.io</p>
       </div>
     </div>`;
 
   const { error } = await resend.emails.send({
     from: `Vilagio ERP <${process.env.EMAIL_FROM || 'noreply@vilag.io'}>`,
     to: [emailAddress],
-    subject: `Your FreshDrip Receipt — ${tx.receipt_number}`,
+    subject: `Tax Invoice / Receipt — ${tx.receipt_number}`,
     html,
   });
 
@@ -649,8 +615,6 @@ async function sendReceiptEmail(transactionId, emailAddress) {
     SET receipt_emailed = true, receipt_email_address = $1, updated_at = NOW()
     WHERE transaction_id = $2
   `, [emailAddress, transactionId]);
-
-  console.log(`📧 Receipt emailed to ${emailAddress} for ${tx.receipt_number}`);
 }
 
 module.exports = {

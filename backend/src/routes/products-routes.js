@@ -149,5 +149,27 @@ router.get('/:id', async (req, res) => {
     res.status(404).json({ message: error.message });
   }
 });
+// PUT /api/products/pricing - Bulk update pricing (Admin/Execs only)
+const { pool } = require('../config/database');
+router.put('/pricing', authorize(['admin', 'ceo', 'cfo']), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const p of req.body.products) {
+      await client.query(
+        `UPDATE products SET selling_price = $1, selling_price_zmw = $2 WHERE product_id = $3`,
+        [p.selling_price || 0, p.selling_price_zmw || null, p.product_id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Prices updated successfully' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Pricing update error:', error);
+    res.status(500).json({ message: 'Failed to update pricing' });
+  } finally {
+    client.release();
+  }
+});
 
 module.exports = router;
