@@ -316,40 +316,41 @@ async function createTransaction(data, cashierId) {
     try {
       await query(`
         INSERT INTO inventory_transactions (
-          transaction_id, transaction_type,
+          transaction_id, transaction_number, transaction_type_id,
           product_id, quantity, uom,
           from_location_id, transaction_date,
           performed_by, reference_document_number,
           reference_document_type, status, created_at
         ) VALUES (
-          $1, 'sale',
-          $2, $3, $4,
-          $5, NOW(),
-          $6, $7,
+          $1, $2, (SELECT transaction_type_id FROM transaction_types WHERE type_name = 'sale' LIMIT 1),
+          $3, $4, $5,
+          $6, NOW(),
+          $7, $8,
           'sales_receipt', 'completed', NOW()
         )
       `, [
-        uuidv4(), line.product_id, parseFloat(line.quantity), line.uom || 'piece',
+        uuidv4(), receiptNumber, line.product_id, parseFloat(line.quantity), line.uom || 'piece',
         line.location_id, cashierId, receiptNumber,
       ]);
     } catch (e) {
+      // Fallback if 'sale' transaction type isn't defined, use 'issue'
       try {
         await query(`
           INSERT INTO inventory_transactions (
-            transaction_id, transaction_type,
+            transaction_id, transaction_number, transaction_type_id,
             product_id, quantity, uom,
             from_location_id, transaction_date,
             performed_by, reference_document_number,
             reference_document_type, status, created_at
           ) VALUES (
-            $1, 'issue',
-            $2, $3, $4,
-            $5, NOW(),
-            $6, $7,
+            $1, $2, (SELECT transaction_type_id FROM transaction_types WHERE type_name = 'issue' LIMIT 1),
+            $3, $4, $5,
+            $6, NOW(),
+            $7, $8,
             'sales_receipt', 'completed', NOW()
           )
         `, [
-          uuidv4(), line.product_id, parseFloat(line.quantity), line.uom || 'piece',
+          uuidv4(), receiptNumber, line.product_id, parseFloat(line.quantity), line.uom || 'piece',
           line.location_id, cashierId, receiptNumber,
         ]);
       } catch (e2) {
