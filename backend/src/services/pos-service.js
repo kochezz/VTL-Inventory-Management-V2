@@ -294,15 +294,14 @@ async function createTransaction(data, cashierId) {
     await query(`
       INSERT INTO sales_transaction_lines (
         transaction_id, product_id, quantity, unit_price,
-        line_discount, line_total, inventory_location_id, uom
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        line_discount, inventory_location_id, uom
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
     `, [
       transaction.transaction_id,
       line.product_id,
       parseFloat(line.quantity),
       parseFloat(line.unit_price),
       line.lineDiscount,
-      line.lineTotal,
       line.location_id,
       line.uom || 'piece',
     ]);
