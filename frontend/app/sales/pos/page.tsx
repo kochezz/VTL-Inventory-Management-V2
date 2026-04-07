@@ -264,6 +264,14 @@ function PaymentModal({
   const handleComplete = async () => {
     setError(''); setSubmitting(true);
     try {
+      // FIX: Convert the tendered Kwacha amounts back to USD before sending to the backend!
+      const rate = currency === 'ZMW' ? exchangeRate : 1;
+      const orderDiscValUSD = discType === 'fixed' ? parseFloat(discValue || '0') / rate : parseFloat(discValue || '0');
+      const tenderedValUSD = method === 'cash' ? parseFloat(tendered || String(finalTotal)) / rate : finalTotal / rate;
+      const cashAmtUSD = method === 'cash' ? finalTotal / rate : parseFloat(cashAmt || '0') / rate;
+      const mobileAmtUSD = method === 'mobile' ? finalTotal / rate : parseFloat(mobileAmt || '0') / rate;
+      const cardAmtUSD = method === 'card' ? finalTotal / rate : parseFloat(cardAmt || '0') / rate;
+
       const res = await axios.post(`${API_URL}/sales/transactions`, {
         session_id:           session?.session_id || null,
         customer_id:          customer?.customer_id || null,
@@ -272,17 +280,17 @@ function PaymentModal({
           product_id:    l.product_id,
           location_id:   l.location_id,
           quantity:      l.quantity,
-          unit_price:    l.unit_price,
-          line_discount: l.line_discount,
+          unit_price:    l.unit_price, // Already in USD
+          line_discount: l.line_discount, // Already in USD
           uom:           l.uom,
         })),
         order_discount_type:  discType,
-        order_discount_value: parseFloat(discValue || '0'),
+        order_discount_value: orderDiscValUSD,
         payment_method:       method,
-        amount_tendered:      method === 'cash' ? parseFloat(tendered || String(finalTotal)) : finalTotal,
-        cash_amount:          method === 'cash' ? finalTotal : parseFloat(cashAmt || '0'),
-        mobile_amount:        method === 'mobile' ? finalTotal : parseFloat(mobileAmt || '0'),
-        card_amount:          method === 'card' ? finalTotal : parseFloat(cardAmt || '0'),
+        amount_tendered:      tenderedValUSD,
+        cash_amount:          cashAmtUSD,
+        mobile_amount:        mobileAmtUSD,
+        card_amount:          cardAmtUSD,
         receipt_email_address: emailReceipt && receiptEmail ? receiptEmail : null,
       }, { headers: { Authorization: `Bearer ${token}` } });
       onComplete(res.data.transaction);
@@ -488,7 +496,7 @@ function ReceiptModal({
     }
   };
 
-  const handlePrint = () => {
+const handlePrint = () => {
     const printWindow = window.open('', '_blank', 'width=800,height=800');
     if (!printWindow) return;
 
@@ -496,12 +504,13 @@ function ReceiptModal({
     const totalExclVat = totalInclVat / 1.16;
     const vatAmount = totalInclVat - totalExclVat;
 
+    // FIX: Added specific classes to ensure the table columns don't squish together
     const lineRows = transaction.lines.map((l: any) => `
       <tr>
-        <td style="padding:8px 0;border-bottom:1px dashed #ccc;">${l.product_name}</td>
-        <td style="padding:8px 0;border-bottom:1px dashed #ccc;text-align:center;">${l.quantity}</td>
-        <td style="padding:8px 0;border-bottom:1px dashed #ccc;text-align:right;">${formatStat(l.unit_price)}</td>
-        <td style="padding:8px 0;border-bottom:1px dashed #ccc;text-align:right;font-weight:bold;">${formatStat(l.line_total)}</td>
+        <td class="col-item" style="padding:8px 0;border-bottom:1px dashed #ccc;">${l.product_name}</td>
+        <td class="col-qty" style="padding:8px 0;border-bottom:1px dashed #ccc;">${l.quantity}</td>
+        <td class="col-price" style="padding:8px 0;border-bottom:1px dashed #ccc;">${formatStat(l.unit_price)}</td>
+        <td class="col-total" style="padding:8px 0;border-bottom:1px dashed #ccc;">${formatStat(l.line_total)}</td>
       </tr>
     `).join('');
 
@@ -510,13 +519,21 @@ function ReceiptModal({
         <head>
           <title>Receipt ${transaction.receipt_number}</title>
           <style>
-            body { font-family: 'Courier New', Courier, monospace; color: #000; max-width: 320px; margin: 0 auto; padding: 20px; font-size: 14px; }
+            body { font-family: 'Courier New', Courier, monospace; color: #000; max-width: 340px; margin: 0 auto; padding: 20px; font-size: 13px; }
             .header { text-align: center; margin-bottom: 20px; }
-            .logo { max-width: 120px; margin-bottom: 10px; filter: invert(1); } /* Inverts white logo to black for printing */
+            .logo { max-width: 120px; margin-bottom: 10px; filter: invert(1); }
             .company-name { font-weight: bold; font-size: 18px; margin: 0 0 5px 0; }
             .company-details { font-size: 12px; margin: 0 0 15px 0; line-height: 1.4; }
             .divider { border-top: 1px dashed #000; margin: 10px 0; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px; }
+            
+            /* FIX: Strict table layout forces text to wrap instead of squishing columns */
+            table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px; table-layout: fixed; }
+            th, td { vertical-align: top; word-wrap: break-word; }
+            .col-item { width: 45%; text-align: left; padding-right: 5px; }
+            .col-qty { width: 12%; text-align: center; }
+            .col-price { width: 20%; text-align: right; }
+            .col-total { width: 23%; text-align: right; font-weight: bold; }
+            
             .totals { width: 100%; font-size: 13px; margin-bottom: 20px; }
             .totals td { padding: 4px 0; }
             .bold { font-weight: bold; }
@@ -527,7 +544,7 @@ function ReceiptModal({
           <div class="header">
             <img src="/logo-white.png" class="logo" alt="Vilagio" />
             <p class="company-name">Vilagio Trading Limited</p>
-            <p class="company-details">Plot 28441 50/50<br/>Kitwe Road, Chingola<br/>Email: info@vilag.io<br/>Tel: +260571669256</p>
+            <p class="company-details">Plot 28441 50/50<br/>Kitwe Road, Chingola<br/>Email: info@vilag.io<br/>Tel: +260571669256<br/><strong>TPIN: 2003903432 </strong></p>
             <p style="font-size: 16px; font-weight: bold; margin: 10px 0;">TAX INVOICE</p>
           </div>
           
@@ -541,10 +558,10 @@ function ReceiptModal({
           <table>
             <thead>
               <tr>
-                <th style="text-align:left;border-bottom:1px solid #000;padding-bottom:5px;">Item</th>
-                <th style="text-align:center;border-bottom:1px solid #000;padding-bottom:5px;">Qty</th>
-                <th style="text-align:right;border-bottom:1px solid #000;padding-bottom:5px;">Price</th>
-                <th style="text-align:right;border-bottom:1px solid #000;padding-bottom:5px;">Total</th>
+                <th class="col-item" style="border-bottom:1px solid #000;padding-bottom:5px;">Item</th>
+                <th class="col-qty" style="border-bottom:1px solid #000;padding-bottom:5px;">Qty</th>
+                <th class="col-price" style="border-bottom:1px solid #000;padding-bottom:5px;">Price</th>
+                <th class="col-total" style="border-bottom:1px solid #000;padding-bottom:5px;">Total</th>
               </tr>
             </thead>
             <tbody>${lineRows}</tbody>
@@ -572,7 +589,7 @@ function ReceiptModal({
 
           <div style="font-size: 12px; margin-bottom: 20px;">
             <p style="margin: 2px 0;"><strong>Payment:</strong> ${transaction.payment_method.toUpperCase()}</p>
-            ${parseFloat(String(transaction.change_given)) > 0 ? `<p style="margin: 2px 0;"><strong>Change:</strong> ${formatStat(transaction.change_given)}</p>` : ''}
+            ${parseFloat(String(transaction.change_given)) > 0.005 ? `<p style="margin: 2px 0;"><strong>Change:</strong> ${formatStat(transaction.change_given)}</p>` : ''}
           </div>
 
           <div class="divider"></div>

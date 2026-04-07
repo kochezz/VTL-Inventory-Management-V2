@@ -649,6 +649,7 @@ async function sendReceiptEmail(transactionId, emailAddress, currency = 'USD', e
   const { error } = await resend.emails.send({
     from: `Vilagio ERP <${process.env.EMAIL_FROM || 'noreply@vilag.io'}>`,
     to: [emailAddress],
+    reply_to: 'sales@vilag.io',
     subject: `Tax Invoice / Receipt — ${tx.receipt_number}`,
     html,
   });
