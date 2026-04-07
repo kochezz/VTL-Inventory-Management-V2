@@ -529,79 +529,120 @@ async function getPOSDashboardStats() {
 
 // ── Receipt Email ─────────────────────────────────────────────────────────────
 
-async function sendReceiptEmail(transactionId, emailAddress) {
+async function sendReceiptEmail(transactionId, emailAddress, currency = 'USD', exchangeRate = 27) {
   const tx = await getTransactionById(transactionId);
   if (!tx) throw new Error('Transaction not found');
 
   const { Resend } = require('resend');
   const resend = new Resend(process.env.SMTP_PASS);
 
-  // INTACT: 16% VAT Extraction Logic
+  // Dynamic Currency Formatter
+  const rate = parseFloat(exchangeRate) || 27;
+  const sym = currency === 'ZMW' ? 'K' : '$';
+  const fmt = (usdVal) => `${sym}${(parseFloat(usdVal) * (currency === 'ZMW' ? rate : 1)).toFixed(2)}`;
+
+  // VAT Calculation (Prices are VAT Inclusive)
   const totalInclVat = parseFloat(tx.total_amount);
   const totalExclVat = totalInclVat / 1.16; 
   const vatAmount = totalInclVat - totalExclVat;
 
   const lineRows = tx.lines.map(l => `
     <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;">${l.product_name}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;">${l.quantity}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;">$${parseFloat(l.unit_price).toFixed(2)}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600;">$${parseFloat(l.line_total).toFixed(2)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#334155;">${l.product_name}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center;color:#334155;">${l.quantity}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:#334155;">${fmt(l.unit_price)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600;color:#0F172A;">${fmt(l.line_total)}</td>
     </tr>`
   ).join('');
 
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
-      <div style="background:#0F172A;padding:24px;text-align:center;">
-        <h1 style="color:#FFFFFF;margin:0;font-size:20px;letter-spacing:1px;">VILAGIO</h1>
-        <p style="color:#94A3B8;margin:4px 0 0;font-size:12px;">Tax Invoice / Official Receipt</p>
-        <p style="color:#94A3B8;margin:4px 0 0;font-size:11px;">TPIN: 1001923847 (Example)</p>
+  // Dynamic Loyalty/Registration Banner
+  let loyaltyBanner = '';
+  if (!tx.customer_id) {
+    // Unregistered / Retail Walk-in
+    loyaltyBanner = `
+      <div style="background:#F0FDF4;padding:20px;border-radius:8px;margin-top:24px;border-left:4px solid #22C55E;">
+        <h3 style="margin:0 0 8px;color:#166534;font-size:16px;">Join the FreshDrip Loyalty Program! 💧</h3>
+        <p style="margin:0 0 12px;color:#15803D;font-size:13px;line-height:1.5;">Love our water? Register as a Retail Customer to enjoy automated repeat orders, fast-tracked checkouts, and exclusive discounts.</p>
+        <p style="margin:0;color:#15803D;font-size:13px;"><strong>How to join:</strong> Simply reply to this email with your <em>Full Name, Phone Number, and Delivery Address</em>.</p>
       </div>
-      <div style="padding:24px;">
-        <div style="background:#F8FAFC;border-radius:6px;padding:16px;margin-bottom:20px;">
-          <p style="margin:0 0 6px;font-size:13px;color:#64748B;">Receipt Number</p>
-          <p style="margin:0;font-size:18px;font-weight:700;color:#0F172A;">${tx.receipt_number}</p>
-          <p style="margin:6px 0 0;font-size:12px;color:#64748B;">
-            ${new Date(tx.transaction_date).toLocaleString('en-GB')} · Cashier: ${tx.cashier_name}
-          </p>
+      <div style="background:#EFF6FF;padding:20px;border-radius:8px;margin-top:12px;border-left:4px solid #3B82F6;">
+        <h3 style="margin:0 0 8px;color:#1E3A8A;font-size:16px;">Are you a Business? 🏢</h3>
+        <p style="margin:0 0 12px;color:#1D4ED8;font-size:13px;line-height:1.5;">Open a B2B Commercial Account for wholesale pricing and flexible credit terms.</p>
+        <p style="margin:0;color:#1D4ED8;font-size:13px;"><strong>Requirements:</strong> Reply with your <em>TPIN Certificate, PACRA Registration, and Director's ID</em> to begin onboarding.</p>
+      </div>
+    `;
+  } else {
+    // Registered B2B / Loyal Customer
+    loyaltyBanner = `
+      <div style="background:#F0FDF4;padding:20px;border-radius:8px;margin-top:24px;border-left:4px solid #22C55E;">
+        <h3 style="margin:0 0 8px;color:#166534;font-size:16px;">Thank you for being a Vilagio Partner! 💧</h3>
+        <p style="margin:0;color:#15803D;font-size:13px;line-height:1.5;">Your loyalty drives us. Ask your sales rep about our volume-based rebate tiers on your next order!</p>
+      </div>
+    `;
+  }
+
+  const html = `
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;background:#ffffff;">
+      <div style="background:#0F172A;padding:32px 24px;text-align:center;">
+        <img src="https://vilagio-erp-frontend.vercel.app/logo-white.png" alt="Vilagio Logo" style="height:48px;margin-bottom:16px;display:block;margin-left:auto;margin-right:auto;" />
+        <h1 style="color:#FFFFFF;margin:0;font-size:22px;letter-spacing:1px;font-weight:600;">Tax Invoice / Official Receipt</h1>
+      </div>
+      
+      <div style="padding:32px 24px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:32px;border-bottom:2px solid #F1F5F9;padding-bottom:24px;">
+          <div>
+            <h3 style="margin:0 0 8px;color:#0F172A;font-size:15px;">Vilagio Trading Limited</h3>
+            <p style="margin:0;color:#64748B;font-size:13px;line-height:1.6;">Plot 28441 50/50<br/>Kitwe Road, Chingola<br/>Email: info@vilag.io<br/>Tel: +260571669256</p>
+          </div>
+          <div style="text-align:right;">
+            <p style="margin:0 0 6px;font-size:13px;color:#64748B;text-transform:uppercase;letter-spacing:0.5px;">Receipt Number</p>
+            <p style="margin:0 0 8px;font-size:18px;font-weight:700;color:#0F172A;">${tx.receipt_number}</p>
+            <p style="margin:0;font-size:13px;color:#64748B;">${new Date(tx.transaction_date).toLocaleString('en-GB')}</p>
+            <p style="margin:4px 0 0;font-size:13px;color:#64748B;">Cashier: ${tx.cashier_name}</p>
+          </div>
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:24px;">
           <thead>
-            <tr style="background:#1E293B;">
-              <th style="padding:10px 12px;color:#fff;text-align:left;">Product</th>
-              <th style="padding:10px 12px;color:#fff;text-align:center;">Qty</th>
-              <th style="padding:10px 12px;color:#fff;text-align:right;">Price</th>
-              <th style="padding:10px 12px;color:#fff;text-align:right;">Total</th>
+            <tr style="background:#F8FAFC;">
+              <th style="padding:12px;color:#475569;text-align:left;font-weight:600;border-radius:6px 0 0 6px;">Product</th>
+              <th style="padding:12px;color:#475569;text-align:center;font-weight:600;">Qty</th>
+              <th style="padding:12px;color:#475569;text-align:right;font-weight:600;">Price</th>
+              <th style="padding:12px;color:#475569;text-align:right;font-weight:600;border-radius:0 6px 6px 0;">Total</th>
             </tr>
           </thead>
           <tbody>${lineRows}</tbody>
         </table>
-        <div style="margin-top:16px;border-top:2px solid #e2e8f0;padding-top:16px;">
-          
-          <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748B;margin-bottom:6px;">
-            <span>Subtotal (Excl. VAT)</span><span>$${totalExclVat.toFixed(2)}</span>
+
+        <div style="width:100%;max-width:300px;margin-left:auto;border-top:2px solid #E2E8F0;padding-top:16px;">
+          <div style="display:flex;justify-content:space-between;font-size:14px;color:#64748B;margin-bottom:8px;">
+            <span>Subtotal (Excl. VAT)</span><span>${fmt(totalExclVat)}</span>
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:13px;color:#64748B;margin-bottom:6px;">
-            <span>VAT (16%)</span><span>$${vatAmount.toFixed(2)}</span>
+          <div style="display:flex;justify-content:space-between;font-size:14px;color:#64748B;margin-bottom:8px;">
+            <span>VAT (16%)</span><span>${fmt(vatAmount)}</span>
           </div>
           ${parseFloat(tx.order_discount_amount) > 0 ? `
-          <div style="display:flex;justify-content:space-between;font-size:13px;color:#dc2626;margin-bottom:6px;">
-            <span>Discount Applied</span><span>-$${parseFloat(tx.order_discount_amount).toFixed(2)}</span>
+          <div style="display:flex;justify-content:space-between;font-size:14px;color:#DC2626;margin-bottom:8px;">
+            <span>Discount Applied</span><span>-${fmt(tx.order_discount_amount)}</span>
           </div>` : ''}
 
-          <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;color:#0F172A;margin-top:8px;border-top:1px solid #e2e8f0;padding-top:8px;">
-            <span>Total (Incl. VAT)</span><span>$${totalInclVat.toFixed(2)}</span>
-          </div>
-          
-          <div style="margin-top:12px;font-size:12px;color:#64748B;">
-            Payment: <strong style="color:#0F172A;">${tx.payment_method.charAt(0).toUpperCase() + tx.payment_method.slice(1)}</strong>
-            ${parseFloat(tx.change_given) > 0 ? ` · Change: <strong>$${parseFloat(tx.change_given).toFixed(2)}</strong>` : ''}
+          <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:700;color:#0F172A;margin-top:12px;border-top:1px solid #E2E8F0;padding-top:12px;">
+            <span>Total (Incl. VAT)</span><span style="color:#2563EB;">${fmt(totalInclVat)}</span>
           </div>
         </div>
+
+        <div style="margin-top:24px;padding:16px;background:#F8FAFC;border-radius:8px;font-size:13px;color:#475569;text-align:center;">
+          Payment Method: <strong style="color:#0F172A;">${tx.payment_method.toUpperCase()}</strong>
+          ${parseFloat(tx.change_given) > 0 ? ` &nbsp;|&nbsp; Change Given: <strong style="color:#0F172A;">${fmt(tx.change_given)}</strong>` : ''}
+        </div>
+
+        ${loyaltyBanner}
+        
       </div>
-      <div style="background:#F1F5F9;padding:16px;text-align:center;border-top:1px solid #e2e8f0;">
-        <p style="color:#94A3B8;font-size:11px;margin:0;">Prices are inclusive of 16% VAT.</p>
-        <p style="color:#94A3B8;font-size:11px;margin:4px 0 0;">Vilagio Trading Limited · www.vilag.io</p>
+      
+      <div style="background:#F1F5F9;padding:24px;text-align:center;border-top:1px solid #E2E8F0;">
+        <p style="color:#64748B;font-size:12px;margin:0;">Prices are inclusive of 16% VAT where applicable.</p>
+        <p style="color:#64748B;font-size:12px;margin:6px 0 0;">&copy; ${new Date().getFullYear()} Vilagio Trading Limited. All rights reserved.</p>
       </div>
     </div>`;
 

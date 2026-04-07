@@ -452,11 +452,12 @@ function PaymentModal({
 // ── ReceiptModal ──────────────────────────────────────────────────────────────
 
 function ReceiptModal({
-  transaction, token, currency, formatStat, onClose, onNewSale,
+  transaction, token, currency, exchangeRate, formatStat, onClose, onNewSale,
 }: {
   transaction: Transaction;
   token: string | null;
   currency: Currency;
+  exchangeRate: number;
   formatStat: (amount: number | string) => string;
   onClose: () => void;
   onNewSale: () => void;
@@ -472,7 +473,11 @@ function ReceiptModal({
     try {
       await axios.post(
         `${API_URL}/sales/transactions/${transaction.transaction_id}/email-receipt`,
-        { email: emailAddr.trim() },
+        { 
+          email: emailAddr.trim(),
+          currency: currency,
+          exchangeRate: exchangeRate 
+        },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setEmailSent(true);
@@ -481,6 +486,113 @@ function ReceiptModal({
     } finally {
       setSending(false);
     }
+  };
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank', 'width=800,height=800');
+    if (!printWindow) return;
+
+    const totalInclVat = parseFloat(String(transaction.total_amount));
+    const totalExclVat = totalInclVat / 1.16;
+    const vatAmount = totalInclVat - totalExclVat;
+
+    const lineRows = transaction.lines.map((l: any) => `
+      <tr>
+        <td style="padding:8px 0;border-bottom:1px dashed #ccc;">${l.product_name}</td>
+        <td style="padding:8px 0;border-bottom:1px dashed #ccc;text-align:center;">${l.quantity}</td>
+        <td style="padding:8px 0;border-bottom:1px dashed #ccc;text-align:right;">${formatStat(l.unit_price)}</td>
+        <td style="padding:8px 0;border-bottom:1px dashed #ccc;text-align:right;font-weight:bold;">${formatStat(l.line_total)}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <html>
+        <head>
+          <title>Receipt ${transaction.receipt_number}</title>
+          <style>
+            body { font-family: 'Courier New', Courier, monospace; color: #000; max-width: 320px; margin: 0 auto; padding: 20px; font-size: 14px; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .logo { max-width: 120px; margin-bottom: 10px; filter: invert(1); } /* Inverts white logo to black for printing */
+            .company-name { font-weight: bold; font-size: 18px; margin: 0 0 5px 0; }
+            .company-details { font-size: 12px; margin: 0 0 15px 0; line-height: 1.4; }
+            .divider { border-top: 1px dashed #000; margin: 10px 0; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px; }
+            .totals { width: 100%; font-size: 13px; margin-bottom: 20px; }
+            .totals td { padding: 4px 0; }
+            .bold { font-weight: bold; }
+            .footer { text-align: center; font-size: 11px; margin-top: 30px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <img src="/logo-white.png" class="logo" alt="Vilagio" />
+            <p class="company-name">Vilagio Trading Limited</p>
+            <p class="company-details">Plot 28441 50/50<br/>Kitwe Road, Chingola<br/>Email: info@vilag.io<br/>Tel: +260571669256</p>
+            <p style="font-size: 16px; font-weight: bold; margin: 10px 0;">TAX INVOICE</p>
+          </div>
+          
+          <div style="margin-bottom: 15px; font-size: 12px;">
+            <p style="margin: 2px 0;"><strong>Receipt #:</strong> ${transaction.receipt_number}</p>
+            <p style="margin: 2px 0;"><strong>Date:</strong> ${new Date(transaction.transaction_date).toLocaleString('en-GB')}</p>
+            <p style="margin: 2px 0;"><strong>Cashier:</strong> ${transaction.cashier_name}</p>
+            ${transaction.customer_trading_name ? `<p style="margin: 2px 0;"><strong>Customer:</strong> ${transaction.customer_trading_name}</p>` : ''}
+          </div>
+          
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left;border-bottom:1px solid #000;padding-bottom:5px;">Item</th>
+                <th style="text-align:center;border-bottom:1px solid #000;padding-bottom:5px;">Qty</th>
+                <th style="text-align:right;border-bottom:1px solid #000;padding-bottom:5px;">Price</th>
+                <th style="text-align:right;border-bottom:1px solid #000;padding-bottom:5px;">Total</th>
+              </tr>
+            </thead>
+            <tbody>${lineRows}</tbody>
+          </table>
+
+          <table class="totals">
+            <tr>
+              <td>Subtotal (Excl. VAT)</td>
+              <td style="text-align:right;">${formatStat(totalExclVat)}</td>
+            </tr>
+            <tr>
+              <td>VAT (16%)</td>
+              <td style="text-align:right;">${formatStat(vatAmount)}</td>
+            </tr>
+            ${parseFloat(String(transaction.order_discount_amount)) > 0 ? `
+            <tr>
+              <td>Discount</td>
+              <td style="text-align:right;">-${formatStat(transaction.order_discount_amount)}</td>
+            </tr>` : ''}
+            <tr style="border-top: 1px solid #000;">
+              <td class="bold" style="padding-top: 10px; font-size: 16px;">TOTAL</td>
+              <td class="bold" style="text-align:right; padding-top: 10px; font-size: 16px;">${formatStat(totalInclVat)}</td>
+            </tr>
+          </table>
+
+          <div style="font-size: 12px; margin-bottom: 20px;">
+            <p style="margin: 2px 0;"><strong>Payment:</strong> ${transaction.payment_method.toUpperCase()}</p>
+            ${parseFloat(String(transaction.change_given)) > 0 ? `<p style="margin: 2px 0;"><strong>Change:</strong> ${formatStat(transaction.change_given)}</p>` : ''}
+          </div>
+
+          <div class="divider"></div>
+          
+          <div class="footer">
+            <p style="font-weight:bold; font-size:14px; margin-bottom: 5px;">Thank you for your business!</p>
+            <p style="margin-bottom: 5px;">Join our Loyalty Program at vilag.io</p>
+            <p>Prices inclusive of 16% VAT</p>
+          </div>
+          
+          <script>
+            window.onload = function() { window.print(); window.close(); }
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
   return (
@@ -498,7 +610,6 @@ function ReceiptModal({
         </div>
 
         <div className="p-5 space-y-4">
-          {/* Lines */}
           <div className="bg-dark-900 rounded-xl p-4 space-y-2 text-sm">
             {transaction.lines.map((l: any, i: number) => (
               <div key={i} className="flex justify-between text-gray-300">
@@ -523,7 +634,15 @@ function ReceiptModal({
             </p>
           </div>
 
-          {/* Email */}
+          {/* Action Buttons: Email and Print */}
+          <div className="flex gap-2 mb-4">
+            <button onClick={handlePrint}
+              className="flex-1 py-2.5 bg-dark-700 hover:bg-dark-600 border border-dark-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+              Print Receipt
+            </button>
+          </div>
+
           {emailSent ? (
             <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
               <CheckCircle2 className="w-4 h-4 text-green-400" />
@@ -550,7 +669,7 @@ function ReceiptModal({
             </div>
           )}
 
-          <div className="flex gap-3">
+          <div className="flex gap-3 pt-2">
             <button onClick={onClose}
               className="flex-1 py-2.5 bg-dark-700 hover:bg-dark-600 text-white rounded-xl text-sm font-medium transition-colors">
               Close
@@ -1129,6 +1248,7 @@ export default function POSPage() {
           transaction={completedTx}
           token={token}
           currency={currency}
+          exchangeRate={exchangeRate}
           formatStat={formatStat}
           onClose={() => { setCompletedTx(null); loadData(); }}
           onNewSale={handleNewSale}

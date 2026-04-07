@@ -160,11 +160,13 @@ router.post('/transactions/:id/void', authorize(['admin', 'manager']), async (re
 
 router.post('/transactions/:id/email-receipt', async (req, res) => {
   try {
-    const { email } = req.body;
+    // Extract currency and exchangeRate sent from the frontend
+    const { email, currency, exchangeRate } = req.body;
     if (!email?.trim()) {
       return res.status(400).json({ error: 'Email address is required' });
     }
-    await posService.sendReceiptEmail(req.params.id, email.trim());
+    // Pass them into the service
+    await posService.sendReceiptEmail(req.params.id, email.trim(), currency, exchangeRate);
     res.json({ message: `Receipt emailed to ${email}` });
   } catch (err) {
     console.error('POST /sales/transactions/:id/email-receipt error:', err);
