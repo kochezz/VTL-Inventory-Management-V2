@@ -218,8 +218,10 @@ function LocationPickerModal({
 
 // ── PaymentModal ──────────────────────────────────────────────────────────────
 
+// ── PaymentModal ──────────────────────────────────────────────────────────────
+
 function PaymentModal({
-  subtotal, cartLines, session, customer, token, currency, onComplete, onClose,
+  subtotal, cartLines, session, customer, token, currency, exchangeRate, onComplete, onClose,
 }: {
   subtotal: number;
   cartLines: CartLine[];
@@ -227,6 +229,7 @@ function PaymentModal({
   customer: Customer | null;
   token: string | null;
   currency: Currency;
+  exchangeRate: number; 
   onComplete: (tx: Transaction) => void;
   onClose: () => void;
 }) {
@@ -1256,6 +1259,7 @@ export default function POSPage() {
           customer={customer}
           token={token}
           currency={currency}
+          exchangeRate={exchangeRate} 
           onComplete={tx => { setShowPayment(false); setCompletedTx(tx); }}
           onClose={() => setShowPayment(false)}
         />
