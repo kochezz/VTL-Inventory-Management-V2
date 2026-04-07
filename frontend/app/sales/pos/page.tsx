@@ -1187,7 +1187,8 @@ export default function POSPage() {
                               updated[idx].quantity = Math.min(Math.max(1, val), line.max_available);
                               setCart([...updated]);
                             }}
-                            className="w-12 text-center text-sm font-bold text-white bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-primary-500 rounded"
+                            /* FIX: Widened to w-16, increased to text-base, and removed the hidden browser arrows */
+                            className="w-16 text-center text-base font-bold text-white bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-primary-500 rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                           <button onClick={() => updateQty(idx, 1)}
                             disabled={line.quantity >= line.max_available}
