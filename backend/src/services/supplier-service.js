@@ -39,22 +39,30 @@ class SupplierService {
     try {
       await client.query('BEGIN'); // Start transaction
 
-      // 1. Insert Master Vendor Record (with JSONB sections)
+     // 1. Insert Master Vendor Record (with JSONB sections)
+      // FIX: Added 'uuidv4()' for vendor_id and handled empty strings for integer fields
       const vendorResult = await client.query(
         `INSERT INTO vendors (
-          legal_name, trading_name, registered_address, year_established, 
+          vendor_id, legal_name, trading_name, registered_address, year_established, 
           company_reg_no, vat_number, primary_category, all_categories, 
           compliance_data, capabilities_data, banking_data, declaration_data, 
           status, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'DRAFT', $13)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'DRAFT', $14)
         RETURNING vendor_id`,
         [
-          vendorData.legal_name, vendorData.trading_name, vendorData.registered_address,
-          vendorData.year_established, vendorData.company_reg_no, vendorData.vat_number,
-          vendorData.primary_category, JSON.stringify(vendorData.all_categories || []),
+          uuidv4(), // Added missing vendor_id generation!
+          vendorData.legal_name, 
+          vendorData.trading_name, 
+          vendorData.registered_address,
+          // FIX: Convert empty string to null for the integer column
+          vendorData.year_established === "" ? null : vendorData.year_established, 
+          vendorData.company_reg_no, 
+          vendorData.vat_number,
+          vendorData.primary_category, 
+          JSON.stringify(vendorData.all_categories || []),
           JSON.stringify(vendorData.compliance_data || {}),
           JSON.stringify(vendorData.capabilities_data || {}),
-          JSON.stringify(vendorData.banking_data || {}), // Finance access only later
+          JSON.stringify(vendorData.banking_data || {}),
           JSON.stringify(vendorData.declaration_data || {}),
           userId
         ]
