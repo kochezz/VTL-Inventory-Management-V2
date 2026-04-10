@@ -50,6 +50,7 @@ interface CartLine {
   location_name: string;
   quantity: number;
   unit_price: number;
+  unit_price_zmw: number;
   line_discount: number;
   uom: string;
   max_available: number;
@@ -279,11 +280,12 @@ function PaymentModal({
         session_id:           session?.session_id || null,
         customer_id:          customer?.customer_id || null,
         customer_name:        customer?.trading_name || null,
-        lines:                cartLines.map(l => ({
+        lines: cartLines.map(l => ({
           product_id:    l.product_id,
           location_id:   l.location_id,
           quantity:      l.quantity,
-          unit_price:    l.unit_price, 
+          // FIX: Reverse-calculate the USD price so the backend & receipts process the exact K1.50 paid!
+          unit_price:    currency === 'ZMW' ? (l.unit_price_zmw / exchangeRate) : l.unit_price, 
           line_discount: l.line_discount, 
           uom:           l.uom,
         })),
@@ -939,7 +941,7 @@ export default function POSPage() {
 
   const handleAddProduct = (product: POSProduct) => setLocationPicker(product);
 
-  const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
+const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
     setLocationPicker(null);
     const idx = cart.findIndex(l => l.product_id === product.product_id && l.location_id === loc.location_id);
     if (idx >= 0) {
@@ -956,8 +958,9 @@ export default function POSPage() {
         location_id:   loc.location_id,
         location_name: loc.location_name,
         quantity:      1,
-        // Always store USD in cart base unit_price so the backend processes it smoothly
         unit_price:    parseFloat(String(product.selling_price)),
+        // FIX: Grab the official rounded POS List Price!
+        unit_price_zmw: product.selling_price_zmw || (product.selling_price * exchangeRate),
         line_discount: 0,
         uom:           loc.uom,
         max_available: loc.quantity_available,
@@ -981,7 +984,11 @@ export default function POSPage() {
     setCart(updated);
   };
 
-  const cartSubtotalUSD = cart.reduce((s, l) => s + (l.unit_price * l.quantity - l.line_discount), 0);
+  const cartSubtotal = cart.reduce((s, l) => {
+    const price = currency === 'ZMW' ? l.unit_price_zmw : l.unit_price;
+    const discount = currency === 'ZMW' ? l.line_discount * exchangeRate : l.line_discount;
+    return s + (price * l.quantity - discount);
+  }, 0);
 
   const handleNewSale = () => {
     setCart([]); setCustomer(null); setCompletedTx(null);
@@ -1139,9 +1146,12 @@ export default function POSPage() {
                           className="w-full text-left px-4 py-3 hover:bg-dark-700 border-b border-dark-700 last:border-0 transition-colors">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-white truncate">{c.trading_name}</p>
-                              <p className="text-xs text-gray-400">{c.vtl_customer_id} · {c.tier_name || c.tier} · {c.territory || '—'}</p>
-                            </div>
+                          <p className="text-sm font-medium text-white truncate">{line.product_name}</p>
+                          {/* FIX: Use the native price from the cart, not the formatStat live math */}
+                          <p className="text-xs text-gray-500">
+                            {line.location_name} · {fmtCurrency(currency === 'ZMW' ? line.unit_price_zmw : line.unit_price, currency)} each
+                          </p>
+                        </div>
                             {c.total_transactions > 0 && (
                               <div className="text-right flex-shrink-0">
                                 <p className="text-xs text-green-400 font-medium">{c.total_transactions} orders</p>
@@ -1228,7 +1238,12 @@ export default function POSPage() {
                           />
                         </div>
                         <span className="text-sm font-bold text-primary-400 flex-shrink-0 w-14 text-right">
-                          {formatStat(line.unit_price * line.quantity - line.line_discount)}
+                          {/* FIX: Accurate line total calculation */}
+                          {fmtCurrency(
+                            (currency === 'ZMW' ? line.unit_price_zmw : line.unit_price) * line.quantity - 
+                            (currency === 'ZMW' ? line.line_discount * exchangeRate : line.line_discount), 
+                            currency
+                          )}
                         </span>
                       </div>
                     </div>
@@ -1272,7 +1287,7 @@ export default function POSPage() {
 
       {showPayment && (
         <PaymentModal
-          subtotal={currency === 'ZMW' ? cartSubtotalUSD * exchangeRate : cartSubtotalUSD}
+          subtotal={cartSubtotal}
           cartLines={cart}
           session={session}
           customer={customer}
