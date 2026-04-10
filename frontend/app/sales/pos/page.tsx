@@ -219,8 +219,6 @@ function LocationPickerModal({
 
 // ── PaymentModal ──────────────────────────────────────────────────────────────
 
-// ── PaymentModal ──────────────────────────────────────────────────────────────
-
 function PaymentModal({
   subtotal, cartLines, session, customer, token, currency, exchangeRate, onComplete, onClose,
 }: {
@@ -268,7 +266,6 @@ function PaymentModal({
   const handleComplete = async () => {
     setError(''); setSubmitting(true);
     try {
-      // FIX: Convert the tendered Kwacha amounts back to USD before sending to the backend!
       const rate = currency === 'ZMW' ? exchangeRate : 1;
       const orderDiscValUSD = discType === 'fixed' ? parseFloat(discValue || '0') / rate : parseFloat(discValue || '0');
       const tenderedValUSD = method === 'cash' ? parseFloat(tendered || String(finalTotal)) / rate : finalTotal / rate;
@@ -276,7 +273,7 @@ function PaymentModal({
       const mobileAmtUSD = method === 'mobile' ? finalTotal / rate : parseFloat(mobileAmt || '0') / rate;
       const cardAmtUSD = method === 'card' ? finalTotal / rate : parseFloat(cardAmt || '0') / rate;
 
-  const res = await axios.post(`${API_URL}/sales/transactions`, {
+      const res = await axios.post(`${API_URL}/sales/transactions`, {
         session_id:           session?.session_id || null,
         customer_id:          customer?.customer_id || null,
         customer_name:        customer?.trading_name || null,
@@ -284,7 +281,6 @@ function PaymentModal({
           product_id:    l.product_id,
           location_id:   l.location_id,
           quantity:      l.quantity,
-          // FIX: Reverse-calculate the USD price so the backend & receipts process the exact K1.50 paid!
           unit_price:    currency === 'ZMW' ? (l.unit_price_zmw / exchangeRate) : l.unit_price, 
           line_discount: l.line_discount, 
           uom:           l.uom,
@@ -297,7 +293,6 @@ function PaymentModal({
         mobile_amount:        mobileAmtUSD,
         card_amount:          cardAmtUSD,
         receipt_email_address: emailReceipt && receiptEmail ? receiptEmail : null,
-        // FIX: Pass the currency data to the backend for the auto-email!
         currency:             currency,
         exchangeRate:         exchangeRate,
       }, { headers: { Authorization: `Bearer ${token}` } });
@@ -512,7 +507,6 @@ const handlePrint = () => {
     const totalExclVat = totalInclVat / 1.16;
     const vatAmount = totalInclVat - totalExclVat;
 
-    // FIX: Added specific classes to ensure the table columns don't squish together
     const lineRows = transaction.lines.map((l: any) => `
       <tr>
         <td class="col-item" style="padding:8px 0;border-bottom:1px dashed #ccc;">${l.product_name}</td>
@@ -534,7 +528,6 @@ const handlePrint = () => {
             .company-details { font-size: 12px; margin: 0 0 15px 0; line-height: 1.4; }
             .divider { border-top: 1px dashed #000; margin: 10px 0; }
             
-            /* FIX: Strict table layout forces text to wrap instead of squishing columns */
             table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px; table-layout: fixed; }
             th, td { vertical-align: top; word-wrap: break-word; }
             .col-item { width: 45%; text-align: left; padding-right: 5px; }
@@ -659,7 +652,6 @@ const handlePrint = () => {
             </p>
           </div>
 
-          {/* Action Buttons: Email and Print */}
           <div className="flex gap-2 mb-4">
             <button onClick={handlePrint}
               className="flex-1 py-2.5 bg-dark-700 hover:bg-dark-600 border border-dark-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
@@ -867,10 +859,8 @@ export default function POSPage() {
   const [customerResults, setCustomerResults]   = useState<Customer[]>([]);
   const [showCustomerDrop, setShowCustomerDrop] = useState(false);
 
-  // 1. Set exchange rate as a state variable
   const [exchangeRate, setExchangeRate] = useState<number>(27);
 
-  // 2. Fetch the live exchange rate managed by Finance when the POS loads
   useEffect(() => {
     const fetchLiveRate = async () => {
       if (!token) return;
@@ -888,7 +878,6 @@ export default function POSPage() {
     fetchLiveRate();
   }, [token]);
 
-  // Global formatter for generic DB amounts (like session revenue)
   const formatStat = (amountInUSD: number | string) => {
     const val = parseFloat(String(amountInUSD || 0));
     if (currency === 'ZMW') {
@@ -924,7 +913,6 @@ export default function POSPage() {
     if (isAuthenticated && token) loadData();
   }, [isAuthenticated, token, loadData]);
 
-  // Customer search debounce
   useEffect(() => {
     if (customerSearch.length < 2) { setCustomerResults([]); return; }
     const t = setTimeout(async () => {
@@ -941,7 +929,7 @@ export default function POSPage() {
 
   const handleAddProduct = (product: POSProduct) => setLocationPicker(product);
 
-const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
+  const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
     setLocationPicker(null);
     const idx = cart.findIndex(l => l.product_id === product.product_id && l.location_id === loc.location_id);
     if (idx >= 0) {
@@ -959,7 +947,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
         location_name: loc.location_name,
         quantity:      1,
         unit_price:    parseFloat(String(product.selling_price)),
-        // FIX: Grab the official rounded POS List Price!
         unit_price_zmw: product.selling_price_zmw || (product.selling_price * exchangeRate),
         line_discount: 0,
         uom:           loc.uom,
@@ -978,7 +965,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
 
   const updateDiscount = (idx: number, val: string) => {
     const updated = [...cart];
-    // Convert ZMW discount back to USD if in ZMW mode so DB is always stored in USD
     const discountVal = parseFloat(val || '0');
     updated[idx].line_discount = currency === 'ZMW' ? discountVal / exchangeRate : discountVal;
     setCart(updated);
@@ -1001,7 +987,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
     <DashboardLayout>
       <div className="max-w-screen-xl mx-auto space-y-4">
 
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-500/10 rounded-lg">
@@ -1013,7 +998,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {/* Currency toggle */}
             <div className="flex items-center bg-dark-800 border border-dark-700 rounded-xl p-1">
               {(['USD', 'ZMW'] as Currency[]).map(c => (
                 <button
@@ -1037,7 +1021,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
           </div>
         </div>
 
-        {/* Stats */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
@@ -1063,10 +1046,7 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
           </div>
         )}
 
-        {/* 3-column layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-
-          {/* Product Grid */}
           <div className="lg:col-span-2">
             <h2 className="text-sm font-semibold text-gray-300 mb-3">Products</h2>
             {loading ? (
@@ -1084,13 +1064,9 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
             )}
           </div>
 
-          {/* Right sidebar */}
           <div className="space-y-3">
-
-            {/* Session */}
             <SessionManager session={session} token={token} formatStat={formatStat} onSessionChange={setSession} />
 
-            {/* Customer */}
             <div className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-gray-300">Customer</h3>
@@ -1145,13 +1121,11 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
                           }}
                           className="w-full text-left px-4 py-3 hover:bg-dark-700 border-b border-dark-700 last:border-0 transition-colors">
                           <div className="flex items-start justify-between gap-2">
+                            {/* RESTORED: This is the customer search result block */}
                             <div className="min-w-0">
-                          <p className="text-sm font-medium text-white truncate">{line.product_name}</p>
-                          {/* FIX: Use the native price from the cart, not the formatStat live math */}
-                          <p className="text-xs text-gray-500">
-                            {line.location_name} · {fmtCurrency(currency === 'ZMW' ? line.unit_price_zmw : line.unit_price, currency)} each
-                          </p>
-                        </div>
+                              <p className="text-sm font-medium text-white truncate">{c.trading_name}</p>
+                              <p className="text-xs text-gray-400">{c.vtl_customer_id} · {c.tier_name || c.tier} · {c.territory || '—'}</p>
+                            </div>
                             {c.total_transactions > 0 && (
                               <div className="text-right flex-shrink-0">
                                 <p className="text-xs text-green-400 font-medium">{c.total_transactions} orders</p>
@@ -1170,7 +1144,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
               )}
             </div>
 
-            {/* Cart */}
             <div className="bg-dark-800 border border-dark-700 rounded-xl">
               <div className="p-4 border-b border-dark-700 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-300">
@@ -1193,9 +1166,12 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
                   cart.map((line, idx) => (
                     <div key={idx} className="bg-dark-900 rounded-lg p-3 space-y-2">
                       <div className="flex items-start justify-between gap-2">
+                        {/* RESTORED: This is the actual cart rendering block */}
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-white truncate">{line.product_name}</p>
-                          <p className="text-xs text-gray-500">{line.location_name} · {formatStat(line.unit_price)} each</p>
+                          <p className="text-xs text-gray-500">
+                            {line.location_name} · {fmtCurrency(currency === 'ZMW' ? line.unit_price_zmw : line.unit_price, currency)} each
+                          </p>
                         </div>
                         <button onClick={() => setCart(cart.filter((_, i) => i !== idx))}
                           className="p-1 hover:bg-dark-700 rounded text-gray-500 hover:text-red-400 transition-colors flex-shrink-0">
@@ -1219,7 +1195,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
                               updated[idx].quantity = Math.min(Math.max(1, val), line.max_available);
                               setCart([...updated]);
                             }}
-                            /* FIX: Widened to w-16, increased to text-base, and removed the hidden browser arrows */
                             className="w-24 text-center text-sm font-bold text-white bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-primary-500 rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                           <button onClick={() => updateQty(idx, 1)}
@@ -1238,7 +1213,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
                           />
                         </div>
                         <span className="text-sm font-bold text-primary-400 flex-shrink-0 w-14 text-right">
-                          {/* FIX: Accurate line total calculation */}
                           {fmtCurrency(
                             (currency === 'ZMW' ? line.unit_price_zmw : line.unit_price) * line.quantity - 
                             (currency === 'ZMW' ? line.line_discount * exchangeRate : line.line_discount), 
@@ -1255,14 +1229,15 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
                 <div className="p-4 border-t border-dark-700 space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Subtotal</span>
-                    <span className="text-white font-bold">{formatStat(cartSubtotalUSD)}</span>
+                    {/* FIX: Use fmtCurrency instead of formatStat to avoid double-calculating the final total */}
+                    <span className="text-white font-bold">{fmtCurrency(cartSubtotal, currency)}</span>
                   </div>
                   <button
                     onClick={() => setShowPayment(true)}
                     disabled={!session}
                     className="w-full py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                     <CreditCard className="w-4 h-4" />
-                    {session ? `Pay — ${formatStat(cartSubtotalUSD)}` : 'Open a session first'}
+                    {session ? `Pay — ${fmtCurrency(cartSubtotal, currency)}` : 'Open a session first'}
                   </button>
                   {!session && (
                     <p className="text-xs text-amber-400 text-center">Open a cashier session above to process sales</p>
@@ -1274,7 +1249,6 @@ const handleLocationSelect = (product: POSProduct, loc: ProductLocation) => {
         </div>
       </div>
 
-      {/* Modals */}
       {locationPicker && (
         <LocationPickerModal
           product={locationPicker}
