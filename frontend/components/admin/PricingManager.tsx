@@ -5,10 +5,24 @@ import { useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
 import { Save, RefreshCw, Lock, BadgeDollarSign, Search, Filter } from 'lucide-react';
 
-// Add the interface to accept the globalRate prop
 interface PricingManagerProps {
   globalRate: number;
 }
+
+// --- RETAIL ROUNDING ALGORITHM ---
+// Rounds decimals up to .50 or .99 based on standard retail pricing rules
+const getRoundedListPrice = (exactPrice: number) => {
+  if (!exactPrice) return 0;
+  
+  // Math.round fixes minor floating point errors like 7.000000001
+  const cleanPrice = Math.round(exactPrice * 100) / 100; 
+  const intPart = Math.floor(cleanPrice);
+  const decPart = cleanPrice - intPart;
+
+  if (decPart === 0) return cleanPrice;             // e.g., 70.00 stays 70.00
+  if (decPart <= 0.50) return intPart + 0.50;       // e.g., 140.39 rounds to 140.50
+  return intPart + 0.99;                            // e.g., 7.84 rounds to 7.99
+};
 
 export default function PricingManager({ globalRate }: PricingManagerProps) {
   const { user, token } = useAuth();
@@ -53,15 +67,17 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
     }
   };
 
-  // Only update USD. ZMW is auto-calculated.
+  // Update USD. The Exact ZMW and Rounded ZMW are handled automatically!
   const handlePriceChange = (productId: string, value: string) => {
     const usdPrice = parseFloat(value) || 0;
+    const exactZmw = usdPrice * globalRate;
+
     setProducts(prev => prev.map(p => 
       p.product_id === productId 
         ? { 
             ...p, 
             selling_price: usdPrice,
-            selling_price_zmw: parseFloat((usdPrice * globalRate).toFixed(2)) 
+            selling_price_zmw: getRoundedListPrice(exactZmw) // Apply the retail rounding
           } 
         : p
     ));
@@ -70,12 +86,15 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
   // When globalRate changes at the top level, recalculate all ZMW prices instantly
   useEffect(() => {
     if (products.length > 0) {
-      setProducts(prev => prev.map(p => ({
-        ...p,
-        selling_price_zmw: parseFloat((p.selling_price * globalRate).toFixed(2))
-      })));
+      setProducts(prev => prev.map(p => {
+        const exactZmw = p.selling_price * globalRate;
+        return {
+          ...p,
+          selling_price_zmw: getRoundedListPrice(exactZmw)
+        };
+      }));
     }
-  }, [globalRate]); // Dependency triggers when the prop updates
+  }, [globalRate]);
 
   const savePrices = async () => {
     setSaving(true);
@@ -179,15 +198,16 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
                 <thead className="bg-dark-900 border-b border-dark-700">
                   <tr>
                     <th className="px-6 py-4 font-semibold text-gray-400">Product / SKU</th>
-                    <th className="px-6 py-4 font-semibold text-gray-400 w-48">Base USD Price ($)</th>
-                    <th className="px-6 py-4 font-semibold text-gray-400 w-48">Local ZMW Price (K)</th>
-                    <th className="px-6 py-4 font-semibold text-gray-400 text-right">Implied Ex. Rate</th>
+                    <th className="px-6 py-4 font-semibold text-gray-400 w-40">Base USD ($)</th>
+                    <th className="px-6 py-4 font-semibold text-gray-500 w-40">Exact ZMW (K)</th>
+                    <th className="px-6 py-4 font-semibold text-primary-400 w-40">POS List Price (K)</th>
+                    <th className="px-6 py-4 font-semibold text-gray-400 text-right">Implied Rate</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-dark-700">
                   {filteredProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                      <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
                         No products match your current filters.
                       </td>
                     </tr>
@@ -198,6 +218,8 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
                           <span className="font-bold text-white">{p.product_name}</span><br/>
                           <span className="text-xs text-gray-500">{p.sku}</span>
                         </td>
+                        
+                        {/* BASE USD */}
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
                             <span className="text-gray-500">$</span>
@@ -210,18 +232,36 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
                             />
                           </div>
                         </td>
+
+                        {/* EXACT ZMW (Faded/Disabled) */}
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
-                            <span className="text-gray-500">K</span>
+                            <span className="text-gray-600">K</span>
                             <input 
-                              type="number" 
-                              value={p.selling_price_zmw || ''} 
+                              type="text" 
+                              value={(p.selling_price * globalRate).toFixed(2)} 
                               disabled
-                              className="w-full bg-dark-900 border border-dark-600 rounded px-3 py-1.5 text-gray-400 outline-none cursor-not-allowed opacity-70" 
-                              title="ZMW prices are auto-calculated from the Global Exchange Rate"
+                              className="w-full bg-dark-900 border border-dark-700 rounded px-3 py-1.5 text-gray-500 outline-none cursor-not-allowed opacity-60" 
+                              title="Exact raw conversion (USD x Rate)"
                             />
                           </div>
                         </td>
+
+                        {/* POS LIST PRICE (Rounded & Emphasized) */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-primary-500 font-bold">K</span>
+                            <input 
+                              type="text" 
+                              value={p.selling_price_zmw ? p.selling_price_zmw.toFixed(2) : ''} 
+                              disabled
+                              className="w-full bg-primary-900/20 border border-primary-500/30 rounded px-3 py-1.5 text-primary-400 font-bold outline-none cursor-not-allowed" 
+                              title="Retail rounded price synced to POS"
+                            />
+                          </div>
+                        </td>
+
+                        {/* IMPLIED RATE */}
                         <td className="px-6 py-4 text-xs text-gray-500 text-right font-mono">
                           1 USD = {globalRate.toFixed(2)} ZMW
                         </td>
