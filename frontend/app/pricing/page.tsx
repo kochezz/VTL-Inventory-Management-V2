@@ -90,7 +90,7 @@ export default function PricingPage() {
           </div>
         </div>
 
-        {/* Pricing Manager - Passing the rate down as a prop */}
+        {/* Pricing Manager - Passing the rate down as a prop! */}
         <PricingManager globalRate={parseFloat(globalRate) || 27} />
         
       </div>
