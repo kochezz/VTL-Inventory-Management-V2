@@ -275,7 +275,7 @@ function PaymentModal({
       const mobileAmtUSD = method === 'mobile' ? finalTotal / rate : parseFloat(mobileAmt || '0') / rate;
       const cardAmtUSD = method === 'card' ? finalTotal / rate : parseFloat(cardAmt || '0') / rate;
 
-      const res = await axios.post(`${API_URL}/sales/transactions`, {
+  const res = await axios.post(`${API_URL}/sales/transactions`, {
         session_id:           session?.session_id || null,
         customer_id:          customer?.customer_id || null,
         customer_name:        customer?.trading_name || null,
@@ -283,8 +283,8 @@ function PaymentModal({
           product_id:    l.product_id,
           location_id:   l.location_id,
           quantity:      l.quantity,
-          unit_price:    l.unit_price, // Already in USD
-          line_discount: l.line_discount, // Already in USD
+          unit_price:    l.unit_price, 
+          line_discount: l.line_discount, 
           uom:           l.uom,
         })),
         order_discount_type:  discType,
@@ -295,6 +295,9 @@ function PaymentModal({
         mobile_amount:        mobileAmtUSD,
         card_amount:          cardAmtUSD,
         receipt_email_address: emailReceipt && receiptEmail ? receiptEmail : null,
+        // FIX: Pass the currency data to the backend for the auto-email!
+        currency:             currency,
+        exchangeRate:         exchangeRate,
       }, { headers: { Authorization: `Bearer ${token}` } });
       onComplete(res.data.transaction);
     } catch (err: any) {
@@ -862,10 +865,26 @@ export default function POSPage() {
   const [customerResults, setCustomerResults]   = useState<Customer[]>([]);
   const [showCustomerDrop, setShowCustomerDrop] = useState(false);
 
-  // Dynamic exchange rate based on DB prices (fallback to 27)
-  const exchangeRate = products.length > 0 && products[0].selling_price_zmw 
-    ? (products[0].selling_price_zmw / products[0].selling_price) 
-    : 27;
+  // 1. Set exchange rate as a state variable
+  const [exchangeRate, setExchangeRate] = useState<number>(27);
+
+  // 2. Fetch the live exchange rate managed by Finance when the POS loads
+  useEffect(() => {
+    const fetchLiveRate = async () => {
+      if (!token) return;
+      try {
+        const res = await axios.get(`${API_URL}/sales/exchange-rate`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.data.exchange_rate) {
+          setExchangeRate(res.data.exchange_rate);
+        }
+      } catch (err) {
+        console.error('Failed to load live exchange rate:', err);
+      }
+    };
+    fetchLiveRate();
+  }, [token]);
 
   // Global formatter for generic DB amounts (like session revenue)
   const formatStat = (amountInUSD: number | string) => {

@@ -7,6 +7,19 @@ const POEmailService = require('../services/po-email-service'); // <-- Imported 
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 
 // ============================================================================
+// FETCH LIVE EXCHANGE RATE
+// ============================================================================
+router.get('/exchange-rate', authenticate, async (req, res) => {
+  try {
+    const rate = await posService.getLiveExchangeRate();
+    res.json({ exchange_rate: rate });
+  } catch (err) {
+    console.error('GET /sales/exchange-rate error:', err);
+    res.status(500).json({ error: 'Failed to fetch live exchange rate' });
+  }
+});
+
+// ============================================================================
 // 1. CREATE PURCHASE ORDER
 // ============================================================================
 router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {

@@ -10,6 +10,37 @@ const posService = require('../services/pos-service');
 
 router.use(authenticate);
 
+// ── Global Pricing & Exchange Rates ───────────────────────────────────────────
+
+router.get('/exchange-rate', async (req, res) => {
+  try {
+    const rate = await posService.getLiveExchangeRate();
+    res.json({ exchange_rate: rate });
+  } catch (err) {
+    console.error('GET /sales/exchange-rate error:', err);
+    res.status(500).json({ error: 'Failed to fetch live exchange rate' });
+  }
+});
+
+router.post('/exchange-rate', authorize(['admin', 'cfo', 'manager']), async (req, res) => {
+  try {
+    const { rate_value } = req.body;
+    const userId = req.user.user_id;
+
+    if (!rate_value || isNaN(rate_value)) {
+      return res.status(400).json({ error: 'Valid rate value is required' });
+    }
+
+    // Insert the new rate, effectively creating an auditable history
+    await posService.setLiveExchangeRate(parseFloat(rate_value), userId);
+    
+    res.json({ message: 'Global exchange rate updated successfully', rate_value });
+  } catch (err) {
+    console.error('POST /sales/exchange-rate error:', err);
+    res.status(500).json({ error: 'Failed to update live exchange rate' });
+  }
+});
+
 // ── Products & Inventory ──────────────────────────────────────────────────────
 
 router.get('/products', async (req, res) => {
@@ -160,12 +191,10 @@ router.post('/transactions/:id/void', authorize(['admin', 'manager']), async (re
 
 router.post('/transactions/:id/email-receipt', async (req, res) => {
   try {
-    // Extract currency and exchangeRate sent from the frontend
     const { email, currency, exchangeRate } = req.body;
     if (!email?.trim()) {
       return res.status(400).json({ error: 'Email address is required' });
     }
-    // Pass them into the service
     await posService.sendReceiptEmail(req.params.id, email.trim(), currency, exchangeRate);
     res.json({ message: `Receipt emailed to ${email}` });
   } catch (err) {

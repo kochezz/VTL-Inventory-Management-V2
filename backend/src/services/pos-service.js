@@ -7,6 +7,48 @@ const { query } = require('../utils/db');
 const { v4: uuidv4 } = require('uuid');
 const notificationService = require('./notification-service');
 
+// ── Global Pricing & Exchange Rates ───────────────────────────────────────────
+
+async function getLiveExchangeRate() {
+  try {
+    // This queries the table where your Finance team updates the daily rates.
+    // (Adjust the table/column names if your global pricing manager uses different ones)
+    const result = await query(`
+      SELECT rate_value 
+      FROM exchange_rates 
+      WHERE target_currency = 'ZMW' 
+        AND is_active = true 
+      ORDER BY updated_at DESC 
+      LIMIT 1
+    `);
+    
+    if (result.rows.length > 0) {
+      return parseFloat(result.rows[0].rate_value);
+    }
+    
+    // Absolute fallback if the finance table is empty
+    console.warn('⚠️ No active exchange rate found in database. Yielding default.');
+    return 27.00; 
+  } catch (e) {
+    console.error('⚠️ Database error fetching exchange rate:', e.message);
+    return 27.00;
+  }
+}
+
+async function setLiveExchangeRate(rateValue, userId) {
+  // Invalidate previous active rates
+  await query(`UPDATE exchange_rates SET is_active = false WHERE target_currency = 'ZMW'`);
+  
+  // Insert the new active rate
+  const result = await query(`
+    INSERT INTO exchange_rates (target_currency, rate_value, updated_by, is_active, updated_at)
+    VALUES ('ZMW', $1, $2, true, NOW())
+    RETURNING *
+  `, [rateValue, userId]);
+  
+  return result.rows[0];
+}
+
 // ── Products & Inventory ──────────────────────────────────────────────────────
 
 async function getPOSProducts() {
@@ -216,6 +258,7 @@ async function createTransaction(data, cashierId) {
     order_discount_type, order_discount_value, payment_method,
     amount_tendered, cash_amount, mobile_amount, card_amount,
     receipt_email_address, notes,
+    currency, exchangeRate // <-- ADDED THESE TWO
   } = data;
 
   if (!lines || lines.length === 0) throw new Error('At least one product line is required');
@@ -392,7 +435,7 @@ async function createTransaction(data, cashierId) {
   // Fire receipt email
   if (receipt_email_address) {
     try {
-      await sendReceiptEmail(transaction.transaction_id, receipt_email_address);
+      await sendReceiptEmail(transaction.transaction_id, receipt_email_address, currency || 'USD', exchangeRate || 27);
     } catch (e) {
       console.error('Receipt email failed:', e.message);
     }
@@ -555,7 +598,7 @@ async function sendReceiptEmail(transactionId, emailAddress, currency = 'USD', e
     </tr>`
   ).join('');
 
-  // Dynamic Loyalty/Registration Banner
+// Dynamic Loyalty/Registration Banner
   let loyaltyBanner = '';
   if (!tx.customer_id) {
     // Unregistered / Retail Walk-in
@@ -563,12 +606,12 @@ async function sendReceiptEmail(transactionId, emailAddress, currency = 'USD', e
       <div style="background:#F0FDF4;padding:20px;border-radius:8px;margin-top:24px;border-left:4px solid #22C55E;">
         <h3 style="margin:0 0 8px;color:#166534;font-size:16px;">Join the FreshDrip Loyalty Program! 💧</h3>
         <p style="margin:0 0 12px;color:#15803D;font-size:13px;line-height:1.5;">Love our water? Register as a Retail Customer to enjoy automated repeat orders, fast-tracked checkouts, and exclusive discounts.</p>
-        <p style="margin:0;color:#15803D;font-size:13px;"><strong>How to join:</strong> Simply reply to this email with your <em>Full Name, Phone Number, and Delivery Address</em>.</p>
+        <p style="margin:0;color:#15803D;font-size:13px;"><strong>How to join:</strong> Email <strong>sales@vilag.io</strong> with your <em>Full Name, Phone Number, and Delivery Address</em>.</p>
       </div>
       <div style="background:#EFF6FF;padding:20px;border-radius:8px;margin-top:12px;border-left:4px solid #3B82F6;">
         <h3 style="margin:0 0 8px;color:#1E3A8A;font-size:16px;">Are you a Business? 🏢</h3>
         <p style="margin:0 0 12px;color:#1D4ED8;font-size:13px;line-height:1.5;">Open a B2B Commercial Account for wholesale pricing and flexible credit terms.</p>
-        <p style="margin:0;color:#1D4ED8;font-size:13px;"><strong>Requirements:</strong> Reply with your <em>TPIN Certificate, PACRA Registration, and Director's ID</em> to begin onboarding.</p>
+        <p style="margin:0;color:#1D4ED8;font-size:13px;"><strong>Requirements:</strong> Email <strong>sales@vilag.io</strong> with your <em>TPIN Certificate, PACRA Registration, and Director's ID</em> to begin onboarding.</p>
       </div>
     `;
   } else {
@@ -678,4 +721,6 @@ module.exports = {
   voidTransaction,
   getPOSDashboardStats,
   sendReceiptEmail,
+  getLiveExchangeRate,
+  setLiveExchangeRate,
 };
