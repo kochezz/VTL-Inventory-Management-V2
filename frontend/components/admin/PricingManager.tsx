@@ -5,23 +5,24 @@ import { useAuth } from '@/hooks/useAuth';
 import axios from 'axios';
 import { Save, RefreshCw, Lock, BadgeDollarSign, Search, Filter } from 'lucide-react';
 
-export default function PricingManager() {
+// Add the interface to accept the globalRate prop
+interface PricingManagerProps {
+  globalRate: number;
+}
+
+export default function PricingManager({ globalRate }: PricingManagerProps) {
   const { user, token } = useAuth();
   
-  // Data State
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   
-  // Filter State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   
-  // UI State
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  // Security Gate: Only Admin, CEO, or CFO
   const isAuthorized = ['admin', 'ceo', 'cfo'].includes(user?.role?.toLowerCase() || '');
 
   useEffect(() => {
@@ -34,14 +35,13 @@ export default function PricingManager() {
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      // Fetch both Products and Categories simultaneously
       const [prodRes, catRes] = await Promise.all([
         axios.get(`${process.env.NEXT_PUBLIC_API_URL}/products?limit=500`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
         axios.get(`${process.env.NEXT_PUBLIC_API_URL}/products/categories`, {
           headers: { Authorization: `Bearer ${token}` }
-        }).catch(() => ({ data: [] })) // Graceful fallback if categories fail
+        }).catch(() => ({ data: [] }))
       ]);
       
       setProducts(prodRes.data.products || []);
@@ -53,14 +53,29 @@ export default function PricingManager() {
     }
   };
 
-  // Safe state update using product_id instead of array index
-  const handlePriceChange = (productId: string, field: 'selling_price' | 'selling_price_zmw', value: string) => {
+  // Only update USD. ZMW is auto-calculated.
+  const handlePriceChange = (productId: string, value: string) => {
+    const usdPrice = parseFloat(value) || 0;
     setProducts(prev => prev.map(p => 
       p.product_id === productId 
-        ? { ...p, [field]: parseFloat(value) || 0 } 
+        ? { 
+            ...p, 
+            selling_price: usdPrice,
+            selling_price_zmw: parseFloat((usdPrice * globalRate).toFixed(2)) 
+          } 
         : p
     ));
   };
+
+  // When globalRate changes at the top level, recalculate all ZMW prices instantly
+  useEffect(() => {
+    if (products.length > 0) {
+      setProducts(prev => prev.map(p => ({
+        ...p,
+        selling_price_zmw: parseFloat((p.selling_price * globalRate).toFixed(2))
+      })));
+    }
+  }, [globalRate]); // Dependency triggers when the prop updates
 
   const savePrices = async () => {
     setSaving(true);
@@ -78,13 +93,11 @@ export default function PricingManager() {
     }
   };
 
-  // Dynamic Filtering Logic
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       const matchesSearch = (p.product_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                             (p.sku || '').toLowerCase().includes(searchTerm.toLowerCase());
       
-      // Handle the case where categories might be stored as IDs or Names depending on the DB schema
       const matchesCategory = selectedCategory === '' || p.category_id === selectedCategory;
       
       return matchesSearch && matchesCategory;
@@ -103,7 +116,6 @@ export default function PricingManager() {
 
   return (
     <div className="max-w-screen-xl mx-auto space-y-4">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-green-500/10 rounded-lg">
@@ -125,9 +137,7 @@ export default function PricingManager() {
         </div>
       )}
 
-      {/* Filters Section */}
       <div className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex flex-col md:flex-row gap-4">
-        {/* Search Bar */}
         <div className="flex-1 relative">
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
           <input 
@@ -139,7 +149,6 @@ export default function PricingManager() {
           />
         </div>
         
-        {/* Category Dropdown */}
         <div className="md:w-64 relative">
           <Filter className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
           <select
@@ -157,7 +166,6 @@ export default function PricingManager() {
         </div>
       </div>
 
-      {/* Pricing Table */}
       <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
         {loading ? (
           <div className="p-12 text-center">
@@ -197,7 +205,7 @@ export default function PricingManager() {
                               type="number" 
                               step="0.01" 
                               value={p.selling_price || ''} 
-                              onChange={(e) => handlePriceChange(p.product_id, 'selling_price', e.target.value)}
+                              onChange={(e) => handlePriceChange(p.product_id, e.target.value)}
                               className="w-full bg-dark-900 border border-dark-600 focus:border-green-500 rounded px-3 py-1.5 text-white outline-none transition" 
                             />
                           </div>
@@ -207,17 +215,15 @@ export default function PricingManager() {
                             <span className="text-gray-500">K</span>
                             <input 
                               type="number" 
-                              step="0.01" 
                               value={p.selling_price_zmw || ''} 
-                              onChange={(e) => handlePriceChange(p.product_id, 'selling_price_zmw', e.target.value)}
-                              className="w-full bg-dark-900 border border-dark-600 focus:border-green-500 rounded px-3 py-1.5 text-white outline-none transition" 
+                              disabled
+                              className="w-full bg-dark-900 border border-dark-600 rounded px-3 py-1.5 text-gray-400 outline-none cursor-not-allowed opacity-70" 
+                              title="ZMW prices are auto-calculated from the Global Exchange Rate"
                             />
                           </div>
                         </td>
                         <td className="px-6 py-4 text-xs text-gray-500 text-right font-mono">
-                          {p.selling_price > 0 && p.selling_price_zmw > 0 
-                            ? `1 USD = ${(p.selling_price_zmw / p.selling_price).toFixed(2)} ZMW` 
-                            : 'N/A'}
+                          1 USD = {globalRate.toFixed(2)} ZMW
                         </td>
                       </tr>
                     ))
