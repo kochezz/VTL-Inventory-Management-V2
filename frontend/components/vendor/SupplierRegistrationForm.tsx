@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/hooks/useAuth';
 import { 
   Building2, UserCheck, ShieldCheck, Factory, FileSignature, 
   CheckCircle2, AlertCircle, Save, ChevronRight, ChevronLeft, CreditCard, Plus, Trash2,
-  FileText // Added QMS Icon
+  FileText 
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -24,7 +24,14 @@ const CATEGORIES = [
   { code: 'OTH', name: 'Other' },
 ];
 
-export default function SupplierRegistrationForm() {
+// 1. ADD PROPS INTERFACE
+interface SupplierFormProps {
+  initialData?: any;
+  isEditing?: boolean;
+}
+
+// 2. ACCEPT PROPS IN COMPONENT
+export default function SupplierRegistrationForm({ initialData, isEditing = false }: SupplierFormProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -40,14 +47,11 @@ export default function SupplierRegistrationForm() {
     vat_number: '',
     primary_category: '',
     all_categories: [] as string[],
-    
     contacts: [{ full_name: '', position: '', telephone: '', email: '', is_primary: true }],
-    
     references: [
       { company_name: '', contact_name: '', contact_details: '', reference_type: 'trade' },
       { company_name: '', contact_name: '', contact_details: '', reference_type: 'trade' }
     ],
-
     compliance_data: {
       has_qms: false, qms_standard: '', has_hse_policy: false, 
       has_safety_certs: false, is_regulatory_compliant: true, 
@@ -57,15 +61,50 @@ export default function SupplierRegistrationForm() {
       lead_time: '', max_capacity: '', geographic_areas: '', 
       uses_subcontractors: false, subcontractor_details: ''
     },
-    
     banking_data: [{
       acc_name: '', acc_number: '', bank_name: '', branch_name: '', sort_code: '', swift_code: '', currency: 'ZMW'
     }],
-    
     declaration_data: {
       signatory_name: '', signatory_position: '', declaration_date: new Date().toISOString().split('T')[0]
     }
   });
+
+  // 3. PRE-FILL FORM IF EDITING
+  useEffect(() => {
+    if (initialData && isEditing) {
+      setFormData({
+        legal_name: initialData.legal_name || '',
+        trading_name: initialData.trading_name || '',
+        registered_address: initialData.registered_address || '',
+        year_established: initialData.year_established || '',
+        company_reg_no: initialData.company_reg_no || '',
+        vat_number: initialData.vat_number || '',
+        primary_category: initialData.primary_category || '',
+        all_categories: initialData.all_categories || [],
+        contacts: initialData.contacts && initialData.contacts.length > 0 ? initialData.contacts : [{ full_name: '', position: '', telephone: '', email: '', is_primary: true }],
+        references: initialData.references && initialData.references.length > 0 ? initialData.references : [
+          { company_name: '', contact_name: '', contact_details: '', reference_type: 'trade' },
+          { company_name: '', contact_name: '', contact_details: '', reference_type: 'trade' }
+        ],
+        compliance_data: initialData.compliance_data || {
+          has_qms: false, qms_standard: '', has_hse_policy: false, 
+          has_safety_certs: false, is_regulatory_compliant: true, 
+          sanctions_history: false, sanctions_details: ''
+        },
+        capabilities_data: initialData.capabilities_data || {
+          lead_time: '', max_capacity: '', geographic_areas: '', 
+          uses_subcontractors: false, subcontractor_details: ''
+        },
+        // Handle banking data being either an array or an object in older records
+        banking_data: Array.isArray(initialData.banking_data) 
+          ? (initialData.banking_data.length > 0 ? initialData.banking_data : [{ acc_name: '', acc_number: '', bank_name: '', branch_name: '', sort_code: '', swift_code: '', currency: 'ZMW' }])
+          : (initialData.banking_data ? [initialData.banking_data] : [{ acc_name: '', acc_number: '', bank_name: '', branch_name: '', sort_code: '', swift_code: '', currency: 'ZMW' }]),
+        declaration_data: initialData.declaration_data || {
+          signatory_name: '', signatory_position: '', declaration_date: new Date().toISOString().split('T')[0]
+        }
+      });
+    }
+  }, [initialData, isEditing]);
 
   const tabs = [
     { title: 'Company Details', icon: Building2 },
@@ -121,6 +160,7 @@ export default function SupplierRegistrationForm() {
     });
   };
 
+  // 4. DYNAMIC SUBMIT LOGIC (PUT OR POST)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -131,17 +171,29 @@ export default function SupplierRegistrationForm() {
         throw new Error('Please fill in all required company fields and select a primary category.');
       }
 
-      const response = await api.post('/suppliers', formData);
+      let vendorIdToSubmit;
+
+      if (isEditing && initialData?.vendor_id) {
+        // UPDATE EXISTING
+        await api.put(`/suppliers/${initialData.vendor_id}`, formData);
+        vendorIdToSubmit = initialData.vendor_id;
+      } else {
+        // CREATE NEW
+        const response = await api.post('/suppliers', formData);
+        vendorIdToSubmit = response.data.vendor_id;
+      }
+      
       setSuccess(true);
       
-      await api.post(`/suppliers/${response.data.vendor_id}/submit`);
+      // Auto-submit to QA
+      await api.post(`/suppliers/${vendorIdToSubmit}/submit`);
       
       setTimeout(() => {
         router.push('/vendor-management/suppliers');
       }, 2000);
 
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'Failed to submit vendor registration');
+      setError(err.response?.data?.error || err.message || 'Failed to save vendor details');
     } finally {
       setLoading(false);
     }
@@ -151,7 +203,9 @@ export default function SupplierRegistrationForm() {
     return (
       <div className="bg-dark-800 border border-green-500/30 rounded-xl p-12 text-center">
         <CheckCircle2 className="w-16 h-16 text-green-400 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-white mb-2">Registration Submitted!</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">
+          {isEditing ? 'Vendor Updated!' : 'Registration Submitted!'}
+        </h2>
         <p className="text-gray-400">The supplier has been successfully routed to QA for verification.</p>
         <p className="text-sm text-gray-500 mt-4">Redirecting to vendor list...</p>
       </div>
@@ -165,7 +219,9 @@ export default function SupplierRegistrationForm() {
       <div className="p-6 border-b border-dark-700 bg-dark-900/50 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Building2 className="w-6 h-6 text-primary-400" />
-          <h2 className="text-xl font-bold text-white">Supplier Registration</h2>
+          <h2 className="text-xl font-bold text-white">
+            {isEditing ? 'Edit Supplier Details' : 'Supplier Registration'}
+          </h2>
         </div>
         <button 
           type="button" 
@@ -376,7 +432,8 @@ export default function SupplierRegistrationForm() {
               <button type="button" onClick={() => setActiveTab(prev => Math.min(tabs.length - 1, prev + 1))} className="px-6 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center gap-2">Next Section <ChevronRight className="w-4 h-4" /></button>
             ) : (
               <button type="submit" disabled={loading} className="px-8 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold flex items-center gap-2 transition-transform hover:scale-105">
-                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save className="w-5 h-5" />} Submit for QA Review
+                {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save className="w-5 h-5" />} 
+                {isEditing ? 'Save Edits & Submit for QA' : 'Submit for QA Review'}
               </button>
             )}
           </div>
