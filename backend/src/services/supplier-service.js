@@ -1,4 +1,5 @@
-const { pool } = require('./auth-service'); // Reusing your existing DB connection
+const { pool } = require('./auth-service'); 
+const { v4: uuidv4 } = require('uuid');
 
 class SupplierService {
   
@@ -10,7 +11,6 @@ class SupplierService {
     const year = new Date().getFullYear();
     const prefix = `VTL-SUP-${categoryCode.toUpperCase()}-${year}-`;
 
-    // Find the highest sequence number for this category and year
     const result = await pool.query(
       `SELECT vtl_supplier_id FROM vendors 
        WHERE vtl_supplier_id LIKE $1 
@@ -20,13 +20,11 @@ class SupplierService {
 
     let sequence = 1;
     if (result.rows.length > 0) {
-      // Extract the last 4 digits (e.g., from "VTL-SUP-MFG-2026-0042" -> "0042")
       const lastId = result.rows[0].vtl_supplier_id;
       const lastSequence = parseInt(lastId.split('-').pop(), 10);
       sequence = lastSequence + 1;
     }
 
-    // Pad with leading zeros (e.g., 1 -> "0001")
     const paddedSequence = sequence.toString().padStart(4, '0');
     return `${prefix}${paddedSequence}`;
   }
@@ -37,10 +35,8 @@ class SupplierService {
   static async createVendor(vendorData, userId) {
     const client = await pool.connect();
     try {
-      await client.query('BEGIN'); // Start transaction
+      await client.query('BEGIN'); 
 
-     // 1. Insert Master Vendor Record (with JSONB sections)
-      // FIX: Added 'uuidv4()' for vendor_id and handled empty strings for integer fields
       const vendorResult = await client.query(
         `INSERT INTO vendors (
           vendor_id, legal_name, trading_name, registered_address, year_established, 
@@ -50,11 +46,10 @@ class SupplierService {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'DRAFT', $14)
         RETURNING vendor_id`,
         [
-          uuidv4(), // Added missing vendor_id generation!
+          uuidv4(), 
           vendorData.legal_name, 
           vendorData.trading_name, 
           vendorData.registered_address,
-          // FIX: Convert empty string to null for the integer column
           vendorData.year_established === "" ? null : vendorData.year_established, 
           vendorData.company_reg_no, 
           vendorData.vat_number,
@@ -70,7 +65,6 @@ class SupplierService {
       
       const vendorId = vendorResult.rows[0].vendor_id;
 
-      // 2. Insert Contacts (if provided)
       if (vendorData.contacts && vendorData.contacts.length > 0) {
         for (const contact of vendorData.contacts) {
           await client.query(
@@ -81,7 +75,6 @@ class SupplierService {
         }
       }
 
-      // 3. Insert Trade References (if provided)
       if (vendorData.references && vendorData.references.length > 0) {
         for (const ref of vendorData.references) {
           await client.query(
@@ -94,6 +87,78 @@ class SupplierService {
 
       await client.query('COMMIT');
       return { vendor_id: vendorId, status: 'DRAFT', message: 'Vendor draft saved successfully' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ============================================================================
+  // 2.5 UPDATE VENDOR (EDIT & RE-ROUTE)
+  // Drops status back to DRAFT for re-approval
+  // ============================================================================
+  static async updateVendor(vendorId, vendorData, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Verify vendor exists
+      const checkRes = await client.query('SELECT status FROM vendors WHERE vendor_id = $1', [vendorId]);
+      if (checkRes.rows.length === 0) throw new Error('Vendor not found');
+
+      // Update Master Record and force status back to 'DRAFT'
+      await client.query(
+        `UPDATE vendors SET 
+          legal_name = $1, trading_name = $2, registered_address = $3, year_established = $4, 
+          company_reg_no = $5, vat_number = $6, primary_category = $7, all_categories = $8, 
+          compliance_data = $9, capabilities_data = $10, banking_data = $11, declaration_data = $12, 
+          status = 'DRAFT', updated_at = CURRENT_TIMESTAMP
+         WHERE vendor_id = $13`,
+        [
+          vendorData.legal_name, 
+          vendorData.trading_name, 
+          vendorData.registered_address,
+          vendorData.year_established === "" ? null : vendorData.year_established, 
+          vendorData.company_reg_no, 
+          vendorData.vat_number,
+          vendorData.primary_category, 
+          JSON.stringify(vendorData.all_categories || []),
+          JSON.stringify(vendorData.compliance_data || {}),
+          JSON.stringify(vendorData.capabilities_data || {}),
+          JSON.stringify(vendorData.banking_data || {}),
+          JSON.stringify(vendorData.declaration_data || {}),
+          vendorId
+        ]
+      );
+
+      // Replace Contacts (Delete old, insert new)
+      await client.query('DELETE FROM vendor_contacts WHERE vendor_id = $1', [vendorId]);
+      if (vendorData.contacts && vendorData.contacts.length > 0) {
+        for (const contact of vendorData.contacts) {
+          await client.query(
+            `INSERT INTO vendor_contacts (vendor_id, full_name, position, telephone, email, is_primary)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [vendorId, contact.full_name, contact.position, contact.telephone, contact.email, contact.is_primary]
+          );
+        }
+      }
+
+      // Replace Trade References
+      await client.query('DELETE FROM vendor_references WHERE vendor_id = $1', [vendorId]);
+      if (vendorData.references && vendorData.references.length > 0) {
+        for (const ref of vendorData.references) {
+          await client.query(
+            `INSERT INTO vendor_references (vendor_id, company_name, contact_name, contact_details, reference_type)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [vendorId, ref.company_name, ref.contact_name, ref.contact_details, ref.reference_type || 'trade']
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+      return { vendor_id: vendorId, status: 'DRAFT', message: 'Vendor updated and returned to Draft status for re-approval.' };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -116,11 +181,9 @@ class SupplierService {
     `;
     const params = [];
 
-    // Filter by AVL Status (Approved / Conditionally Approved)
     if (filters.avl_only) {
       query += ` AND v.status IN ('APPROVED', 'CONDITIONALLY_APPROVED')`;
     } 
-    // Filter by specific status (e.g., 'AWAITING_QA')
     else if (filters.status) {
       params.push(filters.status);
       query += ` AND v.status = $${params.length}`;
@@ -143,7 +206,6 @@ class SupplierService {
     
     const vendor = vendorRes.rows[0];
 
-    // Fetch relational data
     const [contacts, references, documents] = await Promise.all([
       pool.query(`SELECT * FROM vendor_contacts WHERE vendor_id = $1`, [vendorId]),
       pool.query(`SELECT * FROM vendor_references WHERE vendor_id = $1`, [vendorId]),
@@ -162,7 +224,6 @@ class SupplierService {
   // 4. WORKFLOW TRANSITIONS (SALES -> QA)
   // ============================================================================
   
-  // Sales User submits the draft for QA Review
   static async submitForQA(vendorId) {
     const result = await pool.query(
       `UPDATE vendors SET status = 'AWAITING_QA', updated_at = CURRENT_TIMESTAMP 
@@ -173,13 +234,11 @@ class SupplierService {
     return result.rows[0];
   }
 
-  // QA Officer approves the vendor
   static async approveVendor(vendorId, qaUserId, approvalData) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // 1. Get the category to generate the ID
       const vendorRes = await client.query(`SELECT primary_category, status FROM vendors WHERE vendor_id = $1`, [vendorId]);
       if (vendorRes.rows.length === 0) throw new Error('Vendor not found');
       
@@ -188,11 +247,9 @@ class SupplierService {
         throw new Error('Vendor is not pending QA approval');
       }
 
-      // 2. Generate the unique VTL-ID
       const vtlSupplierId = await this.generateVtlSupplierId(vendor.primary_category);
       const finalStatus = approvalData.is_conditional ? 'CONDITIONALLY_APPROVED' : 'APPROVED';
 
-      // 3. Update the record
       const updateRes = await client.query(
         `UPDATE vendors SET 
           status = $1, 
@@ -215,7 +272,6 @@ class SupplierService {
     }
   }
 
-  // QA Officer rejects/bounces back the vendor
   static async rejectVendor(vendorId, qaUserId, reason) {
     const result = await pool.query(
       `UPDATE vendors SET 

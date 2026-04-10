@@ -8,7 +8,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
   ArrowLeft, Building2, MapPin, Phone, Mail, FileCheck, 
   ShieldCheck, AlertTriangle, Briefcase, CreditCard, 
-  CheckCircle2, XCircle, Clock, UserCheck
+  CheckCircle2, XCircle, Clock, UserCheck, Edit
 } from 'lucide-react';
 
 const CATEGORIES: Record<string, string> = {
@@ -78,13 +78,15 @@ export default function VendorProfilePage() {
   const cap = vendor.capabilities_data || {};
   const dec = vendor.declaration_data || {};
   
-  // Normalize banking data to always be an array (handles older drafts made before this change)
   const bankingAccounts = Array.isArray(vendor.banking_data) 
     ? vendor.banking_data 
     : vendor.banking_data ? [vendor.banking_data] : [];
 
   const canViewBanking = user?.role === 'admin' || user?.role === 'cfo';
   const canReview = (user?.role === 'qa' || user?.role === 'admin') && vendor.status === 'AWAITING_QA';
+  
+  // NEW: Check if the user is allowed to edit vendor details
+  const canEdit = ['sales', 'admin', 'manager', 'ceo', 'cfo'].includes(user?.role || '');
 
   return (
     <DashboardLayout>
@@ -112,14 +114,26 @@ export default function VendorProfilePage() {
             </div>
           </div>
 
-          {canReview && (
-            <button 
-              onClick={() => router.push(`/vendor-management/suppliers/${vendor.vendor_id}/review`)}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-500/20 animate-pulse"
-            >
-              <FileCheck className="w-5 h-5" /> Execute QA Review
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {/* NEW EDIT BUTTON */}
+            {canEdit && (
+              <button 
+                onClick={() => router.push(`/vendor-management/suppliers/${vendor.vendor_id}/edit`)}
+                className="px-6 py-3 bg-dark-900 hover:bg-dark-700 text-white rounded-lg font-bold flex items-center gap-2 border border-dark-600 transition-colors shadow-sm"
+              >
+                <Edit className="w-5 h-5" /> Edit Details
+              </button>
+            )}
+
+            {canReview && (
+              <button 
+                onClick={() => router.push(`/vendor-management/suppliers/${vendor.vendor_id}/review`)}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-500/20 animate-pulse"
+              >
+                <FileCheck className="w-5 h-5" /> Execute QA Review
+              </button>
+            )}
+          </div>
         </div>
 
         {vendor.status === 'REVISION_REQUIRED' && vendor.qa_notes && (
@@ -133,7 +147,6 @@ export default function VendorProfilePage() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
           <div className="lg:col-span-2 space-y-6">
             
             {/* COMPANY INFO */}
@@ -243,7 +256,7 @@ export default function VendorProfilePage() {
               </div>
             </div>
 
-            {/* BANKING (MULTIPLE ACCOUNTS, ROLE RESTRICTED) */}
+            {/* BANKING */}
             {canViewBanking ? (
               <div className="bg-dark-800 border border-dark-700 rounded-xl p-6">
                 <h2 className="text-lg font-bold text-white mb-4 border-b border-dark-700 pb-2 flex items-center gap-2">

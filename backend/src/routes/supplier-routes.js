@@ -1,19 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs'); // Added for digital signature verification
-const { pool } = require('../services/auth-service'); // Added to fetch user password hash
+const bcrypt = require('bcryptjs'); 
+const { pool } = require('../services/auth-service'); 
 const SupplierService = require('../services/supplier-service');
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 const SupplierEmailService = require('../services/supplier-email-service');
 
 // ============================================================================
 // 1. CREATE VENDOR DRAFT
-// Roles Allowed: Sales, Admin (Per Roadmap RBAC)
-// FIX: Added 'ceo', 'cfo'
+// Roles Allowed: Sales, Admin, Manager, CEO, CFO
 // ============================================================================
 router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
   try {
-    const userId = req.user.user_id; // Extracted securely from the JWT token
+    const userId = req.user.user_id; 
     const vendorData = req.body;
 
     const result = await SupplierService.createVendor(vendorData, userId);
@@ -25,12 +24,29 @@ router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'c
 });
 
 // ============================================================================
+// 1.5 UPDATE VENDOR DRAFT (EDIT)
+// Roles Allowed: Sales, Admin, Manager, CEO, CFO
+// ============================================================================
+router.put('/:id', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
+  try {
+    const vendorId = req.params.id;
+    const userId = req.user.user_id;
+    const vendorData = req.body;
+
+    const result = await SupplierService.updateVendor(vendorId, vendorData, userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Update Vendor Error:', error);
+    res.status(500).json({ error: 'Failed to update vendor record' });
+  }
+});
+
+// ============================================================================
 // 2. FETCH VENDORS (Approved Vendor List & Dashboards)
 // Roles Allowed: All authenticated users
 // ============================================================================
 router.get('/', authenticate, async (req, res) => {
   try {
-    // Pass query parameters as filters (e.g., ?avl_only=true or ?status=AWAITING_QA)
     const filters = {
       avl_only: req.query.avl_only === 'true',
       status: req.query.status,
@@ -62,15 +78,13 @@ router.get('/:id', authenticate, async (req, res) => {
 
 // ============================================================================
 // 4. SUBMIT FOR QA REVIEW
-// Roles Allowed: Sales, Admin
-// FIX: Added 'ceo', 'cfo'
+// Roles Allowed: Sales, Admin, Manager, CEO, CFO
 // ============================================================================
 router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const updatedVendor = await SupplierService.submitForQA(vendorId);
     
-    // Trigger Email Notification to QA Team 
     SupplierEmailService.notifyQAPending(updatedVendor).catch(console.error);
     
     res.json({ message: 'Vendor submitted for QA review successfully', vendor: updatedVendor });
@@ -82,8 +96,7 @@ router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager',
 
 // ============================================================================
 // 5. QA APPROVAL (With Password Verification)
-// Roles Allowed: QA, Admin
-// FIX: Added 'ceo', 'cfo'
+// Roles Allowed: QA, Admin, CEO, CFO
 // ============================================================================
 router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
@@ -91,12 +104,10 @@ router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo'
     const qaUserId = req.user.user_id;
     const { is_conditional, notes, signature_password } = req.body;
 
-    // 1. Validate signature presence
     if (!signature_password) {
       return res.status(400).json({ error: 'Digital signature (password) is required.' });
     }
 
-    // 2. Verify the User's Password
     const userResult = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [qaUserId]);
     if (userResult.rows.length === 0) {
       return res.status(401).json({ error: 'User not found.' });
@@ -107,7 +118,6 @@ router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo'
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
-    // 3. Execute Approval
     const approvalData = {
       is_conditional: is_conditional || false,
       notes: notes || ''
@@ -115,7 +125,6 @@ router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo'
 
     const approvedVendor = await SupplierService.approveVendor(vendorId, qaUserId, approvalData);
     
-    // Trigger Email Notification to Sales Team
     SupplierEmailService.notifySalesResult(approvedVendor, approvedVendor.status).catch(console.error);
     
     res.json({ 
@@ -131,8 +140,7 @@ router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo'
 
 // ============================================================================
 // 6. QA REJECTION (With Password Verification)
-// Roles Allowed: QA, Admin
-// FIX: Added 'ceo', 'cfo'
+// Roles Allowed: QA, Admin, CEO, CFO
 // ============================================================================
 router.post('/:id/reject', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
@@ -140,7 +148,6 @@ router.post('/:id/reject', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']
     const qaUserId = req.user.user_id;
     const { reason, signature_password } = req.body;
 
-    // 1. Validate inputs
     if (!reason) {
       return res.status(400).json({ error: 'Rejection reason is required' });
     }
@@ -148,7 +155,6 @@ router.post('/:id/reject', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']
       return res.status(400).json({ error: 'Digital signature (password) is required.' });
     }
 
-    // 2. Verify the User's Password
     const userResult = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [qaUserId]);
     if (userResult.rows.length === 0) {
       return res.status(401).json({ error: 'User not found.' });
@@ -159,10 +165,8 @@ router.post('/:id/reject', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo']
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
-    // 3. Execute Rejection
     const rejectedVendor = await SupplierService.rejectVendor(vendorId, qaUserId, reason);
     
-    // Trigger Email Notification to Sales Team
     SupplierEmailService.notifySalesResult(rejectedVendor, 'REVISION_REQUIRED').catch(console.error);
     
     res.json({ message: 'Vendor returned to Sales for revision', vendor: rejectedVendor });
