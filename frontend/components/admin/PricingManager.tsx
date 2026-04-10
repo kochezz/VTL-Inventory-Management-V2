@@ -239,7 +239,8 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
                             <span className="text-gray-600">K</span>
                             <input 
                               type="text" 
-                              value={(p.selling_price * globalRate).toFixed(2)} 
+                              // FIX: Added Number() cast
+                              value={(Number(p.selling_price) * globalRate).toFixed(2)} 
                               disabled
                               className="w-full bg-dark-900 border border-dark-700 rounded px-3 py-1.5 text-gray-500 outline-none cursor-not-allowed opacity-60" 
                               title="Exact raw conversion (USD x Rate)"
@@ -253,7 +254,8 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
                             <span className="text-primary-500 font-bold">K</span>
                             <input 
                               type="text" 
-                              value={p.selling_price_zmw ? p.selling_price_zmw.toFixed(2) : ''} 
+                              // FIX: Added Number() cast
+                              value={p.selling_price_zmw ? Number(p.selling_price_zmw).toFixed(2) : ''} 
                               disabled
                               className="w-full bg-primary-900/20 border border-primary-500/30 rounded px-3 py-1.5 text-primary-400 font-bold outline-none cursor-not-allowed" 
                               title="Retail rounded price synced to POS"
