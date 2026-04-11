@@ -1,4 +1,5 @@
 const { pool } = require('./auth-service'); // Reusing existing DB connection
+const NotificationService = require('./notification-service'); // <-- NEW IMPORT
 
 class PurchaseOrderService {
   
@@ -109,6 +110,20 @@ class PurchaseOrderService {
       }
 
       await client.query('COMMIT');
+
+      // 📧 TRIGGER NOTIFICATION TO CFO
+      const detailsRes = await pool.query(`
+        SELECT v.legal_name as vendor_name, u.full_name as raised_by_name
+        FROM vendors v, users u 
+        WHERE v.vendor_id = $1 AND u.user_id = $2
+      `, [poData.vendor_id, userId]);
+      
+      if (detailsRes.rows.length > 0) {
+        NotificationService.notifyPOPendingApproval(
+          poNumber, totalUsdEquiv, detailsRes.rows[0].vendor_name, detailsRes.rows[0].raised_by_name, ['cfo', 'admin']
+        ).catch(console.error);
+      }
+
       return { 
         po_id: poId, 
         po_number: poNumber, 
@@ -214,6 +229,27 @@ class PurchaseOrderService {
       await client.query(`UPDATE purchase_orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE po_id = $2`, [newStatus, poId]);
 
       await client.query('COMMIT');
+
+      // 📧 TRIGGER NOTIFICATION
+      const detailsRes = await pool.query(`
+        SELECT p.po_number, p.total_usd_equiv, v.legal_name as vendor_name,
+               u.email as creator_email, u.full_name as creator_name, a.full_name as approver_name
+        FROM purchase_orders p
+        JOIN vendors v ON p.vendor_id = v.vendor_id 
+        JOIN users u ON p.raised_by = u.user_id 
+        LEFT JOIN users a ON a.user_id = $1
+        WHERE p.po_id = $2
+      `, [approverId, poId]);
+      
+      if (detailsRes.rows.length > 0) {
+        const d = detailsRes.rows[0];
+        if (newStatus === 'PENDING_CEO') {
+           NotificationService.notifyPOPendingApproval(d.po_number, d.total_usd_equiv, d.vendor_name, d.creator_name, ['ceo', 'admin']).catch(console.error);
+        } else if (newStatus === 'APPROVED') {
+           NotificationService.notifyPOStatus(d.po_number, 'APPROVED', d.creator_email, d.approver_name).catch(console.error);
+        }
+      }
+
       return { status: newStatus, message: `PO successfully approved by ${role.toUpperCase()}.` };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -242,6 +278,21 @@ class PurchaseOrderService {
       await client.query(`UPDATE purchase_orders SET status = 'REJECTED', updated_at = CURRENT_TIMESTAMP WHERE po_id = $1`, [poId]);
 
       await client.query('COMMIT');
+
+      // 📧 TRIGGER NOTIFICATION BACK TO CREATOR
+      const detailsRes = await pool.query(`
+        SELECT p.po_number, u.email as creator_email, a.full_name as approver_name
+        FROM purchase_orders p 
+        JOIN users u ON p.raised_by = u.user_id 
+        LEFT JOIN users a ON a.user_id = $1 
+        WHERE p.po_id = $2
+      `, [approverId, poId]);
+
+      if (detailsRes.rows.length > 0) {
+        const d = detailsRes.rows[0];
+        NotificationService.notifyPOStatus(d.po_number, 'REJECTED', d.creator_email, d.approver_name, reason).catch(console.error);
+      }
+
       return { status: 'REJECTED', message: `PO rejected by ${role.toUpperCase()}.` };
     } catch (error) {
       await client.query('ROLLBACK');

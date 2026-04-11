@@ -3,7 +3,6 @@ const router = express.Router();
 const bcrypt = require('bcryptjs'); 
 const { pool } = require('../services/auth-service'); 
 const PurchaseOrderService = require('../services/po-service');
-const POEmailService = require('../services/po-email-service'); // <-- Imported the new Email Service
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 
 // ============================================================================
@@ -27,11 +26,8 @@ router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'c
     const userId = req.user.user_id;
     const poData = req.body;
 
+    // Emails are now natively handled inside the createPO service function
     const result = await PurchaseOrderService.createPO(poData, userId);
-    
-    // Determine who needs to be emailed based on the initial USD calculation
-    const nextRole = result.status === 'PENDING_CEO' ? 'ceo' : 'cfo';
-    POEmailService.notifyPendingApproval(result.po_id, nextRole).catch(console.error);
     
     res.status(201).json(result);
   } catch (error) {
@@ -96,14 +92,8 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), as
     const isValidPassword = await bcrypt.compare(signature_password, userResult.rows[0].password_hash);
     if (!isValidPassword) return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
 
+    // Emails are now natively handled inside the approvePO service function
     const result = await PurchaseOrderService.approvePO(poId, approverId, approverRole);
-    
-    // Trigger Emails based on the NEW status!
-    if (result.status === 'APPROVED') {
-        POEmailService.notifyPOApproved(result.po_id).catch(console.error);
-    } else if (result.status === 'PENDING_CEO') {
-        POEmailService.notifyPendingApproval(result.po_id, 'ceo').catch(console.error);
-    }
     
     res.json(result);
   } catch (error) {
@@ -135,10 +125,8 @@ router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), asy
     const isValidPassword = await bcrypt.compare(signature_password, userResult.rows[0].password_hash);
     if (!isValidPassword) return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
 
+    // Emails are now natively handled inside the rejectPO service function
     const result = await PurchaseOrderService.rejectPO(poId, approverId, approverRole, reason);
-    
-    // Email the Sales user the bad news
-    POEmailService.notifyPOResolved(result.po_id).catch(console.error);
     
     res.json(result);
   } catch (error) {

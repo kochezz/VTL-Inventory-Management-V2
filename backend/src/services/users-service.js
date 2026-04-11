@@ -2,8 +2,8 @@ const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('./auth-service');
 
-// NEW: Added 'operator' to the valid roles list
-const VALID_ROLES = ['admin', 'ceo', 'cfo', 'manager', 'qa', 'engineering', 'staff', 'operator', 'super_viewer', 'viewer'];
+// FIX: Added 'sales' to the valid roles list
+const VALID_ROLES = ['admin', 'ceo', 'cfo', 'manager', 'qa', 'engineering', 'staff', 'operator', 'sales', 'super_viewer', 'viewer'];
 
 const getAllUsers = async () => {
   try {
@@ -177,7 +177,7 @@ const initiatePasswordReset = async (userId) => {
 
 const getUserStats = async () => {
   try {
-    // NEW: Added Operator counting logic here
+    // FIX: Added counting logic for the 'sales' role
     const result = await pool.query(`
       SELECT 
         COUNT(*) as total, COUNT(*) FILTER (WHERE is_active = true) as active,
@@ -186,6 +186,7 @@ const getUserStats = async () => {
         COUNT(*) FILTER (WHERE role = 'cfo') as cfos, COUNT(*) FILTER (WHERE role = 'manager') as managers,
         COUNT(*) FILTER (WHERE role = 'engineering') as engineers, COUNT(*) FILTER (WHERE role = 'qa') as qa_users,
         COUNT(*) FILTER (WHERE role = 'staff') as staff, COUNT(*) FILTER (WHERE role = 'operator') as operators,
+        COUNT(*) FILTER (WHERE role = 'sales') as sales_reps,
         COUNT(*) FILTER (WHERE role = 'super_viewer') as super_viewers, COUNT(*) FILTER (WHERE role = 'viewer') as viewers
       FROM users
     `);

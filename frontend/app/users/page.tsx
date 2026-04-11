@@ -158,7 +158,8 @@ export default function UsersPage() {
       engineering: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
       qa: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
       staff: 'bg-green-500/10 text-green-400 border-green-500/20',
-      operator: 'bg-orange-500/10 text-orange-400 border-orange-500/20', // NEW
+      operator: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+      sales: 'bg-pink-500/10 text-pink-400 border-pink-500/20', // FIX: Added Sales Role Badge
       super_viewer: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
       viewer: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
     };
@@ -202,6 +203,7 @@ export default function UsersPage() {
             <option value="qa">QA</option>
             <option value="staff">Staff</option>
             <option value="operator">Operator</option>
+            <option value="sales">Sales & Marketing</option> {/* FIX: Added Sales Role Filter */}
             <option value="super_viewer">Super Viewer</option>
             <option value="viewer">Viewer</option>
           </select>
@@ -284,6 +286,7 @@ export default function UsersPage() {
                       <option value="manager">Manager</option>
                       <option value="engineering">Engineering</option>
                       <option value="qa">QA</option>
+                      <option value="sales">Sales & Marketing</option> {/* FIX: Added Sales Role Form Option */}
                       <option value="staff">Staff</option>
                       <option value="operator">Operator (Line Staff)</option>
                       <option value="super_viewer">Super Viewer</option>

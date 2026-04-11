@@ -1,4 +1,5 @@
 const { pool } = require('./auth-service'); // Reusing existing DB connection
+const NotificationService = require('./notification-service'); // <-- NEW IMPORT
 
 class CustomerService {
   
@@ -93,6 +94,13 @@ class CustomerService {
       }
 
       await client.query('COMMIT');
+
+      // 📧 TRIGGER NOTIFICATION FOR PENDING APPROVAL
+      const userRes = await pool.query('SELECT full_name FROM users WHERE user_id = $1', [userId]);
+      const onboarderName = userRes.rows[0]?.full_name || 'Sales Representative';
+      const rolesToNotify = tierCode === 'T3' ? ['cfo', 'ceo', 'admin'] : ['cfo', 'admin'];
+      NotificationService.notifyCustomerPendingApproval(customerData.trading_name, customerData.tier_name, onboarderName, rolesToNotify).catch(console.error);
+
       return { 
         customer_id: customerId, 
         status: 'PENDING_CFO',
@@ -191,6 +199,21 @@ class CustomerService {
       );
 
       await client.query('COMMIT');
+
+      // 📧 TRIGGER NOTIFICATION BACK TO SALES
+      const detailsRes = await pool.query(`
+        SELECT c.trading_name, u.email as sales_email, a.full_name as approver_name
+        FROM customers c 
+        JOIN users u ON c.onboarded_by = u.user_id 
+        LEFT JOIN users a ON a.user_id = $1
+        WHERE c.customer_id = $2
+      `, [cfoId, customerId]);
+
+      if (detailsRes.rows.length > 0) {
+        const d = detailsRes.rows[0];
+        NotificationService.notifyCustomerStatus(d.trading_name, 'APPROVED', d.sales_email, d.approver_name).catch(console.error);
+      }
+
       return { 
         status: 'ACTIVE', 
         vtl_customer_id: vtlCustomerId,
@@ -212,6 +235,21 @@ class CustomerService {
       `UPDATE customers SET status = 'REVISION_REQUIRED' WHERE customer_id = $1`,
       [customerId]
     );
+
+    // 📧 TRIGGER NOTIFICATION BACK TO SALES
+    const detailsRes = await pool.query(`
+      SELECT c.trading_name, u.email as sales_email, a.full_name as approver_name
+      FROM customers c 
+      JOIN users u ON c.onboarded_by = u.user_id 
+      LEFT JOIN users a ON a.user_id = $1
+      WHERE c.customer_id = $2
+    `, [cfoId, customerId]);
+
+    if (detailsRes.rows.length > 0) {
+      const d = detailsRes.rows[0];
+      NotificationService.notifyCustomerStatus(d.trading_name, 'REVISION_REQUIRED', d.sales_email, d.approver_name, reason).catch(console.error);
+    }
+
     return { status: 'REVISION_REQUIRED', message: 'Customer returned to Sales for revision.' };
   }
 }

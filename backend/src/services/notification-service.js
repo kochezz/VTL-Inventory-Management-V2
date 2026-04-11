@@ -1,6 +1,6 @@
 // backend/src/services/notification-service.js
 // ============================================================================
-// UPDATED: Uses Resend HTTP API (HTTPS port 443) instead of SMTP (port 587)
+// Uses Resend HTTP API (HTTPS port 443) instead of SMTP (port 587)
 // Reason: Render blocks outbound SMTP (ETIMEDOUT on port 587).
 //         Resend's HTTP API uses port 443 which is always open on Render.
 // Install: npm install resend   (in your backend folder)
@@ -36,7 +36,7 @@ const getEmailsByRole = async (roles) => {
 const sendEmail = async (to, subject, htmlContent) => {
   if (!to || to.length === 0) {
     console.warn('📧 sendEmail: no recipients for subject:', subject);
-    return;
+    return { success: false, error: 'No recipients' };
   }
 
   console.log(`📧 Sending: "${subject}" → [${to.join(', ')}]`);
@@ -53,12 +53,98 @@ const sendEmail = async (to, subject, htmlContent) => {
 
     if (error) {
       console.error('❌ Resend API error:', error);
+      return { success: false, error };
     } else {
       console.log(`✉️  Email sent: ${subject} [id: ${data?.id}]`);
+      return { success: true, id: data?.id };
     }
   } catch (err) {
     console.error('❌ sendEmail exception:', err.message);
+    return { success: false, error: err.message };
   }
+};
+
+// ============================================================================
+// CRM & VENDOR NOTIFICATIONS (NEW)
+// ============================================================================
+
+const notifyCustomerPendingApproval = async (tradingName, tierName, onboardedByName, rolesToNotify) => {
+  const emails = await getEmailsByRole(rolesToNotify);
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#3b82f6;padding:20px;text-align:center;color:white;"><h2>Action Required: Customer Approval</h2></div>
+      <div style="padding:20px;color:#334155;">
+        <p>Hello Executive Team,</p>
+        <p>A new customer account has been onboarded by <strong>${onboardedByName}</strong> and requires your approval.</p>
+        <div style="background-color:#f8fafc;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 10px 0;"><strong>Customer:</strong> ${tradingName}</p>
+          <p style="margin:0;"><strong>Tier:</strong> ${tierName}</p>
+        </div>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/crm/customers" style="display:inline-block;background-color:#3b82f6;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Review Customer</a>
+      </div>
+    </div>`;
+  await sendEmail(emails, `Pending Approval: New Customer (${tradingName})`, html);
+};
+
+const notifyCustomerStatus = async (tradingName, status, salesRepEmail, approverName, reason = '') => {
+  const isApproved = status === 'APPROVED';
+  const color = isApproved ? '#10b981' : '#ef4444';
+  const title = isApproved ? 'Customer Approved' : 'Customer Revision Required';
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:${color};padding:20px;text-align:center;color:white;"><h2>${title}</h2></div>
+      <div style="padding:20px;color:#334155;">
+        <p>Hello,</p>
+        <p>The onboarding request for <strong>${tradingName}</strong> has been reviewed by ${approverName}.</p>
+        <div style="background-color:#f8fafc;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 10px 0;"><strong>Status:</strong> <span style="color:${color};font-weight:bold;">${status}</span></p>
+          ${!isApproved ? `<p style="margin:0;color:#b91c1c;"><strong>Reason:</strong> ${reason}</p>` : ''}
+        </div>
+      </div>
+    </div>`;
+  await sendEmail([salesRepEmail], `Customer Update: ${tradingName}`, html);
+};
+
+// ============================================================================
+// PURCHASE ORDER NOTIFICATIONS (NEW)
+// ============================================================================
+
+const notifyPOPendingApproval = async (poNumber, totalUsd, vendorName, raisedByName, rolesToNotify) => {
+  const emails = await getEmailsByRole(rolesToNotify);
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#8b5cf6;padding:20px;text-align:center;color:white;"><h2>Action Required: PO Approval</h2></div>
+      <div style="padding:20px;color:#334155;">
+        <p>Hello Executive Team,</p>
+        <p>A Purchase Order has been raised by <strong>${raisedByName}</strong> and is pending your signature.</p>
+        <div style="background-color:#f5f3ff;border:1px solid #c4b5fd;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 10px 0;"><strong>PO Number:</strong> ${poNumber}</p>
+          <p style="margin:0 0 10px 0;"><strong>Vendor:</strong> ${vendorName}</p>
+          <p style="margin:0;font-weight:bold;color:#6d28d9;"><strong>Total Amount:</strong> $${totalUsd.toFixed(2)} USD (Equivalent)</p>
+        </div>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/purchasing" style="display:inline-block;background-color:#8b5cf6;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Review Purchase Order</a>
+      </div>
+    </div>`;
+  await sendEmail(emails, `Pending PO Approval: ${poNumber}`, html);
+};
+
+const notifyPOStatus = async (poNumber, status, creatorEmail, approverName, reason = '') => {
+  const isApproved = status === 'APPROVED';
+  const color = isApproved ? '#10b981' : '#ef4444';
+  const title = isApproved ? 'Purchase Order Approved' : 'Purchase Order Rejected';
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:${color};padding:20px;text-align:center;color:white;"><h2>${title}</h2></div>
+      <div style="padding:20px;color:#334155;">
+        <p>Hello,</p>
+        <p>Your Purchase Order <strong>${poNumber}</strong> has been reviewed by ${approverName}.</p>
+        <div style="background-color:#f8fafc;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 10px 0;"><strong>Status:</strong> <span style="color:${color};font-weight:bold;">${status}</span></p>
+          ${!isApproved ? `<p style="margin:0;color:#b91c1c;"><strong>Reason:</strong> ${reason}</p>` : ''}
+        </div>
+      </div>
+    </div>`;
+  await sendEmail([creatorEmail], `PO Update: ${poNumber}`, html);
 };
 
 // ============================================================================
@@ -323,6 +409,13 @@ const notifyLabCertificateIssued = async (testNumber, certNumber, status, qaName
 // ============================================================================
 
 module.exports = {
+  sendEmail, // Exposed for custom dynamic emails from routes
+  // CRM & Vendors
+  notifyCustomerPendingApproval,
+  notifyCustomerStatus,
+  // PO
+  notifyPOPendingApproval,
+  notifyPOStatus,
   // Production
   notifyQAPendingReview,
   notifyBatchRejected,

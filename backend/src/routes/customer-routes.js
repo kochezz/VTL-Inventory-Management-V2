@@ -3,22 +3,20 @@ const router = express.Router();
 const bcrypt = require('bcryptjs'); 
 const { pool } = require('../services/auth-service'); 
 const CustomerService = require('../services/customer-service');
+const { sendEmail } = require('../services/notification-service'); // Use unified sender
 const { authenticate, authorize } = require('../middleware/auth-middleware');
-const { Resend } = require('resend');
 
 // ============================================================================
 // 1. CREATE CUSTOMER (ONBOARDING)
-// Roles Allowed: Sales, Manager, Admin
+// Roles Allowed: Sales, Manager, Admin, CEO, CFO
 // ============================================================================
 router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {
   try {
     const userId = req.user.user_id;
     const customerData = req.body;
 
+    // Emails are now natively handled inside the createCustomer service function
     const result = await CustomerService.createCustomer(customerData, userId);
-    
-    // TODO: Trigger Email Notification to CFO that a new customer needs approval.
-    // If result.tier === 'T3' (Chain), the roadmap says we must ALSO email the CEO!
     
     res.status(201).json(result);
   } catch (error) {
@@ -30,23 +28,12 @@ router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'c
 // ============================================================================
 // 2. SEND ONBOARDING REQUEST EMAIL
 // Triggered from POS or CRM when a prospect is not yet registered
-// Roles Allowed: Sales, Staff, Manager, Admin
+// Roles Allowed: Sales, Staff, Manager, Admin, CEO
 // ============================================================================
 router.post('/onboarding-request', authenticate, authorize(['sales', 'staff', 'manager', 'admin', 'ceo']), async (req, res) => {
   try {
-    const {
-      to_email,
-      contact_name,
-      business_name,
-      phone,
-      tier,
-      territory,
-      cashier_note,
-      sent_by,
-      email_html,
-      email_subject,
-    } = req.body;
-
+    const { to_email, email_html, email_subject } = req.body;
+    
     if (!to_email || !to_email.includes('@')) {
       return res.status(400).json({ error: 'A valid email address is required' });
     }
@@ -54,27 +41,17 @@ router.post('/onboarding-request', authenticate, authorize(['sales', 'staff', 'm
       return res.status(400).json({ error: 'Email content is required' });
     }
 
-    const resend = new Resend(process.env.SMTP_PASS);
-
-    const { data, error } = await resend.emails.send({
-      from: process.env.EMAIL_FROM
-        ? `Vilagio Technologies Ltd. <${process.env.EMAIL_FROM}>`
-        : 'Vilagio Technologies Ltd. <noreply@vilag.io>',
-      to:      [to_email.trim()],
-      subject: email_subject || 'FreshDrip Water — Customer Account Registration Request',
-      html:    email_html,
-    });
-
-    if (error) {
-      console.error('❌ Onboarding request email failed:', error);
-      return res.status(500).json({ error: `Email delivery failed: ${error.message}` });
+    // Use unified service instead of raw Resend object
+    const subject = email_subject || 'FreshDrip Water — Customer Account Registration Request';
+    const result = await sendEmail([to_email.trim()], subject, email_html);
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Email delivery failed');
     }
-
-    console.log(`📧 Onboarding request sent to ${to_email} by ${sent_by || req.user?.full_name} [id: ${data?.id}]`);
 
     res.json({
       message: `Onboarding request sent to ${to_email}`,
-      email_id: data?.id,
+      email_id: result.id,
     });
 
   } catch (err) {
@@ -141,9 +118,8 @@ router.post('/:id/approve', authenticate, authorize(['cfo', 'ceo', 'admin']), as
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
+    // Emails are now natively handled inside the approveCustomer service function
     const result = await CustomerService.approveCustomer(customerId, approverId);
-    
-    // TODO: Trigger Email Notification back to the Sales Rep that the customer is approved!
     
     res.json(result);
   } catch (error) {
@@ -175,9 +151,8 @@ router.post('/:id/reject', authenticate, authorize(['cfo', 'ceo', 'admin']), asy
       return res.status(401).json({ error: 'Invalid digital signature. Password incorrect.' });
     }
 
+    // Emails are now natively handled inside the rejectCustomer service function
     const result = await CustomerService.rejectCustomer(customerId, approverId, reason);
-    
-    // TODO: Trigger Email Notification back to the Sales Rep with the revision notes.
     
     res.json(result);
   } catch (error) {
