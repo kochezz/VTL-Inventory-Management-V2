@@ -181,9 +181,7 @@ export default function DocumentDetailPage() {
     if (!activeVersion) return;
     setDownloadingTemplate(true);
     try {
-      const res = await api.get(`/qms/versions/${activeVersion.version_id}/template`, {
-        responseType: 'blob' 
-      });
+      const res = await api.get(`/qms/versions/${activeVersion.version_id}/template`, { responseType: 'blob' });
       const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
@@ -192,13 +190,14 @@ export default function DocumentDetailPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       
-      // Refresh to show word_template strategy
       await fetchAll();
       setSuccess('Template downloaded. Edit it in Microsoft Word, then upload it using the "Upload Completed File" button.');
       setTimeout(() => setSuccess(''), 6000);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setError('Template download failed. Please try again.');
+      // 👇 Use the extractor here
+      const msg = await extractBlobError(e, 'Template download failed. Please try again.');
+      setError(msg);
     } finally {
       setDownloadingTemplate(false);
     }
@@ -207,9 +206,7 @@ export default function DocumentDetailPage() {
   async function handleDownloadAssembled() {
     setAssembling(true);
     try {
-      const res = await api.get(`/qms/documents/${params.id}/assembled`, {
-        responseType: 'blob'
-      });
+      const res = await api.get(`/qms/documents/${params.id}/assembled`, { responseType: 'blob' });
       const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
@@ -217,9 +214,11 @@ export default function DocumentDetailPage() {
       a.download = `${doc.doc_code}_v${activeVersion?.version_number}_controlled.docx`;
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setError('Document assembly failed. Please try again.');
+      // 👇 Use the extractor here
+      const msg = await extractBlobError(e, 'Document assembly failed. Please try again.');
+      setError(msg);
     } finally {
       setAssembling(false);
     }
@@ -274,9 +273,7 @@ export default function DocumentDetailPage() {
   async function triggerTemplateDownload(versionId: string, versionNumber: string) {
     setDownloadingTemplate(true);
     try {
-      const res = await api.get(`/qms/versions/${versionId}/template`, {
-        responseType: 'blob'
-      });
+      const res = await api.get(`/qms/versions/${versionId}/template`, { responseType: 'blob' });
       const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
@@ -285,17 +282,32 @@ export default function DocumentDetailPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       
-      await fetchAll(); // refresh to show word_template strategy
+      await fetchAll();
       setSuccess('Template downloaded. Edit in Microsoft Word, then upload the completed file.');
       setTimeout(() => setSuccess(''), 8000);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setError('Template download failed. Use the "Download Word Template" button in the content area.');
+      // 👇 Use the extractor here
+      const msg = await extractBlobError(e, 'Template download failed. Use the button in the content area.');
+      setError(msg);
     } finally {
       setDownloadingTemplate(false);
     }
   }
 
+  // Helper to extract JSON error messages hidden inside a Blob
+  async function extractBlobError(error: any, defaultMsg: string) {
+    if (error.response?.data instanceof Blob) {
+      try {
+        const text = await error.response.data.text();
+        const json = JSON.parse(text);
+        return json.error || defaultMsg;
+      } catch {
+        return defaultMsg;
+      }
+    }
+    return error.response?.data?.error || error.message || defaultMsg;
+  }
   // ── Save draft (structured / richtext) ───────────────────────────────────
 
   async function handleSaveDraft() {

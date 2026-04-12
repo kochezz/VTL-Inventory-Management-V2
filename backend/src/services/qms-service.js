@@ -445,6 +445,7 @@ const QmsService = {
     if (verRes.rows.length === 0) throw new Error('Version not found');
     const ver = verRes.rows[0];
     if (ver.status !== 'DRAFT') throw new Error('File can only be uploaded to a DRAFT version');
+    if (String(ver.authored_by) !== String(userId)) throw new Error('Only the author can upload files');
     if (ver.authored_by !== userId) throw new Error('Only the author can upload files');
 
     // If it was explicitly created as word_template, keep that strategy, otherwise set to 'upload'
@@ -492,6 +493,7 @@ const QmsService = {
     if (result.rows.length === 0) throw new Error('Version not found');
     const ver = result.rows[0];
     if (ver.status !== 'DRAFT') throw new Error('Templates can only be downloaded for DRAFT versions');
+    if (String(ver.authored_by) !== String(userId)) throw new Error('Only the author can download the template for this version');
     if (ver.authored_by !== userId) throw new Error('Only the author can download the template for this version');
     return ver;
   },
