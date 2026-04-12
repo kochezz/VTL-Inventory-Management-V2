@@ -1,16 +1,5 @@
 // ============================================================================
-// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1 UPGRADE)
-// ============================================================================
-// Changes from original:
-//  - Three-mode content strategy: 'structured' | 'upload' | 'richtext'
-//  - File upload / download support for FRM, CHK, LOG, REG types
-//  - change_reason required when revising a released document
-//  - Named reviewer assignment on submitForReview
-//  - Full audit trail written on every lifecycle transition
-//  - qms_document_links support (add / list)
-//  - withdrawDocument() — formal WITHDRAWN status (distinct from SUPERSEDED)
-//  - getAuditTrail() — fetch the full trail for a document (inspector view)
-//  - Notification wiring uses reviewer_id where available
+// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1 & 2 MERGED)
 // ============================================================================
 
 const { pool } = require('./auth-service');
@@ -71,8 +60,46 @@ async function writeAuditTrail(client, { doc_id, version_id, actor_id, action, f
   `, [doc_id, version_id || null, actor_id || null, action, from_status || null, to_status || null, notes || null, ip_address || null]);
 }
 
+// ── Role → doc_type training assignment logic ────────────────────────────────
+// Called inside releaseDocument() after the document is released.
+async function createTrainingTasksForRelease(client, docId, versionId, docType) {
+  // Get all roles that need training on this doc type
+  const reqRes = await client.query(
+    `SELECT role FROM qms_training_requirements WHERE doc_type = $1`,
+    [docType]
+  );
+  if (reqRes.rows.length === 0) return 0;
+
+  const roles = reqRes.rows.map(r => r.role);
+
+  // Get all active users matching those roles who haven't already acknowledged this specific version
+  const usersRes = await client.query(`
+    SELECT u.user_id
+    FROM users u
+    WHERE u.is_active = true
+      AND u.role = ANY($1)
+      AND NOT EXISTS (
+        SELECT 1 FROM qms_training_records tr
+        WHERE tr.user_id   = u.user_id
+          AND tr.version_id = $2
+      )
+  `, [roles, versionId]);
+
+  if (usersRes.rows.length === 0) return 0;
+
+  // Bulk insert training tasks (ON CONFLICT DO NOTHING = safe to re-run)
+  for (const { user_id } of usersRes.rows) {
+    await client.query(`
+      INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status)
+      VALUES ($1, $2, $3, 'PENDING')
+      ON CONFLICT (version_id, user_id) DO NOTHING
+    `, [docId, versionId, user_id]);
+  }
+
+  return usersRes.rows.length;
+}
+
 // ── File storage helpers ─────────────────────────────────────────────────────
-// Adjust UPLOAD_DIR to your storage path (local dev) or S3 key prefix in production.
 
 const UPLOAD_DIR = process.env.QMS_UPLOAD_DIR || path.join(__dirname, '../../uploads/qms');
 
@@ -310,7 +337,6 @@ const QmsService = {
   },
 
   // -- Create draft ----------------------------------------------------------
-  // change_reason is REQUIRED when revising a RELEASED document.
 
   async createDraft(docId, userId, changeReason) {
     const client = await pool.connect();
@@ -394,7 +420,7 @@ const QmsService = {
     `, [contentData, versionId, userId]);
     if (result.rows.length === 0) throw new Error('Draft not found or you are not the author');
 
-    // Write a lightweight SAVED trail entry (don't flood the trail)
+    // Write a lightweight SAVED trail entry
     await pool.query(`
       INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, notes)
       SELECT doc_id, version_id, $1, 'SAVED', 'Content saved'
@@ -449,7 +475,6 @@ const QmsService = {
   },
 
   // -- Submit for review -----------------------------------------------------
-  // Now accepts a named reviewerId
 
   async submitForReview(versionId, reviewerId, userId) {
     const client = await pool.connect();
@@ -478,7 +503,7 @@ const QmsService = {
         notes: reviewerId ? `Assigned to reviewer ${reviewerId}` : 'Broadcast to QA role'
       });
 
-      // Notification — prefer named reviewer, fall back to role broadcast
+      // Notification logic
       try {
         const notificationService = require('./notification-service');
         const authorRes = await client.query('SELECT full_name FROM users WHERE user_id = $1', [authored_by]);
@@ -486,7 +511,6 @@ const QmsService = {
         const { doc_code, doc_name } = docRes.rows[0];
 
         if (reviewerId) {
-          // Send directly to the named reviewer
           const reviewerRes = await client.query('SELECT email FROM users WHERE user_id = $1', [reviewerId]);
           const reviewerEmail = reviewerRes.rows[0]?.email;
           if (reviewerEmail && notificationService.notifyQADocumentReview) {
@@ -519,15 +543,24 @@ const QmsService = {
       await client.query('BEGIN');
 
       // Verify digital signature
-      const userRes = await client.query('SELECT password_hash FROM users WHERE user_id = $1', [approverId]);
+      const userRes = await client.query(
+        'SELECT password_hash FROM users WHERE user_id = $1', [approverId]
+      );
       const valid = await bcrypt.compare(signaturePassword, userRes.rows[0].password_hash);
       if (!valid) throw new Error('Invalid digital signature password');
 
       const verRes = await client.query(
-        'SELECT doc_id, version_number FROM qms_document_versions WHERE version_id = $1', [versionId]
+        'SELECT doc_id, version_number FROM qms_document_versions WHERE version_id = $1',
+        [versionId]
       );
       if (verRes.rows.length === 0) throw new Error('Version not found');
       const { doc_id, version_number } = verRes.rows[0];
+
+      // Get doc type for training assignment
+      const docRes = await client.query(
+        'SELECT doc_type FROM qms_documents WHERE doc_id = $1', [doc_id]
+      );
+      const docType = docRes.rows[0].doc_type;
 
       const releaseVersion = version_number === '0.1' ? '1.0' : version_number;
 
@@ -548,25 +581,67 @@ const QmsService = {
         WHERE version_id = $3
       `, [releaseVersion, approverId, versionId]);
 
+      // Update document master record
       await client.query(`
-        UPDATE qms_documents SET status = 'RELEASED', current_version_id = $1 WHERE doc_id = $2
+        UPDATE qms_documents SET status = 'RELEASED', current_version_id = $1
+        WHERE doc_id = $2
       `, [versionId, doc_id]);
 
+      // Record approval
       await client.query(`
         INSERT INTO qms_approvals (version_id, approver_id, role, status, action_at)
         VALUES ($1, $2, 'QA_MANAGER', 'APPROVED', CURRENT_TIMESTAMP)
       `, [versionId, approverId]);
 
-      await writeAuditTrail(client, {
-        doc_id, version_id: versionId, actor_id: approverId,
-        action: 'RELEASED',
-        from_status: 'REVIEW', to_status: 'RELEASED',
-        notes: `Released as Version ${releaseVersion} (e-signature verified)`,
-        ip_address: ipAddress
-      });
+      // Write audit trail
+      await client.query(`
+        INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, from_status, to_status, notes, ip_address)
+        VALUES ($1, $2, $3, 'RELEASED', 'REVIEW', 'RELEASED', $4, $5)
+      `, [doc_id, versionId, approverId, `Released as Version ${releaseVersion} (e-signature verified)`, ipAddress || null]);
+
+      // Close any open review task for this document (it's been reviewed & re-released)
+      await client.query(`
+        UPDATE qms_review_tasks SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP
+        WHERE doc_id = $1 AND status = 'OPEN'
+      `, [doc_id]);
+
+      // Auto-assign training tasks
+      const taskCount = await createTrainingTasksForRelease(client, doc_id, versionId, docType);
 
       await client.query('COMMIT');
-      return { success: true, message: `Document released as Version ${releaseVersion}` };
+
+      // Notifications (outside transaction)
+      if (taskCount > 0) {
+        try {
+          const notificationService = require('./notification-service');
+          const docInfoRes = await pool.query(
+            'SELECT doc_code, doc_name FROM qms_documents WHERE doc_id = $1', [doc_id]
+          );
+          const { doc_code, doc_name } = docInfoRes.rows[0];
+
+          // Get emails of all users with PENDING tasks for this version
+          const pendingUsersRes = await pool.query(`
+            SELECT u.email, u.full_name
+            FROM qms_training_tasks tt
+            JOIN users u ON tt.user_id = u.user_id
+            WHERE tt.version_id = $1 AND tt.status = 'PENDING'
+          `, [versionId]);
+
+          for (const user of pendingUsersRes.rows) {
+            notificationService.notifyTrainingRequired(
+              doc_code, doc_name, releaseVersion, user.full_name, user.email
+            ).catch(e => console.error(`Training notification failed for ${user.email}:`, e));
+          }
+        } catch (e) {
+          console.error('Failed to send training notifications:', e);
+        }
+      }
+
+      return {
+        success: true,
+        message: `Document released as Version ${releaseVersion}`,
+        training_tasks_created: taskCount
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -575,8 +650,7 @@ const QmsService = {
     }
   },
 
-  // -- Withdraw document (NEW) -----------------------------------------------
-  // Formal retirement — distinct from SUPERSEDED by a new version.
+  // -- Withdraw document -----------------------------------------------------
 
   async withdrawDocument(docId, userId, signaturePassword, withdrawReason, ipAddress) {
     if (!withdrawReason?.trim()) throw new Error('A withdrawal reason is required.');
@@ -618,7 +692,7 @@ const QmsService = {
     }
   },
 
-  // -- Audit trail for a document (NEW) -------------------------------------
+  // -- Audit trail ----------------------------------------------------------
 
   async getAuditTrail(docId) {
     const result = await pool.query(`
@@ -633,7 +707,7 @@ const QmsService = {
     return result.rows;
   },
 
-  // -- Document links (NEW) -------------------------------------------------
+  // -- Document links -------------------------------------------------------
 
   async addDocumentLink(parentDocId, childDocId, relationship, userId) {
     const valid = ['references', 'implements', 'spawned_from'];
@@ -655,7 +729,7 @@ const QmsService = {
     return { success: true };
   },
 
-  // -- Signature verification (standalone) ----------------------------------
+  // -- Signature verification -----------------------------------------------
 
   async verifySignature(userId, password) {
     const userRes = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [userId]);
@@ -664,7 +738,6 @@ const QmsService = {
   },
 
   // -- NCR, CAPA, Audit, Training methods -----------------------------------
-  // (unchanged from original — omitted here for brevity, keep your existing implementations)
 
   async createNCR(ncrData, userId, signaturePassword) {
     await this.verifySignature(userId, signaturePassword);
@@ -854,28 +927,36 @@ const QmsService = {
     return result.rows[0];
   },
 
-  async getTrainingMatrix() {
-    const usersRes = await pool.query(`SELECT user_id, full_name, role FROM users WHERE is_active = true ORDER BY full_name`);
-    const docsRes  = await pool.query(`
-      SELECT doc_id, doc_code, doc_name, current_version_id
-      FROM qms_documents WHERE status = 'RELEASED' AND doc_type IN ('SOP', 'POL', 'MAN') ORDER BY doc_code
-    `);
-    const recordsRes = await pool.query(`SELECT user_id, doc_id, version_id, acknowledged_at FROM qms_training_records`);
-    return { users: usersRes.rows, documents: docsRes.rows, records: recordsRes.rows };
-  },
-
   async acknowledgeDocument(userId, docId, signaturePassword) {
-    await this.verifySignature(userId, signaturePassword);
-    const docRes = await pool.query(
-      `SELECT current_version_id FROM qms_documents WHERE doc_id = $1 AND status = 'RELEASED'`, [docId]
+    // Verify signature
+    const userRes = await pool.query(
+      'SELECT password_hash FROM users WHERE user_id = $1', [userId]
     );
-    if (docRes.rows.length === 0) throw new Error('Document is not in RELEASED status or does not exist.');
+    const valid = await bcrypt.compare(signaturePassword, userRes.rows[0].password_hash);
+    if (!valid) throw new Error('Invalid digital signature password.');
+  
+    const docRes = await pool.query(
+      `SELECT current_version_id FROM qms_documents WHERE doc_id = $1 AND status = 'RELEASED'`,
+      [docId]
+    );
+    if (docRes.rows.length === 0) throw new Error('Document is not released or does not exist.');
+  
     const versionId = docRes.rows[0].current_version_id;
+  
+    // Insert training record (the unique constraint prevents duplicates)
     await pool.query(`
       INSERT INTO qms_training_records (user_id, doc_id, version_id, acknowledged_at)
       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
       ON CONFLICT (user_id, doc_id, version_id) DO NOTHING
     `, [userId, docId, versionId]);
+  
+    // Mark the training task as completed
+    await pool.query(`
+      UPDATE qms_training_tasks
+      SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+      WHERE user_id = $1 AND version_id = $2 AND status = 'PENDING'
+    `, [userId, versionId]);
+  
     return { success: true, message: 'Document successfully acknowledged.' };
   },
 
@@ -889,7 +970,151 @@ const QmsService = {
       `SELECT user_id, full_name, role, email FROM users WHERE is_active = true ORDER BY full_name`
     );
     return result.rows;
+  },
+
+  // ============================================================================
+  // PHASE 2 NEW METHODS
+  // ============================================================================
+
+  // -- My Tasks (for QMS dashboard workbench) --------------------------------
+  async getMyTasks(userId) {
+    // 1. Documents I am the named reviewer on (status = REVIEW)
+    const reviewerDocs = await pool.query(`
+      SELECT 
+        'review_assignment' AS task_type,
+        d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+        v.version_id, v.version_number, v.change_reason,
+        author.full_name AS author_name,
+        v.updated_at     AS task_date
+      FROM qms_document_versions v
+      JOIN qms_documents d ON v.doc_id = d.doc_id
+      JOIN users author ON v.authored_by = author.user_id
+      WHERE v.reviewer_id = $1
+        AND v.status = 'REVIEW'
+      ORDER BY v.updated_at DESC
+    `, [userId]);
+
+    // 2. Periodic review tasks assigned to me (doc_owner)
+    const reviewTasks = await pool.query(`
+      SELECT
+        'periodic_review' AS task_type,
+        d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+        null::uuid AS version_id,
+        v.version_number,
+        null AS change_reason,
+        null AS author_name,
+        rt.due_date AS task_date
+      FROM qms_review_tasks rt
+      JOIN qms_documents d ON rt.doc_id = d.doc_id
+      JOIN qms_document_versions v ON d.current_version_id = v.version_id
+      WHERE rt.assigned_to = $1
+        AND rt.status = 'OPEN'
+      ORDER BY rt.due_date ASC
+    `, [userId]);
+
+    // 3. Pending training tasks
+    const trainingTasks = await pool.query(`
+      SELECT
+        'training' AS task_type,
+        d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+        tt.version_id, v.version_number,
+        null AS change_reason,
+        null AS author_name,
+        tt.assigned_at AS task_date
+      FROM qms_training_tasks tt
+      JOIN qms_documents d  ON tt.doc_id    = d.doc_id
+      JOIN qms_document_versions v ON tt.version_id = v.version_id
+      WHERE tt.user_id = $1
+        AND tt.status  = 'PENDING'
+      ORDER BY tt.assigned_at DESC
+    `, [userId]);
+
+    return {
+      review_assignments: reviewerDocs.rows,
+      periodic_reviews:   reviewTasks.rows,
+      training_pending:   trainingTasks.rows,
+      total_open: reviewerDocs.rows.length + reviewTasks.rows.length + trainingTasks.rows.length
+    };
+  },
+
+  // -- QMS dashboard stats (enhanced with task counts) ----------------------
+  async getDashboardSummary() {
+    const result = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM qms_documents WHERE status = 'RELEASED')                AS total_released,
+        (SELECT COUNT(*) FROM qms_documents WHERE status = 'REVIEW')                  AS total_in_review,
+        (SELECT COUNT(*) FROM qms_documents WHERE status = 'DRAFT')                   AS total_in_draft,
+        (SELECT COUNT(*) FROM qms_documents WHERE status NOT IN ('WITHDRAWN','PLANNED')) AS total_active,
+        (SELECT COUNT(*) FROM qms_review_tasks WHERE status = 'OPEN')                 AS review_tasks_open,
+        (SELECT COUNT(*) FROM qms_review_tasks WHERE status = 'OPEN' AND due_date < NOW()) AS overdue_count,
+        (SELECT COUNT(*) FROM qms_training_tasks WHERE status = 'PENDING')            AS training_pending,
+        (SELECT COUNT(*) FROM qms_ncr WHERE status = 'OPEN')                          AS ncr_open,
+        (SELECT COUNT(*) FROM qms_capa WHERE status = 'OPEN')                         AS capa_open
+    `);
+    return result.rows[0];
+  },
+
+  // -- Dismiss a periodic review task (snooze / not applicable) -------------
+  async dismissReviewTask(taskId, userId) {
+    const result = await pool.query(`
+      UPDATE qms_review_tasks
+      SET status = 'DISMISSED', updated_at = CURRENT_TIMESTAMP
+      WHERE task_id = $1 RETURNING *
+    `, [taskId]);
+    if (result.rows.length === 0) throw new Error('Review task not found');
+    return result.rows[0];
+  },
+
+  // -- Get all open review tasks (for QA manager view) ----------------------
+  async listReviewTasks(filters = {}) {
+    let query = `
+      SELECT rt.*, d.doc_code, d.doc_name, d.doc_type,
+             v.version_number, v.review_due_date,
+             u.full_name AS owner_name
+      FROM qms_review_tasks rt
+      JOIN qms_documents d ON rt.doc_id = d.doc_id
+      JOIN qms_document_versions v ON d.current_version_id = v.version_id
+      LEFT JOIN users u ON rt.assigned_to = u.user_id
+      WHERE 1=1
+    `;
+    const params = [];
+    let p = 1;
+    if (filters.status) { query += ` AND rt.status = $${p++}`; params.push(filters.status); }
+    query += ` ORDER BY rt.due_date ASC`;
+    const result = await pool.query(query, params);
+    return result.rows;
+  },
+
+  // -- Get training matrix with task completion status ----------------------
+  async getTrainingMatrix() {
+    const usersRes = await pool.query(
+      `SELECT user_id, full_name, role FROM users WHERE is_active = true ORDER BY full_name`
+    );
+    const docsRes = await pool.query(`
+      SELECT doc_id, doc_code, doc_name, current_version_id
+      FROM qms_documents
+      WHERE status = 'RELEASED' AND doc_type IN ('SOP', 'POL', 'MAN')
+      ORDER BY doc_code
+    `);
+    const recordsRes = await pool.query(
+      `SELECT user_id, doc_id, version_id, acknowledged_at FROM qms_training_records`
+    );
+    // Include task status so UI can show PENDING vs not-yet-assigned
+    const tasksRes = await pool.query(`
+      SELECT user_id, doc_id, version_id, status AS task_status, assigned_at
+      FROM qms_training_tasks
+    `);
+
+    return {
+      users:    usersRes.rows,
+      documents: docsRes.rows,
+      records:  recordsRes.rows,
+      tasks:    tasksRes.rows
+    };
   }
 };
+
+// Export the helper method for testing
+QmsService._createTrainingTasksForRelease = createTrainingTasksForRelease;
 
 module.exports = QmsService;

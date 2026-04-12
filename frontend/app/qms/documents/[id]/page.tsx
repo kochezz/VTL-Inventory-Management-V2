@@ -760,7 +760,7 @@ export default function DocumentDetailPage() {
                 <select value={reviewerId} onChange={e => setReviewerId(e.target.value)}
                   className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none">
                   <option value="">Broadcast to all QA / Admin roles</option>
-                  {users.filter(u => ['qa', 'admin', 'manager', 'ceo'].includes(u.role)).map(u => (
+                  {users.filter(u => ['qa', 'admin', 'manager', 'ceo', 'cfo'].includes(u.role)).map(u => (
                     <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
                   ))}
                 </select>
@@ -891,7 +891,7 @@ export default function DocumentDetailPage() {
                   <select value={editData.doc_owner} onChange={e => setEditData({ ...editData, doc_owner: e.target.value })}
                     className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
                     <option value="">Unassigned</option>
-                    {users.filter(u => ['qa', 'admin', 'manager'].includes(u.role)).map(u =>
+                    {users.filter(u => ['qa', 'admin', 'manager', 'ceo', 'cfo', 'engineering'].includes(u.role)).map(u =>
                       <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
                     )}
                   </select>

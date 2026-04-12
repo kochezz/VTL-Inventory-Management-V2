@@ -1,17 +1,5 @@
 // ============================================================================
-// VILAGIO ERP — QMS ROUTES (PHASE 1 UPGRADE)
-// ============================================================================
-// New endpoints added:
-//   GET  /qms/schema/:doc_type          — section schema + content strategy for doc type
-//   GET  /qms/users                     — active users list (for reviewer dropdown)
-//   POST /qms/documents/:id/withdraw    — formal document withdrawal
-//   GET  /qms/documents/:id/audit-trail — full 21 CFR Part 11 audit trail
-//   POST /qms/versions/:versionId/file  — upload a file to a draft version
-//   GET  /qms/versions/:versionId/file  — download the file for a version
-//   POST /qms/document-links            — add a cross-reference link
-//   DELETE /qms/document-links/:linkId  — remove a link
-//   POST /qms/versions/:versionId/submit — updated to accept reviewer_id in body
-//   POST /qms/versions/:versionId/approve — updated to pass ip address
+// VILAGIO ERP — QMS ROUTES (PHASE 1 & 2 MERGED)
 // ============================================================================
 
 const express = require('express');
@@ -87,17 +75,20 @@ router.get('/documents', async (req, res) => {
 
 // ── Auto-sequencer (MUST be before /documents/:id) ───────────────────────────
 
-router.get('/documents/next-code', authorize(['admin', 'manager', 'qa', 'ceo', 'cfo']), async (req, res) => {
-  try {
-    const { section_id, doc_type } = req.query;
-    if (!section_id || !doc_type) {
-      return res.status(400).json({ error: 'section_id and doc_type are required.' });
+router.get('/documents/next-code',
+  authorize(['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering']),
+  async (req, res) => {
+    try {
+      const { section_id, doc_type } = req.query;
+      if (!section_id || !doc_type) {
+        return res.status(400).json({ error: 'section_id and doc_type are required.' });
+      }
+      res.json(await qmsService.getNextDocumentCode(section_id, doc_type));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
-    res.json(await qmsService.getNextDocumentCode(section_id, doc_type));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
-});
+);
 
 // ── Document CRUD ─────────────────────────────────────────────────────────────
 
@@ -119,32 +110,37 @@ router.post('/documents', async (req, res) => {
   }
 });
 
-router.put('/documents/:id', authorize(['admin', 'manager', 'qa', 'ceo', 'cfo']), async (req, res) => {
-  try {
-    const result = await qmsService.updateDocumentMetadata(req.params.id, req.body, req.user.user_id);
-    res.json(result);
-  } catch (error) {
-    if (error.code === '23505') return res.status(400).json({ error: 'A document with this code already exists.' });
-    res.status(500).json({ error: error.message });
+router.put('/documents/:id',
+  authorize(['admin', 'manager', 'qa', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      const result = await qmsService.updateDocumentMetadata(req.params.id, req.body, req.user.user_id);
+      res.json(result);
+    } catch (error) {
+      if (error.code === '23505') return res.status(400).json({ error: 'A document with this code already exists.' });
+      res.status(500).json({ error: error.message });
+    }
   }
-});
+);
 
-// ── Withdrawal (NEW) ──────────────────────────────────────────────────────────
+// ── Withdrawal ────────────────────────────────────────────────────────────────
 
-router.post('/documents/:id/withdraw', authorize(['admin', 'qa', 'manager', 'ceo']), async (req, res) => {
-  try {
-    const { signature_password, withdraw_reason } = req.body;
-    if (!signature_password) return res.status(400).json({ error: 'Digital signature password is required.' });
-    if (!withdraw_reason)    return res.status(400).json({ error: 'A withdrawal reason is required.' });
-    const ip = req.ip || req.headers['x-forwarded-for'];
-    const result = await qmsService.withdrawDocument(req.params.id, req.user.user_id, signature_password, withdraw_reason, ip);
-    res.json(result);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
+router.post('/documents/:id/withdraw',
+  authorize(['admin', 'qa', 'manager', 'ceo']),
+  async (req, res) => {
+    try {
+      const { signature_password, withdraw_reason } = req.body;
+      if (!signature_password) return res.status(400).json({ error: 'Digital signature password is required.' });
+      if (!withdraw_reason)    return res.status(400).json({ error: 'A withdrawal reason is required.' });
+      const ip = req.ip || req.headers['x-forwarded-for'];
+      res.json(await qmsService.withdrawDocument(req.params.id, req.user.user_id, signature_password, withdraw_reason, ip));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
   }
-});
+);
 
-// ── Audit trail (NEW) ─────────────────────────────────────────────────────────
+// ── Audit trail ───────────────────────────────────────────────────────────────
 
 router.get('/documents/:id/audit-trail', async (req, res) => {
   try {
@@ -154,7 +150,7 @@ router.get('/documents/:id/audit-trail', async (req, res) => {
   }
 });
 
-// ── Document links (NEW) ──────────────────────────────────────────────────────
+// ── Document links ────────────────────────────────────────────────────────────
 
 router.post('/document-links', async (req, res) => {
   try {
@@ -200,7 +196,7 @@ router.put('/versions/:versionId', async (req, res) => {
   }
 });
 
-// Upload file to draft version (NEW)
+// Upload file to draft version
 router.post('/versions/:versionId/file', upload.single('document_file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -216,7 +212,7 @@ router.post('/versions/:versionId/file', upload.single('document_file'), async (
   }
 });
 
-// Download file from any version (NEW)
+// Download file from any version
 router.get('/versions/:versionId/file', async (req, res) => {
   try {
     const { filePath, originalName } = await qmsService.getVersionFile(req.params.versionId);
@@ -239,19 +235,23 @@ router.post('/versions/:versionId/submit', async (req, res) => {
 });
 
 // Approve & release — passes IP for audit trail
-router.post('/versions/:versionId/approve', authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']), async (req, res) => {
-  try {
-    const { signature_password } = req.body;
-    if (!signature_password) {
-      return res.status(400).json({ error: 'Digital signature (password) is required to release documents per 21 CFR Part 11.' });
+router.post('/versions/:versionId/approve',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  // Note: engineering, sales, staff, operator, super_viewer, viewer
+  // cannot approve/release documents — this is intentional.
+  async (req, res) => {
+    try {
+      const { signature_password } = req.body;
+      if (!signature_password) {
+        return res.status(400).json({ error: 'Digital signature is required per 21 CFR Part 11.' });
+      }
+      const ip = req.ip || req.headers['x-forwarded-for'];
+      res.json(await qmsService.releaseDocument(req.params.versionId, req.user.user_id, signature_password, ip));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
     }
-    const ip = req.ip || req.headers['x-forwarded-for'];
-    const result = await qmsService.releaseDocument(req.params.versionId, req.user.user_id, signature_password, ip);
-    res.json(result);
-  } catch (error) {
-    res.status(400).json({ error: error.message });
   }
-});
+);
 
 // ── NCR & CAPA ───────────────────────────────────────────────────────────────
 
@@ -327,5 +327,55 @@ router.get('/sections', async (req, res) => {
   try { res.json(await qmsService.listSections()); }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
+
+// ============================================================================
+// PHASE 2 ROUTES (NEW)
+// ============================================================================
+
+// GET /qms/my-tasks
+// All open tasks for the authenticated user (any role can have tasks)
+router.get('/my-tasks', async (req, res) => {
+  try {
+    res.json(await qmsService.getMyTasks(req.user.user_id));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /qms/dashboard-summary
+// Aggregated counts for the QMS dashboard hero panel (any authenticated user)
+router.get('/dashboard-summary', async (req, res) => {
+  try {
+    res.json(await qmsService.getDashboardSummary());
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /qms/review-tasks
+// Periodic review task list — QA/admin/manager oversight view
+router.get('/review-tasks',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      res.json(await qmsService.listReviewTasks({ status: req.query.status || 'OPEN' }));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// POST /qms/review-tasks/:taskId/dismiss
+// Doc owner or QA/admin can dismiss (document confirmed valid, no revision needed)
+router.post('/review-tasks/:taskId/dismiss',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'engineering']),
+  async (req, res) => {
+    try {
+      res.json(await qmsService.dismissReviewTask(req.params.taskId, req.user.user_id));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
 
 module.exports = router;

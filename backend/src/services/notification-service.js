@@ -65,7 +65,7 @@ const sendEmail = async (to, subject, htmlContent) => {
 };
 
 // ============================================================================
-// CRM & VENDOR NOTIFICATIONS (NEW)
+// CRM & VENDOR NOTIFICATIONS
 // ============================================================================
 
 const notifyCustomerPendingApproval = async (tradingName, tierName, onboardedByName, rolesToNotify) => {
@@ -106,7 +106,7 @@ const notifyCustomerStatus = async (tradingName, status, salesRepEmail, approver
 };
 
 // ============================================================================
-// PURCHASE ORDER NOTIFICATIONS (NEW)
+// PURCHASE ORDER NOTIFICATIONS
 // ============================================================================
 
 const notifyPOPendingApproval = async (poNumber, totalUsd, vendorName, raisedByName, rolesToNotify) => {
@@ -215,6 +215,10 @@ const notifyLowStock = async (productName, sku, currentStock, reorderLevel) => {
   await sendEmail(managerEmails, `Low Stock Alert: ${productName}`, html);
 };
 
+// ============================================================================
+// QMS NOTIFICATIONS
+// ============================================================================
+
 const notifyQADocumentReview = async (docCode, docName, versionNumber, authorName) => {
   const qaEmails = await getEmailsByRole(['qa', 'admin', 'manager']);
   const html = `
@@ -297,6 +301,146 @@ const notifyAuditInvite = async (auditCode, auditType, auditDate, scope, leadAud
       </div>
     </div>`;
   await sendEmail(participantEmails, `Audit Invitation: ${auditCode} (${auditType})`, html);
+};
+
+// ============================================================================
+// QMS PHASE 2 NOTIFICATIONS
+// ============================================================================
+
+const notifyDocumentReviewDue = async (docCode, docName, versionNumber, reviewDueDate, ownerName, ownerEmail) => {
+  const formattedDate = new Date(reviewDueDate).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'long', year: 'numeric'
+  });
+  const isOverdue   = new Date(reviewDueDate) < new Date();
+  const headerColor = isOverdue ? '#ef4444' : '#f59e0b';
+  const statusLabel = isOverdue ? 'OVERDUE FOR REVIEW' : 'REVIEW DUE SOON';
+  const emoji       = isOverdue ? '🔴' : '🟡';
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:${headerColor};padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">${emoji} Controlled Document: ${statusLabel}</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">Vilagio QMS — Document Control</p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>Hello ${ownerName},</p>
+        <p>A controlled document under your ownership is ${isOverdue ? '<strong>overdue</strong>' : 'due'} for its periodic review. As the document owner, you are responsible for initiating a review and determining whether a revision is required.</p>
+        <div style="background-color:#f8fafc;border:1px solid #e2e8f0;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 8px 0;"><strong>Document:</strong> ${docCode} — ${docName}</p>
+          <p style="margin:0 0 8px 0;"><strong>Current Version:</strong> v${versionNumber}</p>
+          <p style="margin:0;color:${headerColor};font-weight:bold;"><strong>Review Due:</strong> ${formattedDate}</p>
+        </div>
+        <p style="font-size:13px;color:#64748b;">If this document remains valid without changes, open it in the QMS and dismiss the review task. If changes are required, create a new revision.</p>
+        <div style="text-align:center;margin-top:20px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/qms/documents" style="background-color:${headerColor};color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Open QMS Document Register</a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">Vilagio Technologies Ltd. · Controlled Document Management System</p>
+      </div>
+    </div>`;
+
+  return sendEmail([ownerEmail], `[QMS] ${statusLabel}: ${docCode} — ${docName}`, html);
+};
+
+const notifyQAReviewDueBroadcast = async (docCode, docName, versionNumber, reviewDueDate) => {
+  const recipients = await getEmailsByRole(['qa', 'admin', 'manager', 'ceo']);
+  if (!recipients.length) return;
+
+  const formattedDate = new Date(reviewDueDate).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'long', year: 'numeric'
+  });
+  const isOverdue   = new Date(reviewDueDate) < new Date();
+  const headerColor = isOverdue ? '#ef4444' : '#f59e0b';
+  const statusLabel = isOverdue ? 'OVERDUE' : 'DUE SOON';
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:${headerColor};padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">📋 QMS Periodic Review Alert</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">${statusLabel}: ${docCode}</p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>This is an automated QMS system alert for your awareness. The following controlled document is ${isOverdue ? 'overdue for' : 'approaching'} its annual periodic review.</p>
+        <div style="background-color:#f8fafc;border:1px solid #e2e8f0;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 8px 0;"><strong>Document:</strong> ${docCode} — ${docName}</p>
+          <p style="margin:0 0 8px 0;"><strong>Version:</strong> v${versionNumber}</p>
+          <p style="margin:0;color:${headerColor};font-weight:bold;"><strong>Review Due:</strong> ${formattedDate}</p>
+        </div>
+        <p style="font-size:13px;color:#64748b;">The document owner has been notified directly. This alert is for QMS oversight visibility.</p>
+        <div style="text-align:center;margin-top:20px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/qms/documents" style="background-color:#3b82f6;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">View in QMS</a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">Vilagio Technologies Ltd. · QMS Automated Alert</p>
+      </div>
+    </div>`;
+
+  return sendEmail(recipients, `[QMS Alert] Periodic Review ${statusLabel}: ${docCode}`, html);
+};
+
+const notifyDocumentOverdue = async (docCode, docName, dueDate, ownerName, ownerEmail) => {
+  const formattedDate = new Date(dueDate).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'long', year: 'numeric'
+  });
+  const daysOverdue = Math.floor((Date.now() - new Date(dueDate).getTime()) / (1000 * 60 * 60 * 24));
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#ef4444;padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">🔴 OVERDUE: Document Review Required</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">${daysOverdue} day${daysOverdue !== 1 ? 's' : ''} past due date — Escalation Notice</p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>Hello ${ownerName},</p>
+        <p>This is an escalation notice. The controlled document below has not been actioned and is now <strong>${daysOverdue} days overdue</strong> for its periodic review.</p>
+        <div style="background-color:#fef2f2;border:1px solid #fca5a5;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 8px 0;"><strong>Document:</strong> ${docCode} — ${docName}</p>
+          <p style="margin:0;color:#b91c1c;font-weight:bold;"><strong>Was due:</strong> ${formattedDate}</p>
+        </div>
+        <div style="background-color:#fffbeb;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:20px;">
+          <p style="margin:0;color:#92400e;font-size:13px;"><strong>Action required:</strong> Log in to the QMS and either dismiss this review (if no changes are needed) or create a new revision. Continued inaction may affect your GMP compliance status.</p>
+        </div>
+        <div style="text-align:center;margin-top:10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/qms/documents" style="background-color:#ef4444;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Action Now in QMS</a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">Vilagio Technologies Ltd. · GMP Compliant Document Management</p>
+      </div>
+    </div>`;
+
+  return sendEmail([ownerEmail], `[URGENT] QMS Document Overdue: ${docCode} — ${daysOverdue} days past due`, html);
+};
+
+const notifyTrainingRequired = async (docCode, docName, versionNumber, recipientName, recipientEmail) => {
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#3b82f6;padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">📚 Action Required: Document Training</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">Vilagio QMS — Training Management</p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>Hello ${recipientName},</p>
+        <p>A controlled document that applies to your role has been officially released. You are required to read and acknowledge this document before carrying out activities it governs.</p>
+        <div style="background-color:#eff6ff;border:1px solid #bfdbfe;padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 8px 0;font-size:15px;"><strong>${docCode} — ${docName}</strong></p>
+          <p style="margin:0;"><strong>Version:</strong> v${versionNumber} (newly released)</p>
+        </div>
+        <div style="background-color:#f0fdf4;border-left:4px solid #22c55e;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:20px;">
+          <p style="margin:0;color:#166534;font-size:13px;"><strong>How to acknowledge:</strong> Log into the Vilagio ERP → QMS → Training Matrix → find this document → click <strong>Acknowledge</strong> and enter your login password as your electronic signature.</p>
+        </div>
+        <div style="text-align:center;margin-top:10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/qms/training" style="background-color:#3b82f6;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Go to Training Matrix</a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">This training requirement was auto-assigned on document release. Vilagio Technologies Ltd.</p>
+      </div>
+    </div>`;
+
+  return sendEmail([recipientEmail], `[QMS Training] Action Required: ${docCode} v${versionNumber} — ${docName}`, html);
 };
 
 // ============================================================================
@@ -425,6 +569,11 @@ module.exports = {
   notifyNCRAssigned,
   notifyCAPAAssigned,
   notifyAuditInvite,
+  // QMS Phase 2
+  notifyDocumentReviewDue,
+  notifyQAReviewDueBroadcast,
+  notifyDocumentOverdue,
+  notifyTrainingRequired,
   // QC Lab
   notifyLabQAPendingReview,
   notifyLabTestRejected,
