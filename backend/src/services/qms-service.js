@@ -1,11 +1,12 @@
 // ============================================================================
-// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1 & 2 MERGED)
+// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1, 2 & 3 MERGED)
 // ============================================================================
 
-const { pool } = require('./auth-service');
+const { pool } = require('./auth-service'); // Adjust path to database config if needed
 const bcrypt = require('bcrypt');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // ── Content strategy per doc type ───────────────────────────────────────────
 // Override at the version level; these are the DEFAULTS used on createDraft.
@@ -1111,7 +1112,422 @@ const QmsService = {
       records:  recordsRes.rows,
       tasks:    tasksRes.rows
     };
+  },
+
+  // ============================================================================
+  // PHASE 3 NEW METHODS
+  // ============================================================================
+
+  // ── 3A — NCR / CAPA TRACEABILITY ──
+
+  async linkVersionToNCR(versionId, ncrId, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(`
+        UPDATE qms_document_versions
+        SET triggered_by_ncr_id = $1
+        WHERE version_id = $2 AND status = 'DRAFT'
+      `, [ncrId, versionId]);
+
+      await client.query(`
+        UPDATE qms_ncr
+        SET triggered_version_id = $1
+        WHERE ncr_id = $2
+      `, [versionId, ncrId]);
+
+      await client.query(`
+        INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, notes)
+        SELECT doc_id, version_id, $1, 'NCR_LINKED', $2
+        FROM qms_document_versions WHERE version_id = $3
+      `, [userId, `Linked to NCR ${ncrId}`, versionId]);
+
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async linkVersionToCAPA(versionId, capaId, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(`
+        UPDATE qms_document_versions
+        SET triggered_by_capa_id = $1
+        WHERE version_id = $2 AND status = 'DRAFT'
+      `, [capaId, versionId]);
+
+      await client.query(`
+        INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, notes)
+        SELECT doc_id, version_id, $1, 'CAPA_LINKED', $2
+        FROM qms_document_versions WHERE version_id = $3
+      `, [userId, `Linked to CAPA ${capaId}`, versionId]);
+
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getOpenNCRs() {
+    const result = await pool.query(`
+      SELECT ncr_id, ncr_code, description, severity, status,
+             u.full_name AS raised_by_name, created_at
+      FROM qms_ncr n
+      LEFT JOIN users u ON n.raised_by = u.user_id
+      WHERE n.status IN ('OPEN', 'CAPA_REQUIRED')
+      ORDER BY n.created_at DESC
+    `);
+    return result.rows;
+  },
+
+  async getOpenCAPAs() {
+    const result = await pool.query(`
+      SELECT c.capa_id, c.capa_code, c.action_description, c.status,
+             n.ncr_code, u.full_name AS owner_name, c.due_date
+      FROM qms_capa c
+      JOIN qms_ncr n ON c.ncr_id = n.ncr_id
+      LEFT JOIN users u ON c.action_owner = u.user_id
+      WHERE c.status IN ('OPEN', 'IN_PROGRESS')
+      ORDER BY c.due_date ASC
+    `);
+    return result.rows;
+  },
+
+  async getDocumentTraceability(docId) {
+    const result = await pool.query(`
+      SELECT
+        v.version_id, v.version_number, v.status AS version_status,
+        v.change_reason, v.created_at,
+        author.full_name AS author_name,
+        ncr.ncr_id, ncr.ncr_code, ncr.description AS ncr_description,
+        ncr.severity AS ncr_severity, ncr.status AS ncr_status,
+        capa.capa_id, capa.capa_code, capa.action_description AS capa_description,
+        capa.status AS capa_status
+      FROM qms_document_versions v
+      LEFT JOIN users author ON v.authored_by = author.user_id
+      LEFT JOIN qms_ncr  ncr  ON v.triggered_by_ncr_id  = ncr.ncr_id
+      LEFT JOIN qms_capa capa ON v.triggered_by_capa_id = capa.capa_id
+      WHERE v.doc_id = $1
+      ORDER BY v.created_at ASC
+    `, [docId]);
+    return result.rows;
+  },
+
+  async getNCRDocumentImpact(ncrId) {
+    const result = await pool.query(`
+      SELECT
+        v.version_id, v.version_number, v.status,
+        d.doc_id, d.doc_code, d.doc_name, d.doc_type,
+        author.full_name AS author_name,
+        v.created_at
+      FROM qms_document_versions v
+      JOIN qms_documents d ON v.doc_id = d.doc_id
+      LEFT JOIN users author ON v.authored_by = author.user_id
+      WHERE v.triggered_by_ncr_id = $1
+      ORDER BY v.created_at DESC
+    `, [ncrId]);
+    return result.rows;
+  },
+
+  // ── 3B — INSPECTOR VIEW ──
+
+  async getInspectorPack(docId) {
+    const docRes = await pool.query(`
+      SELECT d.*,
+             s.section_code, s.section_name, s.color_code,
+             owner.full_name  AS owner_name,
+             owner.job_title  AS owner_title,
+             owner.department AS owner_dept
+      FROM qms_documents d
+      JOIN qms_sections s ON d.section_id = s.section_id
+      LEFT JOIN users owner ON d.doc_owner = owner.user_id
+      WHERE d.doc_id = $1
+    `, [docId]);
+    if (docRes.rows.length === 0) throw new Error('Document not found');
+
+    const versionsRes = await pool.query(`
+      SELECT v.*,
+             author.full_name   AS author_name,
+             author.job_title   AS author_title,
+             reviewer.full_name AS reviewer_name,
+             approver.full_name AS approver_name,
+             approver.job_title AS approver_title,
+             ncr.ncr_code, ncr.description AS ncr_description, ncr.severity AS ncr_severity,
+             capa.capa_code, capa.action_description AS capa_description
+      FROM qms_document_versions v
+      LEFT JOIN users author   ON v.authored_by  = author.user_id
+      LEFT JOIN users reviewer ON v.reviewer_id  = reviewer.user_id
+      LEFT JOIN users approver ON v.approved_by  = approver.user_id
+      LEFT JOIN qms_ncr  ncr   ON v.triggered_by_ncr_id  = ncr.ncr_id
+      LEFT JOIN qms_capa capa  ON v.triggered_by_capa_id = capa.capa_id
+      WHERE v.doc_id = $1
+      ORDER BY v.created_at ASC
+    `, [docId]);
+
+    const approvalsRes = await pool.query(`
+      SELECT a.*,
+             u.full_name AS approver_name,
+             u.job_title AS approver_title,
+             u.role      AS approver_role
+      FROM qms_approvals a
+      JOIN qms_document_versions v ON a.version_id = v.version_id
+      LEFT JOIN users u ON a.approver_id = u.user_id
+      WHERE v.doc_id = $1
+      ORDER BY a.action_at ASC
+    `, [docId]);
+
+    const trainingRes = await pool.query(`
+      SELECT tr.*,
+             u.full_name  AS user_name,
+             u.job_title  AS user_title,
+             u.department AS user_dept,
+             u.role       AS user_role,
+             v.version_number
+      FROM qms_training_records tr
+      JOIN users u ON tr.user_id = u.user_id
+      JOIN qms_document_versions v ON tr.version_id = v.version_id
+      WHERE tr.doc_id = $1
+      ORDER BY v.version_number ASC, u.full_name ASC
+    `, [docId]);
+
+    const pendingRes = await pool.query(`
+      SELECT tt.*,
+             u.full_name  AS user_name,
+             u.job_title  AS user_title,
+             u.department AS user_dept,
+             u.role       AS user_role,
+             v.version_number
+      FROM qms_training_tasks tt
+      JOIN users u ON tt.user_id = u.user_id
+      JOIN qms_document_versions v ON tt.version_id = v.version_id
+      WHERE tt.doc_id = $1 AND tt.status = 'PENDING'
+      ORDER BY u.full_name ASC
+    `, [docId]);
+
+    const trailRes = await pool.query(`
+      SELECT t.*,
+             u.full_name AS actor_name,
+             u.role      AS actor_role,
+             u.job_title AS actor_title
+      FROM qms_audit_trail t
+      LEFT JOIN users u ON t.actor_id = u.user_id
+      WHERE t.doc_id = $1
+      ORDER BY t.created_at ASC
+    `, [docId]);
+
+    const linksRes = await pool.query(`
+      SELECT l.link_id, l.relationship,
+             d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+             v.version_number
+      FROM qms_document_links l
+      JOIN qms_documents d ON l.child_doc_id = d.doc_id
+      LEFT JOIN qms_document_versions v ON d.current_version_id = v.version_id
+      WHERE l.parent_doc_id = $1
+      UNION ALL
+      SELECT l.link_id, 'referenced_by' AS relationship,
+             d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+             v.version_number
+      FROM qms_document_links l
+      JOIN qms_documents d ON l.parent_doc_id = d.doc_id
+      LEFT JOIN qms_document_versions v ON d.current_version_id = v.version_id
+      WHERE l.child_doc_id = $1
+      ORDER BY relationship, doc_code
+    `, [docId]);
+
+    const ncrImpactRes = await pool.query(`
+      SELECT n.ncr_id, n.ncr_code, n.description, n.severity, n.status AS ncr_status,
+             n.created_at AS ncr_date, n.closed_at,
+             raiser.full_name AS raised_by_name,
+             v.version_number AS triggered_version,
+             c.capa_code, c.action_description, c.status AS capa_status
+      FROM qms_ncr n
+      JOIN qms_document_versions v ON n.triggered_version_id = v.version_id
+      LEFT JOIN users raiser ON n.raised_by = raiser.user_id
+      LEFT JOIN qms_capa c ON c.ncr_id = n.ncr_id
+      WHERE v.doc_id = $1
+      ORDER BY n.created_at ASC
+    `, [docId]);
+
+    const currentVersion = versionsRes.rows.find(v => v.status === 'RELEASED');
+    const trainingCompletionRate = currentVersion ? await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE tt.status = 'COMPLETED') AS completed,
+        COUNT(*) AS total
+      FROM qms_training_tasks tt
+      WHERE tt.version_id = $1
+    `, [currentVersion.version_id]) : null;
+
+    return {
+      document:         docRes.rows[0],
+      versions:         versionsRes.rows,
+      approvals:        approvalsRes.rows,
+      training_records: trainingRes.rows,
+      training_pending: pendingRes.rows,
+      audit_trail:      trailRes.rows,
+      linked_documents: linksRes.rows,
+      ncr_capa_impact:  ncrImpactRes.rows,
+      training_summary: trainingCompletionRate?.rows[0] || { completed: 0, total: 0 },
+      generated_at:     new Date().toISOString(),
+    };
+  },
+
+  async createShareToken(docId, userId, expiryDays = 30, recipientNote = '') {
+    await pool.query(`
+      UPDATE qms_audit_share_tokens
+      SET is_active = false
+      WHERE doc_id = $1 AND is_active = true
+    `, [docId]);
+
+    const token = crypto.randomBytes(48).toString('base64url');
+    const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000);
+
+    const result = await pool.query(`
+      INSERT INTO qms_audit_share_tokens
+        (doc_id, token, created_by, expires_at, is_active, recipient_note)
+      VALUES ($1, $2, $3, $4, true, $5)
+      RETURNING *
+    `, [docId, token, userId, expiresAt, recipientNote]);
+
+    await pool.query(`
+      INSERT INTO qms_audit_trail (doc_id, actor_id, action, notes)
+      VALUES ($1, $2, 'SHARE_LINK_CREATED', $3)
+    `, [docId, userId, `Share link created — expires ${expiresAt.toLocaleDateString()}: ${recipientNote || 'No note'}`]);
+
+    return {
+      token:      result.rows[0].token,
+      expires_at: result.rows[0].expires_at,
+      share_url:  `${process.env.FRONTEND_URL || 'http://localhost:3000'}/qms/inspect/${token}`,
+    };
+  },
+
+  async revokeShareToken(docId, userId) {
+    await pool.query(`
+      UPDATE qms_audit_share_tokens
+      SET is_active = false
+      WHERE doc_id = $1 AND is_active = true
+    `, [docId]);
+
+    await pool.query(`
+      INSERT INTO qms_audit_trail (doc_id, actor_id, action, notes)
+      VALUES ($1, $2, 'SHARE_LINK_REVOKED', 'External share link revoked')
+    `, [docId, userId]);
+
+    return { success: true };
+  },
+
+  async resolveShareToken(token) {
+    const result = await pool.query(`
+      SELECT t.*, d.doc_code, d.doc_name
+      FROM qms_audit_share_tokens t
+      JOIN qms_documents d ON t.doc_id = d.doc_id
+      WHERE t.token = $1
+        AND t.is_active = true
+        AND t.expires_at > NOW()
+    `, [token]);
+
+    if (result.rows.length === 0) return null;
+
+    await pool.query(`
+      UPDATE qms_audit_share_tokens
+      SET last_accessed_at = CURRENT_TIMESTAMP,
+          access_count = access_count + 1
+      WHERE token = $1
+    `, [token]);
+
+    return result.rows[0];
+  },
+
+  async getActiveShareToken(docId) {
+    const result = await pool.query(`
+      SELECT t.*, u.full_name AS created_by_name
+      FROM qms_audit_share_tokens t
+      LEFT JOIN users u ON t.created_by = u.user_id
+      WHERE t.doc_id = $1 AND t.is_active = true AND t.expires_at > NOW()
+      ORDER BY t.created_at DESC LIMIT 1
+    `, [docId]);
+    return result.rows[0] || null;
+  },
+
+  // ── 3C — DOCUMENT HIERARCHY ──
+
+  async getDocumentHierarchy(sectionId = null) {
+    let docQuery = `
+      SELECT
+        d.doc_id AS id, d.doc_code, d.doc_name, d.doc_type, d.status,
+        s.section_code, s.section_name, s.color_code,
+        v.version_number
+      FROM qms_documents d
+      JOIN qms_sections s ON d.section_id = s.section_id
+      LEFT JOIN qms_document_versions v ON d.current_version_id = v.version_id
+      WHERE d.status NOT IN ('WITHDRAWN', 'PLANNED')
+    `;
+    const params = [];
+    if (sectionId) {
+      docQuery += ` AND d.section_id = $1`;
+      params.push(sectionId);
+    }
+    docQuery += ` ORDER BY s.sort_order, d.doc_type, d.doc_code`;
+
+    const docsRes  = await pool.query(docQuery, params);
+    const linksRes = await pool.query(`
+      SELECT l.link_id AS id, l.parent_doc_id AS source,
+             l.child_doc_id AS target, l.relationship
+      FROM qms_document_links l
+      JOIN qms_documents p ON l.parent_doc_id = p.doc_id
+      JOIN qms_documents c ON l.child_doc_id  = c.doc_id
+      WHERE p.status NOT IN ('WITHDRAWN', 'PLANNED')
+        AND c.status NOT IN ('WITHDRAWN', 'PLANNED')
+    `);
+
+    return {
+      nodes: docsRes.rows,
+      edges: linksRes.rows,
+    };
+  },
+
+  async getDocumentLineage(docId) {
+    const result = await pool.query(`
+      WITH RECURSIVE lineage AS (
+        SELECT doc_id, doc_code, doc_name, doc_type, status, 0 AS depth, 'self' AS direction
+        FROM qms_documents WHERE doc_id = $1
+
+        UNION ALL
+
+        SELECT d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+               l.depth - 1, 'parent'
+        FROM qms_documents d
+        JOIN qms_document_links lnk ON lnk.parent_doc_id = d.doc_id
+        JOIN lineage l ON lnk.child_doc_id = l.doc_id
+        WHERE l.depth > -3
+
+        UNION ALL
+
+        SELECT d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+               l.depth + 1, 'child'
+        FROM qms_documents d
+        JOIN qms_document_links lnk ON lnk.child_doc_id = d.doc_id
+        JOIN lineage l ON lnk.parent_doc_id = l.doc_id
+        WHERE l.depth < 3
+      )
+      SELECT DISTINCT doc_id, doc_code, doc_name, doc_type, status, depth, direction
+      FROM lineage
+      ORDER BY depth, doc_code
+    `, [docId]);
+    return result.rows;
   }
+
 };
 
 // Export the helper method for testing
