@@ -1,12 +1,14 @@
 // ============================================================================
-// VILAGIO ERP — QMS ROUTES (PHASES 1, 2, 3 & 4 — COMPLETE FILE)
+// VILAGIO ERP — QMS ROUTES (PHASES 1 - 5 MERGED COMPLETE FILE)
 // ============================================================================
 
 const express = require('express');
 const router  = express.Router();
 const multer  = require('multer');
 const qmsService = require('../services/qms-service');
-const pdfService = require('../services/qms-pdf-service'); // Phase 4 PDF Service
+const pdfService = require('../services/qms-pdf-service'); 
+const templateService = require('../services/qms-template-service'); // Phase 5
+const { pool } = require('../config/database'); // Required for Phase 5 assembled route
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 
 // File upload middleware (memory storage — service writes to disk/S3)
@@ -76,14 +78,27 @@ router.get('/inspect/:token/pdf', async (req, res) => {
 router.use(authenticate);
 
 // ============================================================================
-// SCHEMA HELPERS
+// SCHEMA HELPERS (Updated in Phase 5)
 // ============================================================================
 
 router.get('/schema/:doc_type', (req, res) => {
+  const { doc_type } = req.params;
+  const defaultStrategy = qmsService.getDefaultStrategy(doc_type);
+  const isStructuredType = ['SOP', 'POL', 'MAN'].includes(doc_type);
+
   res.json({
-    doc_type:         req.params.doc_type,
-    content_strategy: qmsService.getDefaultStrategy(req.params.doc_type),
-    sections:         qmsService.getSectionSchema(req.params.doc_type),
+    doc_type,
+    content_strategy: defaultStrategy,
+    sections: qmsService.getSectionSchema(doc_type),
+    authoring_options: isStructuredType
+      ? [
+          { value: 'structured',    label: 'Structured editor',      description: 'Fill in sections directly in the ERP using the built-in text editor' },
+          { value: 'word_template', label: 'Word template (offline)', description: 'Download a pre-populated Word template, author in Microsoft Word, then upload the completed file' },
+        ]
+      : [
+          { value: 'upload', label: 'File upload', description: 'Design the template in Word or Excel and upload it' },
+        ],
+    template_available: isStructuredType,
   });
 });
 
@@ -311,13 +326,13 @@ router.delete('/document-links/:linkId',
 );
 
 // ============================================================================
-// VERSION LIFECYCLE
+// VERSION LIFECYCLE (Updated in Phase 5)
 // ============================================================================
 
 router.post('/documents/:id/draft', async (req, res) => {
   try {
-    const { change_reason } = req.body;
-    res.status(201).json(await qmsService.createDraft(req.params.id, req.user.user_id, change_reason));
+    const { change_reason, authoring_choice } = req.body;
+    res.status(201).json(await qmsService.createDraft(req.params.id, req.user.user_id, change_reason, authoring_choice));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -326,6 +341,50 @@ router.put('/versions/:versionId', async (req, res) => {
     res.json(await qmsService.updateDraft(req.params.versionId, req.body.content_data, req.user.user_id));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+
+// ── Phase 5: Template Generation & Assembled Document Downloads ───────────────
+
+router.get('/versions/:versionId/template', async (req, res) => {
+  try {
+    const verRes = await qmsService.getVersionForTemplate(req.params.versionId, req.user.user_id);
+    await templateService.generateBlankTemplate(
+      verRes.doc_id,
+      req.params.versionId,
+      req.user.user_id,
+      res
+    );
+  } catch (e) {
+    if (!res.headersSent) res.status(400).json({ error: e.message });
+  }
+});
+
+router.get('/documents/:id/assembled',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      const doc = await qmsService.getDocumentById(req.params.id);
+      if (!doc.current_version_id) {
+        return res.status(404).json({ error: 'No released version found' });
+      }
+      await templateService.streamAssembledDocument(req.params.id, doc.current_version_id, res);
+    } catch (e) {
+      if (!res.headersSent) res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+router.get('/versions/:versionId/assembled',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      const verRes = await pool.query('SELECT doc_id FROM qms_document_versions WHERE version_id = $1', [req.params.versionId]);
+      if (!verRes.rows.length) return res.status(404).json({ error: 'Version not found' });
+      await templateService.streamAssembledDocument(verRes.rows[0].doc_id, req.params.versionId, res);
+    } catch (e) {
+      if (!res.headersSent) res.status(500).json({ error: e.message });
+    }
+  }
+);
 
 // File upload
 router.post('/versions/:versionId/file', upload.single('document_file'), async (req, res) => {

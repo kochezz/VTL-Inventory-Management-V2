@@ -475,6 +475,20 @@ const QmsService = {
     return { filePath: file_path, originalName: file_original_name };
   },
 
+  // -- Get version for template generation (Phase 5) -------------------------
+
+  async getVersionForTemplate(versionId, userId) {
+    const result = await pool.query(
+      'SELECT doc_id, authored_by, status FROM qms_document_versions WHERE version_id = $1',
+      [versionId]
+    );
+    if (result.rows.length === 0) throw new Error('Version not found');
+    const ver = result.rows[0];
+    if (ver.status !== 'DRAFT') throw new Error('Templates can only be downloaded for DRAFT versions');
+    if (ver.authored_by !== userId) throw new Error('Only the author can download the template for this version');
+    return ver;
+  },
+
   // -- Submit for review -----------------------------------------------------
 
   async submitForReview(versionId, reviewerId, userId) {
