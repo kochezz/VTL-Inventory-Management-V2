@@ -130,6 +130,9 @@ export default function DocumentDetailPage() {
   const [templateAvailable, setTemplateAvailable] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [assembling, setAssembling] = useState(false);
+  // NEW: authoring mode modal — shown before draft creation for SOP/POL/MAN
+  const [showAuthoringModal, setShowAuthoringModal]     = useState(false);
+  const [selectedAuthoringMode, setSelectedAuthoringMode] = useState<'structured' | 'word_template'>('structured');
 
   // ── Load ─────────────────────────────────────────────────────────────────
 
@@ -228,24 +231,74 @@ export default function DocumentDetailPage() {
 
   // ── Draft creation ────────────────────────────────────────────────────────
 
+  const WORD_TEMPLATE_TYPES = ['SOP', 'POL', 'MAN'];
+
   async function handleCreateDraft() {
-    // For revision of released doc, show modal to collect change_reason
+    // Revision of released doc — collect change_reason first (existing behaviour)
     if (doc.status === 'RELEASED') { setShowDraftModal(true); return; }
+    // First draft of SOP/POL/MAN — show authoring mode selector
+    if (WORD_TEMPLATE_TYPES.includes(doc?.doc_type)) {
+      setSelectedAuthoringMode('structured');
+      setShowAuthoringModal(true);
+      return;
+    }
+    // All other types — go straight to draft creation
     await doCreateDraft('');
   }
 
-  async function doCreateDraft(reason: string) {
+  // NEW: called when user confirms their choice in the authoring modal
+  async function handleConfirmAuthoringMode() {
+    setShowAuthoringModal(false);
+    await doCreateDraft('', selectedAuthoringMode);
+  }
+
+  async function doCreateDraft(reason: string, authoringChoice?: string) {
     try {
       setSaving(true);
-      const res = await api.post(`/qms/documents/${doc.doc_id}/draft`, { change_reason: reason });
+      const payload: any = { change_reason: reason };
+      if (authoringChoice) payload.authoring_choice = authoringChoice;
+      const res = await api.post(`/qms/documents/${doc.doc_id}/draft`, payload);
+
+      // If word_template chosen, auto-download template after draft is created
+      if (authoringChoice === 'word_template' && res.data?.version_id) {
+        setTimeout(() => triggerTemplateDownload(res.data.version_id, res.data.version_number), 800);
+      }
+
       setShowDraftModal(false);
       setChangeReason('');
       await fetchAll();
-      setSuccess(`Draft v${res.data.version_number} created (${res.data.content_strategy} mode).`);
+      setSuccess(`Draft v${res.data.version_number} created (${res.data.content_strategy || authoringChoice || 'structured'} mode).`);
       setTimeout(() => setSuccess(''), 4000);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create draft');
     } finally { setSaving(false); }
+  }
+
+  // NEW: template download triggered immediately after draft creation
+  async function triggerTemplateDownload(versionId: string, versionNumber: string) {
+    setDownloadingTemplate(true);
+    try {
+      const token = localStorage.getItem('token') || '';
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/qms/versions/${versionId}/template`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error('Template download failed');
+      const blob = await res.blob();
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `${doc.doc_code}_v${versionNumber}_TEMPLATE_DRAFT.docx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      await fetchAll(); // refresh to show word_template strategy
+      setSuccess('Template downloaded. Edit in Microsoft Word, then upload the completed file.');
+      setTimeout(() => setSuccess(''), 8000);
+    } catch {
+      setError('Template download failed. Use the "Download Word Template" button in the content area.');
+    } finally {
+      setDownloadingTemplate(false);
+    }
   }
 
   // ── Save draft (structured / richtext) ───────────────────────────────────
@@ -1173,6 +1226,120 @@ export default function DocumentDetailPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Authoring mode selection modal — shown before first draft creation for SOP/POL/MAN */}
+      {showAuthoringModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl">
+
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <FileEdit className="w-5 h-5 text-primary-500"/>
+                Choose Authoring Method
+              </h2>
+              <button onClick={() => setShowAuthoringModal(false)}><X className="w-6 h-6 text-gray-400"/></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-gray-400 text-sm">
+                Select how you want to author <span className="text-white font-medium">{doc?.doc_name}</span>.
+                This is set at draft creation and cannot be changed afterwards.
+              </p>
+
+              {/* Option 1 — Structured editor */}
+              <div
+                onClick={() => setSelectedAuthoringMode('structured')}
+                className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${
+                  selectedAuthoringMode === 'structured'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-dark-600 bg-dark-900 hover:border-dark-500'
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${
+                    selectedAuthoringMode === 'structured' ? 'border-primary-500 bg-primary-500' : 'border-dark-500'
+                  }`}>
+                    {selectedAuthoringMode === 'structured' && <div className="w-2 h-2 rounded-full bg-white"/>}
+                  </div>
+                  <div>
+                    <p className="text-white font-bold text-sm">Built-in Structured Editor</p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      Fill in each section directly in the browser. Best for straightforward documents without complex tables or images.
+                    </p>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      <span className="text-xs px-2 py-1 bg-green-500/10 text-green-400 rounded border border-green-500/20">Simple setup</span>
+                      <span className="text-xs px-2 py-1 bg-green-500/10 text-green-400 rounded border border-green-500/20">No download needed</span>
+                      <span className="text-xs px-2 py-1 bg-yellow-500/10 text-yellow-400 rounded border border-yellow-500/20">Plain text only</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Option 2 — Word template */}
+              <div
+                onClick={() => setSelectedAuthoringMode('word_template')}
+                className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${
+                  selectedAuthoringMode === 'word_template'
+                    ? 'border-purple-500 bg-purple-500/10'
+                    : 'border-dark-600 bg-dark-900 hover:border-dark-500'
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${
+                    selectedAuthoringMode === 'word_template' ? 'border-purple-500 bg-purple-500' : 'border-dark-500'
+                  }`}>
+                    {selectedAuthoringMode === 'word_template' && <div className="w-2 h-2 rounded-full bg-white"/>}
+                  </div>
+                  <div>
+                    <p className="text-white font-bold text-sm">
+                      Word Template
+                      <span className="text-xs text-purple-400 font-normal ml-2">Recommended for complex documents</span>
+                    </p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      Download a pre-populated Word template, author offline in Microsoft Word with full formatting, tables, and images, then upload the completed file. The system adds the cover sheet, headers, and footers automatically on release.
+                    </p>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">Full Word formatting</span>
+                      <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">Tables &amp; images</span>
+                      <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">System cover sheet on release</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {selectedAuthoringMode === 'word_template' && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                  <p>The Word template downloads automatically when you click "Create Draft". Follow the authoring guidelines in QA-QMS-SOP-002 before uploading your completed document.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-dark-700 flex justify-end gap-3">
+              <button
+                onClick={() => setShowAuthoringModal(false)}
+                className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAuthoringMode}
+                disabled={saving}
+                className={`px-8 py-2.5 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors disabled:opacity-50 ${
+                  selectedAuthoringMode === 'word_template'
+                    ? 'bg-purple-600 hover:bg-purple-700'
+                    : 'bg-primary-600 hover:bg-primary-700'
+                }`}
+              >
+                {saving ? 'Creating…' : selectedAuthoringMode === 'word_template'
+                  ? <><Download className="w-4 h-4"/> Create Draft &amp; Download Template</>
+                  : <><FileEdit className="w-4 h-4"/> Create Draft</>
+                }
+              </button>
+            </div>
           </div>
         </div>
       )}

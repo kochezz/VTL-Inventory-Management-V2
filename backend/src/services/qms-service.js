@@ -1,5 +1,5 @@
 // ============================================================================
-// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1, 2, 3 & 4 MERGED)
+// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1 - 5 MERGED)
 // ============================================================================
 
 const { pool } = require('./auth-service'); // Adjust path to database config if needed
@@ -120,10 +120,10 @@ function getLegacyHtmlTemplate(doc_type) {
   switch (doc_type) {
     case 'POL': return `<h2>1. Purpose & Objective</h2><p>State intent.</p><h2>2. Scope</h2><p>Define applicability.</p><h2>3. Policy Statement</h2><p>Core rules.</p>`;
     case 'MAN': return `<h1>QUALITY SYSTEM MANUAL</h1><h2>1. Introduction</h2><p>Overview.</p><h2>2. Quality Policy</h2><p>Commitment.</p>`;
-    case 'FRM': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><td><strong>Date:</strong></td><td></td><td><strong>Department:</strong></td><td></td></tr><tr><td colspan="4"><strong>Details:</strong><br><br></td></tr></table>`;
-    case 'CHK': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><th>Step</th><th>Task</th><th>Pass</th><th>Fail</th><th>N/A</th><th>Remarks</th></tr><tr><td>1</td><td></td><td>[ ]</td><td>[ ]</td><td>[ ]</td><td></td></tr></table>`;
-    case 'LOG': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><th>Date/Time</th><th>Parameter</th><th>Value</th><th>Operator</th><th>Verifier</th><th>Comments</th></tr><tr><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>`;
-    case 'REG': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><th>Reference ID</th><th>Date Logged</th><th>Description</th><th>Status</th><th>Owner</th></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></table>`;
+    case 'FRM': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><td><strong>Date:</strong></td><td></td><td><strong>Department:</strong></td><td></td></tr><tr><td colspan="4"><strong>Details:</strong><br><br></td></tr></table>`;
+    case 'CHK': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><th>Step</th><th>Task</th><th>Pass</th><th>Fail</th><th>N/A</th><th>Remarks</th></tr><tr><td>1</td><td></td><td>[ ]</td><td>[ ]</td><td>[ ]</td><td></td></tr></table>`;
+    case 'LOG': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><th>Date/Time</th><th>Parameter</th><th>Value</th><th>Operator</th><th>Verifier</th><th>Comments</th></tr><tr><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>`;
+    case 'REG': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><th>Reference ID</th><th>Date Logged</th><th>Description</th><th>Status</th><th>Owner</th></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></table>`;
     default:    return `<p>Start documenting here...</p>`;
   }
 }
@@ -339,7 +339,7 @@ const QmsService = {
 
   // -- Create draft ----------------------------------------------------------
 
-  async createDraft(docId, userId, changeReason) {
+  async createDraft(docId, userId, changeReason, authoringChoiceParam = null) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -382,12 +382,16 @@ const QmsService = {
         throw new Error(`Cannot create draft. Document is currently in "${doc.status}" status.`);
       }
 
+      // Determine Authoring Choice & Strategy
+      const authoringChoice = authoringChoiceParam || (['SOP', 'POL', 'MAN'].includes(doc.doc_type) ? 'structured' : 'upload');
+      const contentStrategy = authoringChoice; // content_strategy mirrors authoring_choice at creation
+
       const verRes = await client.query(`
         INSERT INTO qms_document_versions
-          (doc_id, version_number, content_data, authored_by, status, content_strategy, change_reason)
-        VALUES ($1, $2, $3, $4, 'DRAFT', $5, $6)
+          (doc_id, version_number, content_data, authored_by, status, content_strategy, change_reason, authoring_choice)
+        VALUES ($1, $2, $3, $4, 'DRAFT', $5, $6, $7)
         RETURNING version_id
-      `, [docId, newVersionNumber, previousContent, userId, defaultStrategy, changeReason || null]);
+      `, [docId, newVersionNumber, previousContent, userId, contentStrategy, changeReason || null, authoringChoice]);
 
       const newVersionId = verRes.rows[0].version_id;
 
@@ -401,7 +405,7 @@ const QmsService = {
       });
 
       await client.query('COMMIT');
-      return { success: true, version_id: newVersionId, version_number: newVersionNumber, content_strategy: defaultStrategy };
+      return { success: true, version_id: newVersionId, version_number: newVersionNumber, content_strategy: contentStrategy };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
