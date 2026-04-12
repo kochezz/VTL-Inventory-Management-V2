@@ -1,5 +1,5 @@
 // ============================================================================
-// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1 - 5 MERGED)
+// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1, 2, 3, 4 & 5 MERGED)
 // ============================================================================
 
 const { pool } = require('./auth-service'); // Adjust path to database config if needed
@@ -120,10 +120,10 @@ function getLegacyHtmlTemplate(doc_type) {
   switch (doc_type) {
     case 'POL': return `<h2>1. Purpose & Objective</h2><p>State intent.</p><h2>2. Scope</h2><p>Define applicability.</p><h2>3. Policy Statement</h2><p>Core rules.</p>`;
     case 'MAN': return `<h1>QUALITY SYSTEM MANUAL</h1><h2>1. Introduction</h2><p>Overview.</p><h2>2. Quality Policy</h2><p>Commitment.</p>`;
-    case 'FRM': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><td><strong>Date:</strong></td><td></td><td><strong>Department:</strong></td><td></td></tr><tr><td colspan="4"><strong>Details:</strong><br><br></td></tr></table>`;
-    case 'CHK': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><th>Step</th><th>Task</th><th>Pass</th><th>Fail</th><th>N/A</th><th>Remarks</th></tr><tr><td>1</td><td></td><td>[ ]</td><td>[ ]</td><td>[ ]</td><td></td></tr></table>`;
-    case 'LOG': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><th>Date/Time</th><th>Parameter</th><th>Value</th><th>Operator</th><th>Verifier</th><th>Comments</th></tr><tr><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>`;
-    case 'REG': return `<table border="1" stylewidth:100%;border-collapse:collapse;"><tr><th>Reference ID</th><th>Date Logged</th><th>Description</th><th>Status</th><th>Owner</th></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></table>`;
+    case 'FRM': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><td><strong>Date:</strong></td><td></td><td><strong>Department:</strong></td><td></td></tr><tr><td colspan="4"><strong>Details:</strong><br><br></td></tr></table>`;
+    case 'CHK': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><th>Step</th><th>Task</th><th>Pass</th><th>Fail</th><th>N/A</th><th>Remarks</th></tr><tr><td>1</td><td></td><td>[ ]</td><td>[ ]</td><td>[ ]</td><td></td></tr></table>`;
+    case 'LOG': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><th>Date/Time</th><th>Parameter</th><th>Value</th><th>Operator</th><th>Verifier</th><th>Comments</th></tr><tr><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>`;
+    case 'REG': return `<table border="1" style="width:100%;border-collapse:collapse;"><tr><th>Reference ID</th><th>Date Logged</th><th>Description</th><th>Status</th><th>Owner</th></tr><tr><td></td><td></td><td></td><td></td><td></td></tr></table>`;
     default:    return `<p>Start documenting here...</p>`;
   }
 }
@@ -357,41 +357,41 @@ const QmsService = {
 
       let newVersionNumber = '0.1';
       let previousContent = {};
-      const defaultStrategy = CONTENT_STRATEGY_MAP[doc.doc_type] || 'structured';
 
       if (doc.status === 'RELEASED' && doc.current_version_id) {
         const prevRes = await client.query(
-          'SELECT version_number, content_data FROM qms_document_versions WHERE version_id = $1',
+          'SELECT version_number, content_data, content_strategy FROM qms_document_versions WHERE version_id = $1',
           [doc.current_version_id]
         );
         if (prevRes.rows.length > 0) {
           const currentVer = parseFloat(prevRes.rows[0].version_number);
           newVersionNumber = (currentVer + 1.0).toFixed(1);
+          
           // Carry forward content only for structured docs; upload docs start fresh
-          if (defaultStrategy === 'structured' || defaultStrategy === 'richtext') {
+          const prevStrategy = prevRes.rows[0].content_strategy;
+          if (prevStrategy === 'structured' || prevStrategy === 'richtext') {
             previousContent = prevRes.rows[0].content_data || {};
           }
         }
       } else if (doc.status === 'PLANNED') {
         // Pre-populate richtext types with HTML template for convenience
-        if (defaultStrategy === 'richtext') {
+        if (CONTENT_STRATEGY_MAP[doc.doc_type] === 'richtext') {
           previousContent = { html_content: getLegacyHtmlTemplate(doc.doc_type) };
         }
-        // structured docs start blank; upload docs start blank
       } else {
         throw new Error(`Cannot create draft. Document is currently in "${doc.status}" status.`);
       }
 
-      // Determine Authoring Choice & Strategy
+      // Phase 5: Determine Authoring Choice & Strategy dynamically
       const authoringChoice = authoringChoiceParam || (['SOP', 'POL', 'MAN'].includes(doc.doc_type) ? 'structured' : 'upload');
       const contentStrategy = authoringChoice; // content_strategy mirrors authoring_choice at creation
 
       const verRes = await client.query(`
         INSERT INTO qms_document_versions
-          (doc_id, version_number, content_data, authored_by, status, content_strategy, change_reason, authoring_choice)
+          (doc_id, version_number, content_data, authored_by, status, authoring_choice, content_strategy, change_reason)
         VALUES ($1, $2, $3, $4, 'DRAFT', $5, $6, $7)
         RETURNING version_id
-      `, [docId, newVersionNumber, previousContent, userId, contentStrategy, changeReason || null, authoringChoice]);
+      `, [docId, newVersionNumber, previousContent, userId, authoringChoice, contentStrategy, changeReason || null]);
 
       const newVersionId = verRes.rows[0].version_id;
 
@@ -439,7 +439,7 @@ const QmsService = {
 
   async uploadVersionFile(versionId, fileBuffer, originalName, userId) {
     const verRes = await pool.query(
-      'SELECT doc_id, status, authored_by FROM qms_document_versions WHERE version_id = $1',
+      'SELECT doc_id, status, authored_by, authoring_choice FROM qms_document_versions WHERE version_id = $1',
       [versionId]
     );
     if (verRes.rows.length === 0) throw new Error('Version not found');
@@ -447,15 +447,18 @@ const QmsService = {
     if (ver.status !== 'DRAFT') throw new Error('File can only be uploaded to a DRAFT version');
     if (ver.authored_by !== userId) throw new Error('Only the author can upload files');
 
+    // If it was explicitly created as word_template, keep that strategy, otherwise set to 'upload'
+    const newStrategy = ver.authoring_choice === 'word_template' ? 'word_template' : 'upload';
+
     const filePath = buildFilePath(ver.doc_id, versionId, originalName);
     fs.writeFileSync(filePath, fileBuffer);
 
     await pool.query(`
       UPDATE qms_document_versions
-      SET file_path = $1, file_original_name = $2, content_strategy = 'upload',
+      SET file_path = $1, file_original_name = $2, content_strategy = $3,
           updated_at = CURRENT_TIMESTAMP
-      WHERE version_id = $3
-    `, [filePath, originalName, versionId]);
+      WHERE version_id = $4
+    `, [filePath, originalName, newStrategy, versionId]);
 
     await pool.query(`
       INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, notes)

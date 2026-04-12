@@ -130,8 +130,7 @@ export default function DocumentDetailPage() {
   const [templateAvailable, setTemplateAvailable] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [assembling, setAssembling] = useState(false);
-  
-  // Authoring mode modal — shown before draft creation for SOP/POL/MAN
+  // NEW: authoring mode modal — shown before draft creation for SOP/POL/MAN
   const [showAuthoringModal, setShowAuthoringModal]     = useState(false);
   const [selectedAuthoringMode, setSelectedAuthoringMode] = useState<'structured' | 'word_template'>('structured');
 
@@ -176,19 +175,16 @@ export default function DocumentDetailPage() {
     }
   }
 
-  // ── Phase 5 Handlers ──────────────────────────────────────────────────────
+  // ── Phase 5 Handlers (Auth-Fixed API Downloads) ───────────────────────────
   
   async function handleDownloadTemplate() {
     if (!activeVersion) return;
     setDownloadingTemplate(true);
     try {
-      const token = localStorage.getItem('token') || '';
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/qms/versions/${activeVersion.version_id}/template`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) throw new Error('Template download failed');
-      const blob = await res.blob();
+      const res = await api.get(`/qms/versions/${activeVersion.version_id}/template`, {
+        responseType: 'blob' 
+      });
+      const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
@@ -201,6 +197,7 @@ export default function DocumentDetailPage() {
       setSuccess('Template downloaded. Edit it in Microsoft Word, then upload it using the "Upload Completed File" button.');
       setTimeout(() => setSuccess(''), 6000);
     } catch (e) {
+      console.error(e);
       setError('Template download failed. Please try again.');
     } finally {
       setDownloadingTemplate(false);
@@ -210,20 +207,18 @@ export default function DocumentDetailPage() {
   async function handleDownloadAssembled() {
     setAssembling(true);
     try {
-      const token = localStorage.getItem('token') || '';
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/qms/documents/${params.id}/assembled`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) throw new Error('Assembly failed');
-      const blob = await res.blob();
+      const res = await api.get(`/qms/documents/${params.id}/assembled`, {
+        responseType: 'blob'
+      });
+      const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
       a.download = `${doc.doc_code}_v${activeVersion?.version_number}_controlled.docx`;
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch {
+    } catch (e) {
+      console.error(e);
       setError('Document assembly failed. Please try again.');
     } finally {
       setAssembling(false);
@@ -279,23 +274,22 @@ export default function DocumentDetailPage() {
   async function triggerTemplateDownload(versionId: string, versionNumber: string) {
     setDownloadingTemplate(true);
     try {
-      const token = localStorage.getItem('token') || '';
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/qms/versions/${versionId}/template`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) throw new Error('Template download failed');
-      const blob = await res.blob();
+      const res = await api.get(`/qms/versions/${versionId}/template`, {
+        responseType: 'blob'
+      });
+      const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
       a.download = `${doc.doc_code}_v${versionNumber}_TEMPLATE_DRAFT.docx`;
       a.click();
       window.URL.revokeObjectURL(url);
+      
       await fetchAll(); // refresh to show word_template strategy
       setSuccess('Template downloaded. Edit in Microsoft Word, then upload the completed file.');
       setTimeout(() => setSuccess(''), 8000);
-    } catch {
+    } catch (e) {
+      console.error(e);
       setError('Template download failed. Use the "Download Word Template" button in the content area.');
     } finally {
       setDownloadingTemplate(false);
@@ -336,10 +330,24 @@ export default function DocumentDetailPage() {
     } finally { setUploading(false); }
   }
 
+  // Updated to use the secure auth-based API download as well
   async function handleDownloadFile() {
     if (!activeVersion) return;
-    const token = localStorage.getItem('token') || '';
-    window.open(`${process.env.NEXT_PUBLIC_API_URL}/qms/versions/${activeVersion.version_id}/file`, '_blank');
+    try {
+      const res = await api.get(`/qms/versions/${activeVersion.version_id}/file`, {
+        responseType: 'blob'
+      });
+      const blob = new Blob([res.data]);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = activeVersion.file_original_name || `${doc.doc_code}_file`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      setError('File download failed.');
+    }
   }
 
   // ── Submit for review ─────────────────────────────────────────────────────
@@ -646,33 +654,151 @@ export default function DocumentDetailPage() {
                         <div className="text-center py-20 text-gray-500 italic">
                           No content drafted yet. Click "Author First Draft" to begin.
                         </div>
-                      ) : strategy === 'word_template' ? (
-                        // ── word_template mode ──
-                        <div className="space-y-4">
-                          {isDraft && isAuthor && (
-                            <div className="flex items-center gap-3 p-4 bg-primary-500/10 border border-primary-500/20 rounded-xl mb-4">
-                              <CheckCircle2 className="w-5 h-5 text-primary-400 flex-shrink-0" />
-                              <div>
-                                <p className="text-primary-400 font-bold text-sm">Word Template Mode</p>
-                                <p className="text-gray-400 text-xs mt-0.5">
-                                  Download the template, edit offline, and upload the completed file.
-                                </p>
-                              </div>
-                              <button
-                                onClick={handleDownloadTemplate}
-                                disabled={downloadingTemplate}
-                                className="ml-auto px-3 py-1.5 bg-dark-700 hover:bg-dark-600 text-gray-300 rounded-lg text-xs transition-colors disabled:opacity-50 flex-shrink-0"
-                              >
-                                {downloadingTemplate ? 'Downloading...' : 'Download Template'}
-                              </button>
+                      ) : isDraft && isAuthor && strategy === 'structured' && templateAvailable && authoringOptions.length > 1 ? (
+                        // ── Authoring mode selector (SOP/POL/MAN in DRAFT, before content is entered) ──
+                        <div className="space-y-6">
+                          <div>
+                            <h3 className="text-white font-bold text-sm border-b border-dark-700 pb-2 mb-4">
+                              Choose your authoring approach
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {authoringOptions.map((opt: any) => (
+                                <div
+                                  key={opt.value}
+                                  onClick={() => {
+                                    if (opt.value === strategy) return;
+                                    if (opt.value === 'word_template') {
+                                      handleDownloadTemplate();
+                                    }
+                                  }}
+                                  className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${
+                                    strategy === opt.value
+                                      ? 'border-primary-500 bg-primary-500/10'
+                                      : 'border-dark-600 bg-dark-900 hover:border-dark-500'
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 ${
+                                      strategy === opt.value ? 'border-primary-500 bg-primary-500' : 'border-dark-500'
+                                    }`}/>
+                                    <div>
+                                      <p className="text-white font-bold text-sm">{opt.label}</p>
+                                      <p className="text-gray-400 text-xs mt-1 leading-relaxed">{opt.description}</p>
+                                      {opt.value === 'word_template' && (
+                                        <button
+                                          onClick={e => { e.stopPropagation(); handleDownloadTemplate(); }}
+                                          disabled={downloadingTemplate}
+                                          className="mt-3 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-colors disabled:opacity-50"
+                                        >
+                                          {/* Download icon */}
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                          </svg>
+                                          {downloadingTemplate ? 'Downloading…' : 'Download Word Template'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* If structured is selected, show the structured editor immediately below */}
+                          {strategy === 'structured' && (
+                            <div className="space-y-8 pt-4 border-t border-dark-700">
+                              {sections.map((sec: any) => (
+                                <div key={sec.id} className="space-y-2">
+                                  <h3 className="text-white font-bold border-b border-dark-700 pb-2 text-sm uppercase tracking-wider">{sec.title}</h3>
+                                  <textarea
+                                    value={content[sec.id] || ''}
+                                    onChange={e => setContent({ ...content, [sec.id]: e.target.value })}
+                                    placeholder={sec.desc}
+                                    rows={sec.id === 'procedure' ? 8 : 3}
+                                    className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-gray-300 focus:outline-none focus:border-primary-500 transition-colors resize-y text-sm"
+                                  />
+                                </div>
+                              ))}
                             </div>
                           )}
 
+                          {/* word_template mode — show upload area after template downloaded */}
+                          {strategy === 'word_template' && (
+                            <div className="pt-4 border-t border-dark-700 space-y-4">
+                              <div className="flex items-center gap-3 p-4 bg-primary-500/10 border border-primary-500/20 rounded-xl">
+                                {/* CheckCircle icon */}
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-primary-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                <div>
+                                  <p className="text-primary-400 font-bold text-sm">Template downloaded</p>
+                                  <p className="text-gray-400 text-xs mt-0.5">
+                                    Edit the Word document, then upload it below. The system will wrap it with the official cover sheet and header/footer on release.
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={handleDownloadTemplate}
+                                  disabled={downloadingTemplate}
+                                  className="ml-auto px-3 py-1.5 bg-dark-700 hover:bg-dark-600 text-gray-300 rounded-lg text-xs transition-colors disabled:opacity-50 flex-shrink-0"
+                                >
+                                  Re-download
+                                </button>
+                              </div>
+
+                              {/* File upload area (reuses existing upload UI) */}
+                              <div className="border-2 border-dashed border-dark-600 rounded-xl p-8 text-center">
+                                {uploadedFileName ? (
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-center gap-3 text-green-400">
+                                      <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                      </svg>
+                                      <div className="text-left">
+                                        <p className="font-bold text-sm">{uploadedFileName}</p>
+                                        <p className="text-xs text-gray-400 mt-0.5">Completed Word template uploaded</p>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => fileInputRef.current?.click()}
+                                      disabled={uploading}
+                                      className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-xs font-medium flex items-center gap-2 mx-auto transition-colors"
+                                    >
+                                      Replace File
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-gray-600 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                                    </svg>
+                                    <div>
+                                      <p className="text-white font-medium text-sm">Upload your completed Word document</p>
+                                      <p className="text-gray-500 text-xs mt-1">The system will add the cover sheet and running headers/footers automatically</p>
+                                    </div>
+                                    <button
+                                      onClick={() => fileInputRef.current?.click()}
+                                      disabled={uploading}
+                                      className="px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 mx-auto transition-colors disabled:opacity-50"
+                                    >
+                                      {uploading ? 'Uploading…' : 'Upload Completed File'}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <input ref={fileInputRef} type="file" accept=".docx,.doc,.pdf" className="hidden" onChange={handleFileUpload}/>
+                            </div>
+                          )}
+                        </div>
+                      ) : strategy === 'word_template' ? (
+                        // ── word_template mode (already set, not in draft selector) ──
+                        <div className="space-y-4">
                           <div className="border-2 border-dashed border-dark-600 rounded-xl p-8 text-center">
                             {uploadedFileName ? (
                               <div className="space-y-3">
                                 <div className="flex items-center justify-center gap-3 text-green-400">
-                                  <CheckCircle2 className="w-7 h-7" />
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                  </svg>
                                   <div className="text-left">
                                     <p className="font-bold text-sm text-white">{uploadedFileName}</p>
                                     <p className="text-xs text-gray-400 mt-0.5">Completed template uploaded — system will add cover sheet on release</p>
@@ -688,7 +814,9 @@ export default function DocumentDetailPage() {
                                   {!isDraft && (
                                     <button onClick={handleDownloadAssembled} disabled={assembling}
                                       className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-colors">
-                                      <Download className="w-3.5 h-3.5" />
+                                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                      </svg>
                                       {assembling ? 'Assembling…' : 'Download Controlled Document'}
                                     </button>
                                   )}
@@ -696,15 +824,11 @@ export default function DocumentDetailPage() {
                               </div>
                             ) : (
                               <div className="space-y-3">
-                                <Upload className="w-10 h-10 text-gray-600 mx-auto" />
-                                <div>
-                                  <p className="text-white font-medium text-sm">Upload your completed Word document</p>
-                                  <p className="text-gray-500 text-xs mt-1">The system will add the cover sheet and running headers/footers automatically</p>
-                                </div>
+                                <p className="text-white font-medium text-sm">No file uploaded yet</p>
                                 {isDraft && isAuthor && (
                                   <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-                                    className="px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 mx-auto transition-colors disabled:opacity-50">
-                                    {uploading ? 'Uploading…' : 'Upload Completed File'}
+                                    className="px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-bold mx-auto flex items-center gap-2">
+                                    Upload Completed File
                                   </button>
                                 )}
                               </div>
