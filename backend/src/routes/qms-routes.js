@@ -1,11 +1,12 @@
 // ============================================================================
-// VILAGIO ERP — QMS ROUTES (PHASE 1 + 2 + 3 — COMPLETE FILE)
+// VILAGIO ERP — QMS ROUTES (PHASES 1, 2, 3 & 4 — COMPLETE FILE)
 // ============================================================================
 
 const express = require('express');
 const router  = express.Router();
 const multer  = require('multer');
 const qmsService = require('../services/qms-service');
+const pdfService = require('../services/qms-pdf-service'); // Phase 4 PDF Service
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 
 // File upload middleware (memory storage — service writes to disk/S3)
@@ -26,8 +27,8 @@ const upload = multer({
   }
 });
 
-// ── All routes below require authentication EXCEPT the public inspector route ──
-// The public route is defined first, before router.use(authenticate)
+// ── All routes below require authentication EXCEPT the public inspector routes ──
+// Public routes are defined first, before router.use(authenticate)
 
 // ============================================================================
 // PUBLIC — External auditor inspector view (token-gated, no login required)
@@ -52,6 +53,22 @@ router.get('/inspect/:token', async (req, res) => {
     res.json(pack);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ── 4A — Public token-gated PDF download ──────────────────────────────────────
+router.get('/inspect/:token/pdf', async (req, res) => {
+  try {
+    const tokenRecord = await qmsService.resolveShareToken(req.params.token);
+    if (!tokenRecord) {
+      return res.status(404).json({ error: 'Link is invalid, expired, or revoked.' });
+    }
+    const mode = req.query.mode === 'full' ? 'full' : 'current';
+    await pdfService.generateAuditPack(tokenRecord.doc_id, mode, res);
+  } catch (e) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: e.message });
+    }
   }
 });
 
@@ -92,6 +109,27 @@ router.get('/dashboard-summary', async (req, res) => {
 router.get('/my-tasks', async (req, res) => {
   try { res.json(await qmsService.getMyTasks(req.user.user_id)); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 4B — Compliance dashboard (single combined endpoint) ─────────────────────
+router.get('/compliance',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      res.json(await qmsService.getComplianceDashboard());
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+// ── 4C — Review calendar ─────────────────────────────────────────────────────
+router.get('/review-calendar', async (req, res) => {
+  try {
+    res.json(await qmsService.getReviewCalendar());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============================================================================
@@ -194,6 +232,22 @@ router.get('/documents/:id/inspector',
   async (req, res) => {
     try { res.json(await qmsService.getInspectorPack(req.params.id)); }
     catch (e) { res.status(500).json({ error: e.message }); }
+  }
+);
+
+// ── 4A — PDF audit pack download (internal) ───────────────────────────────────
+router.get('/documents/:id/pdf',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      const mode = req.query.mode === 'full' ? 'full' : 'current';
+      await pdfService.generateAuditPack(req.params.id, mode, res);
+    } catch (e) {
+      // If headers not yet sent, return JSON error
+      if (!res.headersSent) {
+        res.status(500).json({ error: e.message });
+      }
+    }
   }
 );
 

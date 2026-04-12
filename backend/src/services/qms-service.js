@@ -1,5 +1,5 @@
 // ============================================================================
-// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1, 2 & 3 MERGED)
+// VILAGIO ERP — QMS DOCUMENT SERVICE (PHASE 1, 2, 3 & 4 MERGED)
 // ============================================================================
 
 const { pool } = require('./auth-service'); // Adjust path to database config if needed
@@ -1526,8 +1526,103 @@ const QmsService = {
       ORDER BY depth, doc_code
     `, [docId]);
     return result.rows;
-  }
+  },
 
+  // ============================================================================
+  // PHASE 4 NEW METHODS
+  // ============================================================================
+
+  // ── 4A — Compliance summary (for dashboard KPI bar) ──────────────────────
+
+  async getComplianceSummary() {
+    const result = await pool.query(`SELECT * FROM qms_compliance_summary`);
+    return result.rows[0];
+  },
+
+  // ── 4B — Department training breakdown ───────────────────────────────────
+
+  async getDeptTrainingCompliance() {
+    const result = await pool.query(`SELECT * FROM qms_dept_training_compliance`);
+    return result.rows;
+  },
+
+  // ── 4B — NCR age analysis ────────────────────────────────────────────────
+
+  async getNCRAgeAnalysis() {
+    const result = await pool.query(`SELECT * FROM qms_ncr_age_analysis`);
+    // Group by age band for charting
+    const bands = { recent: 0, aging: 0, overdue: 0, critical: 0, closed: 0 };
+    result.rows.forEach(r => { if (bands[r.age_band] !== undefined) bands[r.age_band]++; });
+    return { records: result.rows, bands };
+  },
+
+  // ── 4C — Review calendar (12 months) ─────────────────────────────────────
+
+  async getReviewCalendar() {
+    const result = await pool.query(`SELECT * FROM qms_review_calendar`);
+
+    // Group by month for the calendar view
+    const byMonth = {};
+    result.rows.forEach(row => {
+      const key = `${row.due_year}-${String(row.due_month).padStart(2, '0')}`;
+      if (!byMonth[key]) byMonth[key] = { year: row.due_year, month: row.due_month, docs: [] };
+      byMonth[key].docs.push(row);
+    });
+
+    // Count by urgency
+    const urgencyCounts = { overdue: 0, critical: 0, soon: 0, scheduled: 0 };
+    result.rows.forEach(r => { if (urgencyCounts[r.urgency] !== undefined) urgencyCounts[r.urgency]++; });
+
+    return {
+      all:           result.rows,
+      by_month:      Object.values(byMonth).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month),
+      urgency_counts: urgencyCounts,
+    };
+  },
+
+  // ── Combined compliance dashboard payload ─────────────────────────────────
+  // Single endpoint that fetches everything the dashboard needs in parallel
+
+  async getComplianceDashboard() {
+    const [summary, deptTraining, ncrAge, reviewCal] = await Promise.all([
+      pool.query(`SELECT * FROM qms_compliance_summary`),
+      pool.query(`SELECT * FROM qms_dept_training_compliance`),
+      pool.query(`SELECT * FROM qms_ncr_age_analysis LIMIT 50`),
+      pool.query(`SELECT * FROM qms_review_calendar`),
+    ]);
+
+    // NCR age bands
+    const bands = { recent: 0, aging: 0, overdue: 0, critical: 0, closed: 0 };
+    ncrAge.rows.forEach(r => { if (bands[r.age_band] !== undefined) bands[r.age_band]++; });
+
+    // Calendar by month
+    const byMonth = {};
+    reviewCal.rows.forEach(row => {
+      const key = `${row.due_year}-${String(row.due_month).padStart(2, '0')}`;
+      if (!byMonth[key]) byMonth[key] = { year: parseInt(row.due_year), month: parseInt(row.due_month), docs: [] };
+      byMonth[key].docs.push(row);
+    });
+
+    const urgencyCounts = { overdue: 0, critical: 0, soon: 0, scheduled: 0 };
+    reviewCal.rows.forEach(r => { if (urgencyCounts[r.urgency] !== undefined) urgencyCounts[r.urgency]++; });
+
+    // CAPA closure rate (for trend gauge)
+    const capaTotal = parseInt(summary.rows[0].capa_open) + parseInt(summary.rows[0].capa_closed);
+    const capaClosureRate = capaTotal > 0
+      ? Math.round((parseInt(summary.rows[0].capa_closed) / capaTotal) * 100)
+      : 100;
+
+    return {
+      summary:          summary.rows[0],
+      dept_training:    deptTraining.rows,
+      ncr_age_bands:    bands,
+      ncr_records:      ncrAge.rows,
+      calendar_months:  Object.values(byMonth).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month),
+      calendar_all:     reviewCal.rows,
+      urgency_counts:   urgencyCounts,
+      capa_closure_rate: capaClosureRate,
+    };
+  }
 };
 
 // Export the helper method for testing

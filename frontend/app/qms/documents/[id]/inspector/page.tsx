@@ -84,6 +84,9 @@ export default function InspectorPage() {
   const [copied, setCopied]           = useState(false);
   const [error, setError]             = useState('');
   const [success, setSuccess]         = useState('');
+  
+  // PDF download state
+  const [pdfLoading, setPdfLoading] = useState<'full'|'current'|null>(null);
 
   useEffect(() => {
     if (params.id) fetchAll();
@@ -142,6 +145,30 @@ export default function InspectorPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  // ── PDF Download Handler ──────────────────────────────────────────────────
+  async function handleDownloadPDF(mode: 'full' | 'current') {
+    setPdfLoading(mode);
+    try {
+      const token = localStorage.getItem('token') || '';
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/qms/documents/${params.id}/pdf?mode=${mode}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error('PDF generation failed');
+      const blob = await res.blob();
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `QMS_AuditPack_${pack?.document?.doc_code || 'document'}_${mode}_${new Date().toISOString().slice(0,10)}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      setError('PDF generation failed. Please try again.');
+    } finally {
+      setPdfLoading(null);
+    }
+  }
+
   const shareUrl = shareToken?.share_url ||
     (shareToken?.token ? `${process.env.NEXT_PUBLIC_FRONTEND_URL || window.location.origin}/qms/inspect/${shareToken.token}` : null);
 
@@ -190,8 +217,30 @@ export default function InspectorPage() {
             </div>
           </div>
 
-          {/* Share link panel */}
-          <div className="flex-shrink-0">
+          {/* Action Panel (Share & PDF) */}
+          <div className="flex flex-col gap-3 flex-shrink-0 items-end">
+            
+            {/* PDF Download buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleDownloadPDF('current')}
+                disabled={!!pdfLoading}
+                className="px-3 py-2 bg-dark-800 border border-dark-700 hover:border-primary-500/50 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors disabled:opacity-50"
+              >
+                <Download className="w-4 h-4 text-primary-400"/>
+                {pdfLoading === 'current' ? 'Generating…' : 'Current Version PDF'}
+              </button>
+              <button
+                onClick={() => handleDownloadPDF('full')}
+                disabled={!!pdfLoading}
+                className="px-3 py-2 bg-dark-800 border border-dark-700 hover:border-primary-500/50 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors disabled:opacity-50"
+              >
+                <Download className="w-4 h-4 text-amber-400"/>
+                {pdfLoading === 'full' ? 'Generating…' : 'Full Audit Pack PDF'}
+              </button>
+            </div>
+
+            {/* Share token panel */}
             {shareToken && shareUrl ? (
               <div className="bg-dark-800 border border-dark-700 rounded-xl p-4 w-80 space-y-3">
                 <div className="flex items-center justify-between">
@@ -220,7 +269,7 @@ export default function InspectorPage() {
               </div>
             ) : (
               <button onClick={() => setShowShareModal(true)}
-                className="px-4 py-2.5 bg-dark-800 border border-dark-700 hover:border-primary-500/50 text-white rounded-xl font-medium flex items-center gap-2 text-sm transition-colors">
+                className="px-4 py-2.5 bg-dark-800 border border-dark-700 hover:border-primary-500/50 text-white rounded-xl font-medium flex items-center gap-2 text-sm transition-colors w-full justify-center">
                 <Share2 className="w-4 h-4 text-primary-400"/> Share with Auditor
               </button>
             )}
