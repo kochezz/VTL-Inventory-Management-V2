@@ -2,13 +2,13 @@
 
 import { useAuth } from '@/hooks/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Package, 
-  MapPin, 
-  TrendingUp, 
-  FileText, 
-  Settings, 
+import {
+  LayoutDashboard,
+  Package,
+  MapPin,
+  TrendingUp,
+  FileText,
+  Settings,
   LogOut,
   Users,
   Factory,
@@ -19,7 +19,13 @@ import {
   ShieldCheck,
   ShoppingBag,
   FlaskConical,
-  BadgeDollarSign
+  BadgeDollarSign,
+  ChevronDown,
+  ChevronRight,
+  FolderTree,
+  BarChart3,
+  Calendar,
+  Network,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -28,137 +34,200 @@ interface NavItem {
   href: string;
   icon: any;
   roles: string[];
+  children?: { name: string; href: string; roles: string[] }[];
 }
 
 const navigation: NavItem[] = [
-  { 
-    name: 'Dashboard', 
-    href: '/dashboard', 
+  {
+    name: 'Dashboard',
+    href: '/dashboard',
     icon: LayoutDashboard,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales', 'engineering']
   },
-  { 
-    name: 'Products', 
-    href: '/products', 
+  {
+    name: 'Products',
+    href: '/products',
     icon: Package,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'operator', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales']
   },
-  { 
-    name: 'Inventory', 
-    href: '/inventory', 
+  {
+    name: 'Inventory',
+    href: '/inventory',
     icon: MapPin,
     roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo', 'sales']
   },
-  { 
-    name: 'Production', 
-    href: '/production', 
+  {
+    name: 'Production',
+    href: '/production',
     icon: Factory,
     roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo']
   },
-  { 
-    name: 'Vendor Management', 
-    href: '/vendor-management/suppliers', 
+  {
+    name: 'Vendor Management',
+    href: '/vendor-management/suppliers',
     icon: Building2,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales'] 
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales']
   },
-  { 
-    name: 'Customers (CRM)', 
-    href: '/vendor-management/customers', 
+  {
+    name: 'Customers (CRM)',
+    href: '/vendor-management/customers',
     icon: Users,
-    roles: ['admin', 'manager', 'sales', 'staff', 'ceo', 'cfo'] 
+    roles: ['admin', 'manager', 'sales', 'staff', 'ceo', 'cfo']
   },
-  { 
-    name: 'Purchase Orders', 
-    href: '/vendor-management/purchase-orders', 
+  {
+    name: 'Purchase Orders',
+    href: '/vendor-management/purchase-orders',
     icon: ShoppingCart,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales'] 
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales']
   },
-  { 
-    name: 'Goods Receipts', 
-    href: '/vendor-management/goods-receipts', 
+  {
+    name: 'Goods Receipts',
+    href: '/vendor-management/goods-receipts',
     icon: PackageCheck,
-    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo', 'sales'] 
+    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo', 'sales']
   },
-  { 
-    name: 'QC Lab', 
-    href: '/lab', 
+  {
+    name: 'QC Lab',
+    href: '/lab',
     icon: FlaskConical,
-    roles: ['admin', 'manager', 'qa'] 
+    roles: ['admin', 'manager', 'qa']
   },
-  { 
-    name: 'Sales / POS', 
-    href: '/sales/pos', 
+  {
+    name: 'Sales / POS',
+    href: '/sales/pos',
     icon: ShoppingBag,
-    roles: ['admin', 'manager', 'sales', 'staff'] 
+    roles: ['admin', 'manager', 'sales', 'staff']
   },
-  { 
-    name: 'Global Pricing', 
-    href: '/pricing', 
+  {
+    name: 'Global Pricing',
+    href: '/pricing',
     icon: BadgeDollarSign,
-    roles: ['admin', 'ceo', 'cfo'] 
+    roles: ['admin', 'ceo', 'cfo']
   },
-  { 
-    name: 'Quality (QMS)', 
-    href: '/qms', 
+  // ── QMS — expandable group ──────────────────────────────────────────────────
+  {
+    name: 'Quality (QMS)',
+    href: '/qms',
     icon: ShieldCheck,
-    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales'] 
+    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales', 'staff', 'super_viewer'],
+    children: [
+      {
+        name: 'Document Register',
+        href: '/qms/documents',
+        roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales', 'staff', 'super_viewer'],
+      },
+      {
+        name: 'Compliance Dashboard',
+        href: '/qms/compliance',
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo'],
+      },
+      {
+        name: 'Review Calendar',
+        href: '/qms/review-calendar',
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering'],
+      },
+      {
+        name: 'Document Hierarchy',
+        href: '/qms/hierarchy',
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering'],
+      },
+    ],
   },
-  { 
-    name: 'Analytics', 
-    href: '/analytics', 
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    name: 'Analytics',
+    href: '/analytics',
     icon: TrendingUp,
     roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo']
   },
-  { 
-    name: 'Reports', 
-    href: '/reports', 
+  {
+    name: 'Reports',
+    href: '/reports',
     icon: FileText,
     roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'sales']
   },
-  { 
-    name: 'Production Reports', 
-    href: '/production-reports', 
+  {
+    name: 'Production Reports',
+    href: '/production-reports',
     icon: ClipboardCheck,
     roles: ['admin', 'manager', 'qa', 'operator', 'ceo', 'cfo']
   },
-  { 
-    name: 'Users', 
-    href: '/users', 
+  {
+    name: 'Users',
+    href: '/users',
     icon: Users,
     roles: ['admin']
   },
-  { 
-    name: 'Settings', 
-    href: '/settings', 
+  {
+    name: 'Settings',
+    href: '/settings',
     icon: Settings,
     roles: ['admin']
   },
 ];
 
+// Sub-nav icon map
+const subIcons: Record<string, any> = {
+  '/qms/documents':       FolderTree,
+  '/qms/compliance':      BarChart3,
+  '/qms/review-calendar': Calendar,
+  '/qms/hierarchy':       Network,
+};
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user, logout } = useAuth();
-  const router = useRouter();
+  const router   = useRouter();
   const pathname = usePathname();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  // Track which parent groups are expanded
+  // Auto-expand any group whose href matches the current path on load
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    navigation.forEach(item => {
+      if (item.children) {
+        // Expand if currently inside this section
+        const isInSection = pathname?.startsWith(item.href) ?? false;
+        if (isInSection) init[item.href] = true;
+      }
+    });
+    return init;
+  });
+
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
-    }
+    if (!isAuthenticated) router.push('/login');
   }, [isAuthenticated, router]);
+
+  // Auto-expand QMS group when navigating into it
+  useEffect(() => {
+    navigation.forEach(item => {
+      if (item.children && pathname?.startsWith(item.href)) {
+        setExpanded(prev => ({ ...prev, [item.href]: true }));
+      }
+    });
+  }, [pathname]);
 
   const handleLogout = () => {
     logout();
     router.push('/login');
   };
 
-  const allowedNavItems = navigation.filter(item => 
+  const toggleGroup = (href: string) => {
+    setExpanded(prev => ({ ...prev, [href]: !prev[href] }));
+  };
+
+  const allowedNavItems = navigation.filter(item =>
     user?.role && item.roles.includes(user.role)
   );
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  const isActive = (href: string) =>
+    pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
+
+  const isParentActive = (item: NavItem) =>
+    pathname === item.href ||
+    (item.children?.some(c => pathname?.startsWith(c.href)) ?? false);
+
+  if (!isAuthenticated) return null;
 
   return (
     <div className="min-h-screen bg-dark-950 flex">
@@ -167,17 +236,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="flex flex-col h-full">
+
           {/* Logo */}
           <div className="flex items-center justify-center h-16 px-6 border-b border-dark-800">
-            <img
-              src="/logo-white.png"
-              alt="Vilagio"
-              className="h-12 w-auto"
-            />
+            <img src="/logo-white.png" alt="Vilagio" className="h-12 w-auto"/>
           </div>
 
-          {/* User Info */}
-          <div 
+          {/* User info */}
+          <div
             onClick={() => router.push('/profile')}
             className="px-6 py-4 border-b border-dark-800 cursor-pointer hover:bg-dark-800 transition-colors group relative"
           >
@@ -204,43 +270,106 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {allowedNavItems.map((item) => {
-              // Highlight if we are on the exact path OR a true sub-path (e.g., /production/123)
-              // The addition of the '/' in startsWith prevents /production-reports from triggering /production
-              const isActive = pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false);
-              
+
+              // ── Item with children (expandable group) ──────────────────────
+              if (item.children) {
+                const parentActive = isParentActive(item);
+                const isOpen       = expanded[item.href] ?? false;
+
+                // Filter children by role
+                const allowedChildren = item.children.filter(c =>
+                  user?.role && c.roles.includes(user.role)
+                );
+                if (allowedChildren.length === 0) return null;
+
+                return (
+                  <div key={item.href}>
+                    {/* Parent button */}
+                    <button
+                      onClick={() => {
+                        // If clicking the parent while NOT in a child, go to parent href
+                        // If already in QMS, just toggle the group
+                        if (!pathname?.startsWith(item.href)) {
+                          router.push(item.href);
+                        }
+                        toggleGroup(item.href);
+                      }}
+                      className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
+                        parentActive
+                          ? 'bg-primary-500/15 text-primary-400'
+                          : 'text-gray-400 hover:text-white hover:bg-dark-800'
+                      }`}
+                    >
+                      <item.icon className="w-5 h-5 mr-3 flex-shrink-0"/>
+                      <span className="flex-1 text-left">{item.name}</span>
+                      {isOpen
+                        ? <ChevronDown className="w-4 h-4 flex-shrink-0 opacity-60"/>
+                        : <ChevronRight className="w-4 h-4 flex-shrink-0 opacity-60"/>
+                      }
+                    </button>
+
+                    {/* Children */}
+                    {isOpen && (
+                      <div className="ml-4 mt-1 space-y-1 border-l border-dark-700 pl-3">
+                        {allowedChildren.map(child => {
+                          const SubIcon = subIcons[child.href];
+                          const childActive = pathname === child.href ||
+                            (pathname?.startsWith(`${child.href}/`) ?? false);
+                          return (
+                            <button
+                              key={child.href}
+                              onClick={() => router.push(child.href)}
+                              className={`w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                                childActive
+                                  ? 'bg-primary-500 text-white'
+                                  : 'text-gray-400 hover:text-white hover:bg-dark-800'
+                              }`}
+                            >
+                              {SubIcon && <SubIcon className="w-4 h-4 mr-2.5 flex-shrink-0"/>}
+                              {child.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // ── Standard flat item ─────────────────────────────────────────
+              const active = isActive(item.href);
               return (
                 <button
                   key={item.name}
                   onClick={() => router.push(item.href)}
                   className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-                    isActive
+                    active
                       ? 'bg-primary-500 text-white'
                       : 'text-gray-400 hover:text-white hover:bg-dark-800'
                   }`}
                 >
-                  <item.icon className="w-5 h-5 mr-3" />
+                  <item.icon className="w-5 h-5 mr-3"/>
                   {item.name}
                 </button>
               );
             })}
           </nav>
 
-          {/* Logout Button */}
+          {/* Logout */}
           <div className="p-4 border-t border-dark-800">
             <button
               onClick={handleLogout}
               className="w-full flex items-center px-4 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-dark-800 rounded-lg transition-colors"
             >
-              <LogOut className="w-5 h-5 mr-3" />
+              <LogOut className="w-5 h-5 mr-3"/>
               Logout
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Main content */}
       <div className={`flex-1 transition-all duration-200 ${isSidebarOpen ? 'ml-64' : 'ml-0'}`}>
-        {/* Top Bar */}
         <header className="sticky top-0 z-40 bg-dark-900 border-b border-dark-800">
           <div className="flex items-center justify-between h-16 px-6">
             <button
@@ -248,24 +377,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-dark-800 transition-colors"
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16"/>
               </svg>
             </button>
-
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-400">
-                {new Date().toLocaleDateString('en-US', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
+                {new Date().toLocaleDateString('en-US', {
+                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
                 })}
               </span>
             </div>
           </div>
         </header>
-
-        {/* Page Content */}
         <main className="p-6">
           {children}
         </main>

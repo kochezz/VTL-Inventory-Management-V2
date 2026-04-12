@@ -9,12 +9,10 @@ import {
   Search, ShieldCheck, Key, Save, AlertTriangle, FileText, X
 } from 'lucide-react';
 
-// PATCH: added tasks to the interface
 interface MatrixData {
   users: { user_id: string; full_name: string; role: string }[];
   documents: { doc_id: string; doc_code: string; doc_name: string; current_version_id: string }[];
   records: { user_id: string; doc_id: string; version_id: string; acknowledged_at: string }[];
-  tasks: { user_id: string; doc_id: string; version_id: string; task_status: string; assigned_at: string }[];
 }
 
 export default function TrainingMatrixPage() {
@@ -25,6 +23,7 @@ export default function TrainingMatrixPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Acknowledge Modal State
   const [showModal, setShowModal] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<any>(null);
   const [signature, setSignature] = useState('');
@@ -82,9 +81,11 @@ export default function TrainingMatrixPage() {
 
   if (!isAuthenticated) return null;
 
+  // Helper to check if a user is trained on a specific document version
   const checkTrainingStatus = (userId: string, docId: string, currentVerId: string) => {
     if (!data) return null;
     const record = data.records.find(r => r.user_id === userId && r.doc_id === docId);
+    
     if (!record) return { status: 'MISSING', date: null };
     if (record.version_id !== currentVerId) return { status: 'OUTDATED', date: record.acknowledged_at };
     return { status: 'TRAINED', date: record.acknowledged_at };
@@ -94,11 +95,6 @@ export default function TrainingMatrixPage() {
     d.doc_code.toLowerCase().includes(searchQuery.toLowerCase()) || 
     d.doc_name.toLowerCase().includes(searchQuery.toLowerCase())
   ) || [];
-
-  // PATCH: derive pending tasks for the current user
-  const myPendingTasks = data
-    ? (data.tasks || []).filter(t => t.user_id === user?.user_id && t.task_status === 'PENDING')
-    : [];
 
   return (
     <DashboardLayout>
@@ -126,42 +122,8 @@ export default function TrainingMatrixPage() {
           </div>
         </div>
 
-        {/* PATCH: Pending training task banner for the current user */}
-        {myPendingTasks.length > 0 && data && (
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5">
-            <h3 className="font-bold text-blue-400 mb-3 flex items-center gap-2">
-              <Clock className="w-5 h-5"/>
-              You have {myPendingTasks.length} document{myPendingTasks.length !== 1 ? 's' : ''} requiring acknowledgement
-            </h3>
-            <div className="space-y-2">
-              {myPendingTasks.map(t => {
-                const doc = data.documents.find(d => d.doc_id === t.doc_id);
-                return doc ? (
-                  <div key={t.doc_id} className="flex items-center justify-between bg-dark-800 border border-dark-700 rounded-lg px-4 py-3">
-                    <div>
-                      <p className="font-mono text-xs font-bold text-primary-400">{doc.doc_code}</p>
-                      <p className="text-white text-sm">{doc.doc_name}</p>
-                      <p className="text-gray-500 text-xs mt-0.5">
-                        Assigned {new Date(t.assigned_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => handleOpenAcknowledge(doc)}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors"
-                    >
-                      Read & Sign
-                    </button>
-                  </div>
-                ) : null;
-              })}
-            </div>
-          </div>
-        )}
-
         {loading ? (
-          <div className="flex justify-center py-20">
-            <div className="w-10 h-10 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
-          </div>
+          <div className="flex justify-center py-20"><div className="w-10 h-10 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div></div>
         ) : !data ? (
           <div className="text-center text-red-400">Failed to load training matrix.</div>
         ) : (
@@ -231,7 +193,7 @@ export default function TrainingMatrixPage() {
         )}
       </div>
 
-      {/* ACKNOWLEDGE MODAL — unchanged from your original */}
+      {/* ACKNOWLEDGE MODAL */}
       {showModal && selectedDoc && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-xl shadow-2xl">
@@ -249,13 +211,7 @@ export default function TrainingMatrixPage() {
                 <p className="text-sm font-mono text-gray-400 mb-1">{selectedDoc.doc_code}</p>
                 <h3 className="text-lg font-bold text-white">{selectedDoc.doc_name}</h3>
                 <div className="mt-4 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => window.open(`/qms/documents/${selectedDoc.doc_id}`, '_blank')}
-                    className="text-sm text-blue-400 hover:text-blue-300 underline font-medium"
-                  >
-                    Click here to read the document in a new tab
-                  </button>
+                  <button type="button" onClick={() => window.open(`/qms/documents/${selectedDoc.doc_id}`, '_blank')} className="text-sm text-blue-400 hover:text-blue-300 underline font-medium">Click here to read the document in a new tab</button>
                 </div>
               </div>
 
@@ -264,23 +220,12 @@ export default function TrainingMatrixPage() {
                 <p className="text-xs text-gray-400 mb-4 leading-relaxed">
                   By entering your password below, you legally verify that you have read, understood, and agree to adhere to the procedures outlined in this officially released QMS document in compliance with 21 CFR Part 11.
                 </p>
-                <input
-                  type="password"
-                  value={signature}
-                  onChange={(e) => setSignature(e.target.value)}
-                  required
-                  placeholder="Enter your login password"
-                  className="w-full px-4 py-3 bg-dark-950 border border-dark-600 rounded-lg text-white focus:outline-none focus:border-blue-500 font-mono tracking-widest"
-                />
+                <input type="password" value={signature} onChange={(e) => setSignature(e.target.value)} required placeholder="Enter your login password" className="w-full px-4 py-3 bg-dark-950 border border-dark-600 rounded-lg text-white focus:outline-none focus:border-blue-500 font-mono tracking-widest" />
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={() => setShowModal(false)} className="px-6 py-2 text-gray-400 hover:text-white transition-colors bg-dark-900 rounded-lg">Cancel</button>
-                <button
-                  type="submit"
-                  disabled={saving || !signature}
-                  className="px-8 py-2 text-white font-bold rounded-lg shadow-lg flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50 bg-blue-600 hover:bg-blue-700 shadow-blue-500/20"
-                >
+                <button type="submit" disabled={saving || !signature} className={`px-8 py-2 text-white font-bold rounded-lg shadow-lg flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50 bg-blue-600 hover:bg-blue-700 shadow-blue-500/20`}>
                   {saving ? 'Verifying...' : <><Save className="w-4 h-4"/> Sign & Acknowledge</>}
                 </button>
               </div>

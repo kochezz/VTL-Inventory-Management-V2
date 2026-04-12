@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
@@ -27,8 +27,6 @@ interface CAPA {
 
 export default function CAPADashboardPage() {
   const router = useRouter();
-  // PATCH: added useSearchParams to handle ?ncr= pre-fill from NCR page
-  const searchParams = useSearchParams();
   const { isAuthenticated, user } = useAuth();
   
   const [capas, setCapas] = useState<CAPA[]>([]);
@@ -44,6 +42,8 @@ export default function CAPADashboardPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // NEW: Digital Signature State
   const [signature, setSignature] = useState('');
 
   const [formData, setFormData] = useState({
@@ -55,29 +55,14 @@ export default function CAPADashboardPage() {
     if (isAuthenticated) fetchData();
   }, [isAuthenticated]);
 
-  // PATCH: open create modal pre-filled with NCR when arriving from NCR page
-  useEffect(() => {
-    const ncrId = searchParams.get('ncr');
-    if (ncrId && !loading) {
-      setFormData(prev => ({ ...prev, ncr_id: ncrId }));
-      setSelectedCapa(null);
-      setError(''); setSuccess(''); setSignature('');
-      setShowModal(true);
-    }
-  }, [searchParams, loading]);
-
   const fetchData = async () => {
     try {
       setLoading(true);
       const [capaRes, ncrRes, userRes] = await Promise.all([
-        api.get('/qms/capas'),
-        // PATCH: use /qms/ncrs/open — already filtered to OPEN + CAPA_REQUIRED
-        api.get('/qms/ncrs/open'),
-        api.get('/users')
+        api.get('/qms/capas'), api.get('/qms/ncrs'), api.get('/users')
       ]);
       setCapas(capaRes.data);
-      // PATCH: no need to filter — /qms/ncrs/open handles it
-      setNcrs(ncrRes.data);
+      setNcrs(ncrRes.data.filter((n: any) => n.status !== 'CLOSED'));
       setUsers(userRes.data);
     } catch (err) { console.error(err); } finally { setLoading(false); }
   };
@@ -116,6 +101,7 @@ export default function CAPADashboardPage() {
         await api.post('/qms/capas', payload);
         setSuccess('CAPA created and assigned successfully.');
       }
+      
       await fetchData();
       setTimeout(() => { setShowModal(false); setSuccess(''); }, 1500);
     } catch (err: any) {
@@ -199,16 +185,7 @@ export default function CAPADashboardPage() {
                       <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm font-mono font-bold text-red-400 bg-red-500/10 px-2 py-1 rounded border border-red-500/20">{capa.ncr_code}</span></td>
                       <td className="px-6 py-4"><p className="text-sm text-gray-300 line-clamp-2 max-w-md">{capa.action_description}</p></td>
                       <td className="px-6 py-4 whitespace-nowrap"><p className="text-sm text-gray-300 font-medium">{capa.owner_name || <span className="text-gray-600 italic">Unassigned</span>}</p></td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {capa.due_date ? (
-                          <span className={`text-sm font-medium ${isOverdue(capa.due_date, capa.status) ? 'text-red-400 flex items-center gap-1' : 'text-gray-300'}`}>
-                            {isOverdue(capa.due_date, capa.status) && <AlertTriangle className="w-4 h-4"/>}
-                            {new Date(capa.due_date).toLocaleDateString()}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-600">-</span>
-                        )}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">{capa.due_date ? <span className={`text-sm font-medium ${isOverdue(capa.due_date, capa.status) ? 'text-red-400 flex items-center gap-1' : 'text-gray-300'}`}>{isOverdue(capa.due_date, capa.status) && <AlertTriangle className="w-4 h-4"/>}{new Date(capa.due_date).toLocaleDateString()}</span> : <span className="text-sm text-gray-600">-</span>}</td>
                       <td className="px-6 py-4 whitespace-nowrap">{getStatusBadge(capa.status)}</td>
                     </tr>
                   ))
@@ -223,10 +200,7 @@ export default function CAPADashboardPage() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-center items-start pt-10 overflow-y-auto">
           <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-3xl shadow-2xl mb-10">
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900 sticky top-0 z-10 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Target className={`w-6 h-6 ${selectedCapa ? 'text-blue-400' : 'text-purple-500'}`}/>
-                {selectedCapa ? `Update ${selectedCapa.capa_code}` : 'Issue New CAPA'}
-              </h2>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2"><Target className={`w-6 h-6 ${selectedCapa ? 'text-blue-400' : 'text-purple-500'}`}/>{selectedCapa ? `Update ${selectedCapa.capa_code}` : 'Issue New CAPA'}</h2>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white px-3 py-1 bg-dark-800 rounded">Close</button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -239,71 +213,32 @@ export default function CAPADashboardPage() {
                   <label className="block text-sm text-gray-300 mb-1">Link to Source Non-Conformance (NCR) *</label>
                   <select disabled={!!selectedCapa} required value={formData.ncr_id} onChange={e => setFormData({...formData, ncr_id: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono focus:border-purple-500 disabled:opacity-50">
                     <option value="">-- Select NCR --</option>
-                    {ncrs.map(ncr => (
-                      <option key={ncr.ncr_id} value={ncr.ncr_id}>
-                        {ncr.ncr_code} {ncr.status === 'CAPA_REQUIRED' ? '(⚠️ ESCALATED)' : ''} - {ncr.description?.substring(0, 50)}...
-                      </option>
-                    ))}
+                    {ncrs.map(ncr => <option key={ncr.ncr_id} value={ncr.ncr_id}>{ncr.ncr_code} {ncr.status === 'CAPA_REQUIRED' ? '(⚠️ ESCALATED)' : ''} - {ncr.description.substring(0, 50)}...</option>)}
                   </select>
                 </div>
-                <div className="mb-4">
-                  <label className="block text-sm text-gray-300 mb-1">Corrective/Preventive Action Description *</label>
-                  <textarea
-                    disabled={!!selectedCapa && !['admin', 'qa'].includes(user?.role || '')}
-                    required
-                    value={formData.action_description}
-                    onChange={e => setFormData({...formData, action_description: e.target.value})}
-                    rows={3}
-                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-purple-500 disabled:opacity-50"
-                    placeholder="Detail specific steps..."
-                  />
-                </div>
+                <div className="mb-4"><label className="block text-sm text-gray-300 mb-1">Corrective/Preventive Action Description *</label><textarea disabled={!!selectedCapa && !['admin', 'qa'].includes(user?.role || '')} required value={formData.action_description} onChange={e => setFormData({...formData, action_description: e.target.value})} rows={3} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-purple-500 disabled:opacity-50" placeholder="Detail specific steps..." /></div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Action Owner</label>
-                    <select
-                      disabled={!!selectedCapa && !['admin', 'qa'].includes(user?.role || '')}
-                      value={formData.action_owner}
-                      onChange={e => setFormData({...formData, action_owner: e.target.value})}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-purple-500 disabled:opacity-50"
-                    >
-                      <option value="">-- Select Owner --</option>
-                      {users.map(u => <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">Target Due Date</label>
-                    <input
-                      disabled={!!selectedCapa && !['admin', 'qa'].includes(user?.role || '')}
-                      type="date"
-                      value={formData.due_date}
-                      onChange={e => setFormData({...formData, due_date: e.target.value})}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-purple-500 disabled:opacity-50"
-                    />
-                  </div>
+                  <div><label className="block text-sm text-gray-300 mb-1">Action Owner</label><select disabled={!!selectedCapa && !['admin', 'qa'].includes(user?.role || '')} value={formData.action_owner} onChange={e => setFormData({...formData, action_owner: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-purple-500 disabled:opacity-50"><option value="">-- Select Owner --</option>{users.map(u => <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>)}</select></div>
+                  <div><label className="block text-sm text-gray-300 mb-1">Target Due Date</label><input disabled={!!selectedCapa && !['admin', 'qa'].includes(user?.role || '')} type="date" value={formData.due_date} onChange={e => setFormData({...formData, due_date: e.target.value})} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-purple-500 disabled:opacity-50" /></div>
                 </div>
               </div>
 
               {selectedCapa && (
                 <div>
                   <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 border-b border-dark-700 pb-2 mt-6">2. Effectiveness & Closure</h3>
-                  <div className="mb-4">
-                    <label className="block text-sm text-gray-300 mb-1">Effectiveness Review / Evidence</label>
-                    <textarea value={formData.effectiveness_review} onChange={e => setFormData({...formData, effectiveness_review: e.target.value})} rows={3} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-blue-500" placeholder="How was the action verified?..." />
-                  </div>
+                  <div className="mb-4"><label className="block text-sm text-gray-300 mb-1">Effectiveness Review / Evidence</label><textarea value={formData.effectiveness_review} onChange={e => setFormData({...formData, effectiveness_review: e.target.value})} rows={3} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-blue-500" placeholder="How was the action verified?..." /></div>
                   <div className="bg-dark-900 p-4 rounded-lg border border-dark-600">
                     <label className="block text-sm font-bold text-white mb-2">Update CAPA Status</label>
                     <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="w-full px-4 py-3 bg-dark-950 border border-dark-500 rounded-lg text-white font-bold tracking-wider focus:border-primary-500">
                       <option value="OPEN">OPEN - Awaiting Implementation</option>
                       <option value="IMPLEMENTED">IMPLEMENTED - Pending QA Verification</option>
-                      {['admin', 'qa', 'manager'].includes(user?.role || '') && (
-                        <option value="CLOSED">VERIFIED & CLOSED - Effectiveness Confirmed</option>
-                      )}
+                      {['admin', 'qa', 'manager'].includes(user?.role || '') && <option value="CLOSED">VERIFIED & CLOSED - Effectiveness Confirmed</option>}
                     </select>
                   </div>
                 </div>
               )}
 
+              {/* NEW: 21 CFR Part 11 Signature Block */}
               <div className="bg-dark-900 rounded-lg p-5 border border-dark-700 shadow-inner mt-6">
                 <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2"><Key className="w-4 h-4 text-primary-400" /> Digital Signature Required</h3>
                 <p className="text-xs text-gray-400 mb-3">By entering your password, you electronically sign off on this QMS Record per 21 CFR Part 11 guidelines.</p>
@@ -316,6 +251,7 @@ export default function CAPADashboardPage() {
                   {saving ? 'Verifying...' : <><Save className="w-4 h-4"/> {selectedCapa ? 'Sign & Update CAPA' : 'Sign & Issue CAPA'}</>}
                 </button>
               </div>
+
             </form>
           </div>
         </div>
