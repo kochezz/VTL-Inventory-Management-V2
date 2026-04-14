@@ -184,7 +184,7 @@ const subIcons: Record<string, any> = {
   '/qms/compliance':      BarChart3,
   '/qms/review-calendar': Calendar,
   '/qms/hierarchy':       Network,
-  '/analytics':           Activity,
+  '/analytics':           TrendingUp,
   '/sales/analytics':     BarChart3,
 };
 
