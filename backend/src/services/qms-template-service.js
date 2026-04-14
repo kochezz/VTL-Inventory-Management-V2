@@ -26,7 +26,7 @@ const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   Header, Footer, AlignmentType, HeadingLevel, BorderStyle, WidthType,
   ShadingType, PageBreak, LevelFormat, TabStopType, SimpleField,
-  SectionType, PageOrientation
+  SectionType, PageOrientation,VerticalAlign, PageBreakBefore, Numbering, StyleLevelType
 } = require('docx');
 
 const fs      = require('fs');
