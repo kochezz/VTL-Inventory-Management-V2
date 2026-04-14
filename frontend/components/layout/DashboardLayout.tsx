@@ -138,7 +138,19 @@ const navigation: NavItem[] = [
     name: 'Analytics',
     href: '/analytics',
     icon: TrendingUp,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo']
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo'],
+    children: [
+      {
+        name: 'Business Intelligence',
+        href: '/analytics',
+        roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo'],
+      },
+      {
+        name: 'Sales Analytics',
+        href: '/sales/analytics',
+        roles: ['admin', 'manager', 'ceo', 'cfo'],
+      },
+    ],
   },
   {
     name: 'Reports',
@@ -172,6 +184,8 @@ const subIcons: Record<string, any> = {
   '/qms/compliance':      BarChart3,
   '/qms/review-calendar': Calendar,
   '/qms/hierarchy':       Network,
+  '/analytics':           Activity,
+  '/sales/analytics':     BarChart3,
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
