@@ -10,7 +10,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth, api } from '@/hooks/useAuth';
-import { useSettings } from '@/hooks/useSettings';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import {
   BarChart3, TrendingUp, TrendingDown, ShoppingBag, Users, Activity,
@@ -22,6 +21,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart
 } from 'recharts';
+
+type Currency = 'USD' | 'ZMW';
 
 // ── Constants — identical palette to existing analytics page ─────────────────
 
@@ -56,14 +57,12 @@ const PAYMENT_COLOR: Record<string, string> = {
 };
 
 const DAYS  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-// Only 6-hour slots to keep heatmap readable on screen
 const SHOWN_HOURS = [0, 6, 9, 12, 15, 18, 21];
 const HOUR_LABEL  = (h: number) =>
   h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h-12}pm`;
 
 // ── Re-usable components matching existing analytics patterns ─────────────────
 
-// Identical signature to existing KPICard
 const KPICard = ({ title, value, subtext, trend, icon: Icon, colorClass, loading = false }: any) => (
   <div className="bg-dark-800 border border-dark-700 rounded-xl p-5 relative overflow-hidden group">
     <div className={`absolute top-0 right-0 w-24 h-24 bg-${colorClass}-500/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110`} />
@@ -93,7 +92,6 @@ const KPICard = ({ title, value, subtext, trend, icon: Icon, colorClass, loading
   </div>
 );
 
-// Identical to existing CustomTooltip
 const CustomTooltip = ({ active, payload, label, formatCurrency }: any) => {
   if (!active || !payload?.length) return null;
   return (
@@ -116,7 +114,6 @@ const CustomTooltip = ({ active, payload, label, formatCurrency }: any) => {
   );
 };
 
-// Card wrapper matching the style used in the existing analytics page
 const SectionCard = ({ title, subtitle, children, action }: {
   title: string; subtitle?: string; children: React.ReactNode;
   action?: React.ReactNode;
@@ -241,12 +238,12 @@ function BundleSignals({ data }: { data: any[] }) {
 export default function SalesAnalyticsPage() {
   const router   = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
-  const { formatCurrency } = useSettings();
 
   const [timeRange, setTimeRange]   = useState('30d');
   const [activeTab, setActiveTab]   = useState<'revenue' | 'operations' | 'marketing'>('revenue');
   const [data, setData]             = useState<any>(null);
   const [loadingData, setLoadingData] = useState(true);
+  const [currency, setCurrency]     = useState<Currency>('USD');
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push('/login');
@@ -285,29 +282,41 @@ export default function SalesAnalyticsPage() {
     }
   };
 
+  // ── Dynamic Currency Formatting ───────────────────────────────────────────
+  const rate = data?.exchangeRate || 27;
+  const mult = currency === 'ZMW' ? rate : 1;
+  const sym = currency === 'ZMW' ? 'K' : '$';
+
+  const formatCurrency = useCallback((val: number | string) => {
+    return `${sym}${parseFloat(String(val || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }, [sym]);
+
+  const yAxisTickFormatter = (value: any) => {
+    if (value >= 1000000) return `${sym}${(value / 1000000).toFixed(1)}M`;
+    if (value >= 1000) return `${sym}${(value / 1000).toFixed(1)}k`;
+    return `${sym}${value}`;
+  };
+
   if (authLoading || !isAuthenticated) return null;
 
   const kpi = data?.kpis || {};
 
-  // SKU bar chart data — short names for x-axis
+  // Apply the multiplier to natively scale the chart shapes
   const skuChartData = (data?.revenueBySku || []).map((r: any) => ({
     name:    r.product_name?.replace('FreshDrip ','').replace(' Bottled Water','') || r.sku,
     sku:     r.sku,
-    revenue: parseFloat(r.revenue || 0),
+    revenue: parseFloat(r.revenue || 0) * mult,
     units:   parseInt(r.units_sold || 0),
     orders:  parseInt(r.order_count || 0),
   }));
 
-  // Payment pie data
   const paymentData = (data?.paymentBreakdown || []).map((r: any) => ({
     name:  r.payment_method.charAt(0).toUpperCase() + r.payment_method.slice(1),
-    value: parseFloat(r.revenue || 0),
+    value: parseFloat(r.revenue || 0) * mult,
     count: parseInt(r.count || 0),
     pct:   parseFloat(r.pct || 0),
     color: PAYMENT_COLOR[r.payment_method] || CHART_COLORS.gray,
   }));
-
-  const fmtTooltip = (val: any) => formatCurrency(parseFloat(val));
 
   const TABS = [
     { id: 'revenue',    label: 'Revenue & Sales',        icon: TrendingUp  },
@@ -319,13 +328,33 @@ export default function SalesAnalyticsPage() {
     <DashboardLayout>
       <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
 
-        {/* ── Header & Controls — same style as analytics/page.tsx ── */}
+        {/* ── Header & Controls ── */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-white">Sales Analytics</h1>
             <p className="text-gray-400 mt-1">Revenue intelligence · Marketing signals · CSV export</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            
+            {/* CURRENCY TOGGLE */}
+            <div className="flex items-center bg-dark-800 border border-dark-700 rounded-xl p-1">
+              {(['USD', 'ZMW'] as Currency[]).map(c => (
+                <button
+                  key={c}
+                  onClick={() => setCurrency(c)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                    currency === c
+                      ? c === 'ZMW'
+                        ? 'bg-green-500 text-white shadow'
+                        : 'bg-blue-500 text-white shadow'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {c === 'USD' ? '$ USD' : 'K ZMW'}
+                </button>
+              ))}
+            </div>
+
             <select
               value={timeRange}
               onChange={e => setTimeRange(e.target.value)}
@@ -343,21 +372,21 @@ export default function SalesAnalyticsPage() {
           </div>
         </div>
 
-        {/* ── KPI row — 8 cards matching 4-col grid ── */}
+        {/* ── KPI row ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          <KPICard title="Total Revenue"    value={formatCurrency(kpi.totalRevenue || 0)}      subtext="completed sales"       icon={DollarSign} colorClass="green"  loading={loadingData} />
-          <KPICard title="Transactions"     value={(kpi.totalTransactions || 0).toLocaleString()} subtext="processed"          icon={ShoppingBag} colorClass="blue"  loading={loadingData} />
-          <KPICard title="Avg Order Value"  value={formatCurrency(kpi.avgOrderValue || 0)}     subtext="per transaction"       icon={TrendingUp} colorClass="purple" loading={loadingData} />
-          <KPICard title="Discounts Given"  value={formatCurrency(kpi.totalDiscounts || 0)}    subtext="total concessions"     icon={TrendingDown} colorClass="yellow" loading={loadingData} />
+          <KPICard title="Total Revenue"    value={formatCurrency((kpi.totalRevenue || 0) * mult)}   subtext="completed sales"       icon={DollarSign} colorClass="green"  loading={loadingData} />
+          <KPICard title="Transactions"     value={(kpi.totalTransactions || 0).toLocaleString()}    subtext="processed"          icon={ShoppingBag} colorClass="blue"  loading={loadingData} />
+          <KPICard title="Avg Order Value"  value={formatCurrency((kpi.avgOrderValue || 0) * mult)}  subtext="per transaction"       icon={TrendingUp} colorClass="purple" loading={loadingData} />
+          <KPICard title="Discounts Given"  value={formatCurrency((kpi.totalDiscounts || 0) * mult)} subtext="total concessions"     icon={TrendingDown} colorClass="yellow" loading={loadingData} />
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          <KPICard title="Unique Customers" value={kpi.uniqueCustomers || 0}                   subtext="B2B accounts"          icon={Users}      colorClass="teal"   loading={loadingData} />
-          <KPICard title="Walk-in Sales"    value={(kpi.walkinCount || 0).toLocaleString()}    subtext="anonymous"             icon={Activity}   colorClass="orange" loading={loadingData} />
-          <KPICard title="Void Rate"        value={`${kpi.voidRate || '0.00'}%`}               subtext={`${kpi.voidCount || 0} voided`} icon={XCircle} colorClass="red"    loading={loadingData} />
-          <KPICard title="Voided Revenue"   value={formatCurrency(kpi.voidedRevenue || 0)}     subtext="reversed"              icon={AlertTriangle} colorClass="orange" loading={loadingData} />
+          <KPICard title="Unique Customers" value={kpi.uniqueCustomers || 0}                         subtext="B2B accounts"          icon={Users}      colorClass="teal"   loading={loadingData} />
+          <KPICard title="Walk-in Sales"    value={(kpi.walkinCount || 0).toLocaleString()}          subtext="anonymous"             icon={Activity}   colorClass="orange" loading={loadingData} />
+          <KPICard title="Void Rate"        value={`${kpi.voidRate || '0.00'}%`}                     subtext={`${kpi.voidCount || 0} voided`} icon={XCircle} colorClass="red"    loading={loadingData} />
+          <KPICard title="Voided Revenue"   value={formatCurrency((kpi.voidedRevenue || 0) * mult)}  subtext="reversed"              icon={AlertTriangle} colorClass="orange" loading={loadingData} />
         </div>
 
-        {/* ── Tab navigation — identical style to analytics/page.tsx ── */}
+        {/* ── Tab navigation ── */}
         <div className="flex border-b border-dark-700 overflow-x-auto hide-scrollbar">
           {TABS.map(tab => {
             const Icon = tab.icon;
@@ -381,7 +410,7 @@ export default function SalesAnalyticsPage() {
         {activeTab === 'revenue' && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-            {/* Revenue by SKU — ComposedChart bars + units line */}
+            {/* Revenue by SKU */}
             <SectionCard
               title="Revenue by SKU"
               subtitle="Completed sales — bars = revenue, line = units sold"
@@ -394,7 +423,7 @@ export default function SalesAnalyticsPage() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                       <XAxis dataKey="name" tick={{ fill: '#9CA3AF', fontSize: 11 }}
                         angle={-20} textAnchor="end" interval={0} tickLine={false} axisLine={false} />
-                      <YAxis yAxisId="left" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis yAxisId="left" tickFormatter={yAxisTickFormatter} tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
                       <YAxis yAxisId="right" orientation="right" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
                       <Tooltip content={<CustomTooltip formatCurrency={formatCurrency} />} cursor={{ fill: '#374151', opacity: 0.3 }} />
                       <Legend wrapperStyle={{ paddingTop: '20px', color: '#9CA3AF' }} />
@@ -436,10 +465,10 @@ export default function SalesAnalyticsPage() {
                             <td className="px-4 py-3 font-medium text-white">{row.product_name?.replace('FreshDrip ','').replace(' Bottled Water','')}</td>
                             <td className="px-4 py-3 font-mono text-xs text-gray-400">{row.sku}</td>
                             <td className="px-4 py-3 font-mono text-white">{parseInt(row.units_sold || 0).toLocaleString()}</td>
-                            <td className="px-4 py-3 font-mono text-green-400 font-semibold">{formatCurrency(parseFloat(row.revenue || 0))}</td>
-                            <td className="px-4 py-3 font-mono text-gray-300">{formatCurrency(parseFloat(row.avg_price || 0))}</td>
+                            <td className="px-4 py-3 font-mono text-green-400 font-semibold">{formatCurrency(parseFloat(row.revenue || 0) * mult)}</td>
+                            <td className="px-4 py-3 font-mono text-gray-300">{formatCurrency(parseFloat(row.avg_price || 0) * mult)}</td>
                             <td className="px-4 py-3 text-gray-300">{parseInt(row.order_count || 0).toLocaleString()}</td>
-                            <td className="px-4 py-3 font-mono text-yellow-400">{formatCurrency(parseFloat(row.total_discounts || 0))}</td>
+                            <td className="px-4 py-3 font-mono text-yellow-400">{formatCurrency(parseFloat(row.total_discounts || 0) * mult)}</td>
                           </tr>
                         ))
                     }
@@ -460,8 +489,8 @@ export default function SalesAnalyticsPage() {
                     <AreaChart
                       data={(data?.dailyTrend || []).map((r: any) => ({
                         date:   new Date(r.sale_date).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}),
-                        b2b:    parseFloat(r.b2b_revenue),
-                        walkin: parseFloat(r.walkin_revenue),
+                        b2b:    parseFloat(r.b2b_revenue) * mult,
+                        walkin: parseFloat(r.walkin_revenue) * mult,
                       }))}
                       margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
                     >
@@ -477,7 +506,7 @@ export default function SalesAnalyticsPage() {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                       <XAxis dataKey="date" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                      <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={yAxisTickFormatter} tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
                       <Tooltip content={<CustomTooltip formatCurrency={formatCurrency} />} />
                       <Legend wrapperStyle={{ paddingTop: '12px', color: '#9CA3AF' }} />
                       <Area type="monotone" dataKey="b2b"    name="B2B Revenue"    stroke={CHART_COLORS.blue}  fill="url(#b2bGrad)"    strokeWidth={2} />
@@ -493,14 +522,14 @@ export default function SalesAnalyticsPage() {
                     <BarChart
                       data={(data?.monthlyTrend || []).map((r: any) => ({
                         month:        r.month,
-                        revenue:      parseFloat(r.revenue),
+                        revenue:      parseFloat(r.revenue) * mult,
                         transactions: parseInt(r.transactions),
                       }))}
                       margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                       <XAxis dataKey="month" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={yAxisTickFormatter} tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
                       <Tooltip content={<CustomTooltip formatCurrency={formatCurrency} />} cursor={{ fill: '#374151', opacity: 0.3 }} />
                       <Legend wrapperStyle={{ paddingTop: '12px', color: '#9CA3AF' }} />
                       <Bar dataKey="revenue" name="Revenue" fill={CHART_COLORS.purple} radius={[4,4,0,0]} />
@@ -626,7 +655,7 @@ export default function SalesAnalyticsPage() {
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-400">{c.vtl_customer_id || '—'}</td>
                         <td className="px-4 py-3 text-gray-300">{c.orders}</td>
-                        <td className="px-4 py-3 font-mono text-green-400 font-semibold">{formatCurrency(parseFloat(c.revenue || 0))}</td>
+                        <td className="px-4 py-3 font-mono text-green-400 font-semibold">{formatCurrency(parseFloat(c.revenue || 0) * mult)}</td>
                         <td className="px-4 py-3 text-gray-400 text-xs">
                           {c.last_purchase ? new Date(c.last_purchase).toLocaleDateString('en-GB') : '—'}
                         </td>
@@ -719,7 +748,7 @@ export default function SalesAnalyticsPage() {
                     <BarChart
                       data={(data.marketing.seasonal).map((r: any) => ({
                         period: `${r.month_name} ${r.year}`,
-                        revenue: parseFloat(r.revenue),
+                        revenue: parseFloat(r.revenue) * mult,
                         monthNum: r.month_num,
                       }))}
                       margin={{ top: 10, right: 10, bottom: 50, left: 10 }}
@@ -727,7 +756,7 @@ export default function SalesAnalyticsPage() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                       <XAxis dataKey="period" tick={{ fill: '#9CA3AF', fontSize: 9 }}
                         angle={-35} textAnchor="end" interval={1} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={yAxisTickFormatter} tick={{ fill: '#9CA3AF', fontSize: 11 }} tickLine={false} axisLine={false} />
                       <Tooltip content={<CustomTooltip formatCurrency={formatCurrency} />} cursor={{ fill: '#374151', opacity: 0.3 }} />
                       <Bar dataKey="revenue" name="Revenue" radius={[4,4,0,0]}>
                         {(data.marketing.seasonal).map((_: any, i: number) => (

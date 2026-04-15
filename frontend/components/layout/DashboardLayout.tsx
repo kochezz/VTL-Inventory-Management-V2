@@ -104,7 +104,6 @@ const navigation: NavItem[] = [
     icon: BadgeDollarSign,
     roles: ['admin', 'ceo', 'cfo']
   },
-  // ── QMS — expandable group ──────────────────────────────────────────────────
   {
     name: 'Quality (QMS)',
     href: '/qms',
@@ -133,7 +132,6 @@ const navigation: NavItem[] = [
       },
     ],
   },
-  // ───────────────────────────────────────────────────────────────────────────
   {
     name: 'Analytics',
     href: '/analytics',
@@ -178,7 +176,6 @@ const navigation: NavItem[] = [
   },
 ];
 
-// Sub-nav icon map
 const subIcons: Record<string, any> = {
   '/qms/documents':       FolderTree,
   '/qms/compliance':      BarChart3,
@@ -194,15 +191,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  // Track which parent groups are expanded
-  // Auto-expand any group whose href matches the current path on load
+  // ── FIX: Robust path checking helpers to handle parent/child mismatches ──
+  const isActive = (href: string) =>
+    pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
+
+  const isParentActive = (item: NavItem) =>
+    isActive(item.href) ||
+    (item.children?.some(c => isActive(c.href)) ?? false);
+
+  // ── Auto-expand logic using the robust helpers ──
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     navigation.forEach(item => {
-      if (item.children) {
-        // Expand if currently inside this section
-        const isInSection = pathname?.startsWith(item.href) ?? false;
-        if (isInSection) init[item.href] = true;
+      if (item.children && isParentActive(item)) {
+        init[item.href] = true;
       }
     });
     return init;
@@ -212,10 +214,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!isAuthenticated) router.push('/login');
   }, [isAuthenticated, router]);
 
-  // Auto-expand QMS group when navigating into it
   useEffect(() => {
     navigation.forEach(item => {
-      if (item.children && pathname?.startsWith(item.href)) {
+      if (item.children && isParentActive(item)) {
         setExpanded(prev => ({ ...prev, [item.href]: true }));
       }
     });
@@ -234,29 +235,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     user?.role && item.roles.includes(user.role)
   );
 
-  const isActive = (href: string) =>
-    pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
-
-  const isParentActive = (item: NavItem) =>
-    pathname === item.href ||
-    (item.children?.some(c => pathname?.startsWith(c.href)) ?? false);
-
   if (!isAuthenticated) return null;
 
   return (
     <div className="min-h-screen bg-dark-950 flex">
-      {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-dark-900 border-r border-dark-800 transform transition-transform duration-200 ease-in-out ${
         isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
         <div className="flex flex-col h-full">
 
-          {/* Logo */}
           <div className="flex items-center justify-center h-16 px-6 border-b border-dark-800">
             <img src="/logo-white.png" alt="Vilagio" className="h-12 w-auto"/>
           </div>
 
-          {/* User info */}
           <div
             onClick={() => router.push('/profile')}
             className="px-6 py-4 border-b border-dark-800 cursor-pointer hover:bg-dark-800 transition-colors group relative"
@@ -281,16 +272,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           </div>
 
-          {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
             {allowedNavItems.map((item) => {
 
-              // ── Item with children (expandable group) ──────────────────────
               if (item.children) {
                 const parentActive = isParentActive(item);
                 const isOpen       = expanded[item.href] ?? false;
 
-                // Filter children by role
                 const allowedChildren = item.children.filter(c =>
                   user?.role && c.roles.includes(user.role)
                 );
@@ -298,12 +286,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                 return (
                   <div key={item.href}>
-                    {/* Parent button */}
                     <button
                       onClick={() => {
-                        // If clicking the parent while NOT in a child, go to parent href
-                        // If already in QMS, just toggle the group
-                        if (!pathname?.startsWith(item.href)) {
+                        if (!isParentActive(item)) {
                           router.push(item.href);
                         }
                         toggleGroup(item.href);
@@ -322,13 +307,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       }
                     </button>
 
-                    {/* Children */}
                     {isOpen && (
                       <div className="ml-4 mt-1 space-y-1 border-l border-dark-700 pl-3">
                         {allowedChildren.map(child => {
                           const SubIcon = subIcons[child.href];
-                          const childActive = pathname === child.href ||
-                            (pathname?.startsWith(`${child.href}/`) ?? false);
+                          const childActive = isActive(child.href);
                           return (
                             <button
                               key={child.href}
@@ -350,7 +333,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 );
               }
 
-              // ── Standard flat item ─────────────────────────────────────────
               const active = isActive(item.href);
               return (
                 <button
@@ -369,7 +351,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             })}
           </nav>
 
-          {/* Logout */}
           <div className="p-4 border-t border-dark-800">
             <button
               onClick={handleLogout}
@@ -382,7 +363,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      {/* Main content */}
       <div className={`flex-1 transition-all duration-200 ${isSidebarOpen ? 'ml-64' : 'ml-0'}`}>
         <header className="sticky top-0 z-40 bg-dark-900 border-b border-dark-800">
           <div className="flex items-center justify-between h-16 px-6">

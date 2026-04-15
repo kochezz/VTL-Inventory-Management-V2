@@ -3,7 +3,7 @@
 // backend/src/services/sales-analytics-service.js
 // ============================================================================
 
-const { pool } = require('./auth-service');
+const { pool } = require('./auth-service'); // Reusing DB connection
 
 const safeQuery = async (queryText) => {
   try {
@@ -14,6 +14,23 @@ const safeQuery = async (queryText) => {
     return { rows: [] };
   }
 };
+
+// ── FETCH LIVE RATE ───────────────────────────────────────────────────────────
+async function getLiveExchangeRate() {
+  try {
+    const result = await pool.query(`
+      SELECT rate_value 
+      FROM exchange_rates 
+      WHERE target_currency = 'ZMW' AND is_active = true 
+      ORDER BY updated_at DESC LIMIT 1
+    `);
+    if (result.rows.length > 0) return parseFloat(result.rows[0].rate_value);
+    return 27.00; 
+  } catch (e) {
+    console.error('⚠️ Database error fetching exchange rate for analytics:', e.message);
+    return 27.00;
+  }
+}
 
 const buildInterval = (timeRange) => {
   if (timeRange === '7d')  return '7 days';
@@ -206,7 +223,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
     WHERE p.is_active = true
       AND p.sku IN (
         'FD-500ML-REGULAR','FD-500ML-PREMIUM','FD-750ML-REGULAR',
-        'FD-5GAL-REGULAR','SACHET-WATER-500ML',
+        'FD-5GAL-NEW','FD-5GAL-REFILL','SACHET-WATER-500ML',
         'ICE-SPHERE-1200G','ICE-SPHERE-3600G'
       )
     GROUP BY p.product_id, p.sku, p.product_name, p.selling_price,
@@ -252,6 +269,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
   const kpi = kpiRes.rows[0] || {};
   const totalTxns = parseInt(kpi.total_transactions || 0);
   const voidCount = parseInt(kpi.void_count || 0);
+  const exchangeRate = await getLiveExchangeRate(); // <-- ADDED THIS
 
   // 7×24 matrix for heatmap
   const heatmap = Array.from({ length: 7 }, (_, d) =>
@@ -271,6 +289,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
   });
 
   return {
+    exchangeRate, // <-- INJECTED INTO FRONTEND PAYLOAD
     kpis: {
       totalRevenue:      parseFloat(kpi.total_revenue   || 0),
       totalTransactions: totalTxns,
