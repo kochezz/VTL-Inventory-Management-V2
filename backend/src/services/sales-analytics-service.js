@@ -3,14 +3,17 @@
 // backend/src/services/sales-analytics-service.js
 // ============================================================================
 
-const { pool } = require('./auth-service'); // Reusing DB connection
+// FIX 1: Use the standard DB utility instead of auth-service
+const { query } = require('../utils/db'); 
 
 const safeQuery = async (queryText) => {
   try {
-    const res = await pool.query(queryText);
+    const res = await query(queryText);
     return res;
   } catch (err) {
+    // FIX 2: Better logging so we never fail silently again!
     console.error(`[SalesAnalytics] Query failed: ${err.message}`);
+    console.error(`[Failing Query Snippet]: ${queryText.substring(0, 150)}...`);
     return { rows: [] };
   }
 };
@@ -18,7 +21,7 @@ const safeQuery = async (queryText) => {
 // ── FETCH LIVE RATE ───────────────────────────────────────────────────────────
 async function getLiveExchangeRate() {
   try {
-    const result = await pool.query(`
+    const result = await query(`
       SELECT rate_value 
       FROM exchange_rates 
       WHERE target_currency = 'ZMW' AND is_active = true 
@@ -58,15 +61,16 @@ const getSalesAnalytics = async (timeRange = '30d') => {
   `);
 
   // D2-2: Revenue + units by SKU
+  // FIX 3: Replaced missing line_total column with dynamic SQL math
   const skuRes = await safeQuery(`
     SELECT
       p.sku,
       p.product_name,
-      COALESCE(SUM(stl.quantity), 0)             AS units_sold,
-      COALESCE(SUM(stl.line_total), 0)           AS revenue,
-      COALESCE(AVG(stl.unit_price), 0)           AS avg_price,
-      COUNT(DISTINCT stl.transaction_id)         AS order_count,
-      COALESCE(SUM(stl.line_discount), 0)        AS total_discounts
+      COALESCE(SUM(stl.quantity), 0)                                           AS units_sold,
+      COALESCE(SUM((stl.quantity * stl.unit_price) - COALESCE(stl.line_discount, 0)), 0) AS revenue,
+      COALESCE(AVG(stl.unit_price), 0)                                         AS avg_price,
+      COUNT(DISTINCT stl.transaction_id)                                       AS order_count,
+      COALESCE(SUM(stl.line_discount), 0)                                      AS total_discounts
     FROM sales_transaction_lines stl
     JOIN products p            ON stl.product_id    = p.product_id
     JOIN sales_transactions st ON stl.transaction_id = st.transaction_id
@@ -201,6 +205,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
   `);
 
   // D3-2: Slow movers
+  // FIX 4: Replaced missing line_total column with dynamic SQL math
   const slowMoversRes = await safeQuery(`
     SELECT
       p.product_id, p.sku, p.product_name,
@@ -213,7 +218,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
     LEFT JOIN (
       SELECT stl.product_id,
              SUM(stl.quantity)   AS units_sold,
-             SUM(stl.line_total) AS revenue
+             SUM((stl.quantity * stl.unit_price) - COALESCE(stl.line_discount, 0)) AS revenue
       FROM sales_transaction_lines stl
       JOIN sales_transactions st ON stl.transaction_id = st.transaction_id
       WHERE st.transaction_date >= NOW() - INTERVAL '${interval}'
@@ -269,7 +274,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
   const kpi = kpiRes.rows[0] || {};
   const totalTxns = parseInt(kpi.total_transactions || 0);
   const voidCount = parseInt(kpi.void_count || 0);
-  const exchangeRate = await getLiveExchangeRate(); // <-- ADDED THIS
+  const exchangeRate = await getLiveExchangeRate(); 
 
   // 7×24 matrix for heatmap
   const heatmap = Array.from({ length: 7 }, (_, d) =>
@@ -289,7 +294,7 @@ const getSalesAnalytics = async (timeRange = '30d') => {
   });
 
   return {
-    exchangeRate, // <-- INJECTED INTO FRONTEND PAYLOAD
+    exchangeRate, 
     kpis: {
       totalRevenue:      parseFloat(kpi.total_revenue   || 0),
       totalTransactions: totalTxns,
@@ -348,10 +353,11 @@ const getSalesCSVExport = async (timeRange = '30d', exportType = 'transactions')
     return toCSV(res.rows, ['receipt_number','transaction_date','customer','tier_name','payment_method','subtotal','discount','total','status','cashier']);
   }
   if (exportType === 'sku_performance') {
+    // FIX 5: Export query also needed the line_total fix!
     const res = await safeQuery(`
       SELECT p.sku, p.product_name,
         COALESCE(SUM(stl.quantity),0)       AS units_sold,
-        ROUND(SUM(stl.line_total)::numeric,2)  AS revenue,
+        ROUND(SUM((stl.quantity * stl.unit_price) - COALESCE(stl.line_discount, 0))::numeric,2)  AS revenue,
         ROUND(AVG(stl.unit_price)::numeric,4)  AS avg_price,
         ROUND(SUM(stl.line_discount)::numeric,2) AS discounts_given,
         COUNT(DISTINCT stl.transaction_id)  AS order_count
