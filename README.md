@@ -2,7 +2,7 @@
 
 > **Vilagio Trading Limited** — Enterprise inventory & production management platform for the freshDRIP water bottling operation, Chingola, Copperbelt Province, Zambia.
 
-[![Status](https://img.shields.io/badge/status-Phase%201%20Complete-brightgreen)](https://github.com/kochezz/VTL-Inventory-Management-V2)
+[![Status](https://img.shields.io/badge/status-Complete-brightgreen)](https://github.com/kochezz/VTL-Inventory-Management-V2)
 [![Stack](https://img.shields.io/badge/stack-Next.js%20%7C%20Node.js%20%7C%20PostgreSQL-blue)](https://github.com/kochezz/VTL-Inventory-Management-V2)
 [![Live](https://img.shields.io/badge/live-Vercel-black)](https://vilagio-erp-frontend.vercel.app)
 [![License](https://img.shields.io/badge/license-Internal%20Use-red)](./LICENSE)

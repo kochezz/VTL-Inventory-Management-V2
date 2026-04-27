@@ -134,6 +134,10 @@ export default function DocumentDetailPage() {
   const [showAuthoringModal, setShowAuthoringModal] = useState(false);
   const [selectedAuthoringMode, setSelectedAuthoringMode] = useState<'structured' | 'word_template'>('structured');
 
+  // Review draft modal — shown to QA before the release e-signature modal
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
+
   // ── Load ─────────────────────────────────────────────────────────────────
 
   useEffect(() => { if (params.id) fetchAll(); }, [params.id]);
@@ -152,6 +156,7 @@ export default function DocumentDetailPage() {
       setAllSections(sectionsRes.data);
       setUsers(usersRes.data);
       setAuditTrail(trailRes.data);
+      setReviewConfirmed(false); // reset on each load — reviewer must re-confirm each session
 
       // Phase 5: Fetch authoring options for this doc type
       if (d.doc_type) {
@@ -587,9 +592,22 @@ export default function DocumentDetailPage() {
                   </>
                 )}
                 {isReview && canApprove && (
-                  <button onClick={() => setShowApproval(true)} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-green-500/20">
-                    <FileSignature className="w-4 h-4"/> Release Document
-                  </button>
+                  <>
+                    <button
+                      onClick={() => { setActiveTab('content'); setShowReviewModal(true); }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-blue-500/20"
+                    >
+                      <FileText className="w-4 h-4"/> Review Draft
+                    </button>
+                    <button
+                      onClick={() => setShowApproval(true)}
+                      disabled={!reviewConfirmed}
+                      title={!reviewConfirmed ? 'You must review the draft first before releasing' : ''}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+                    >
+                      <FileSignature className="w-4 h-4"/> Release Document
+                    </button>
+                  </>
                 )}
                 {(doc.status === 'RELEASED' || doc.status === 'PLANNED' || doc.status === 'DRAFT' || doc.status === 'REVIEW') && canApprove && (
                   <button onClick={() => setShowWithdrawModal(true)} className="px-4 py-2 bg-red-900/40 hover:bg-red-800/60 border border-red-700/30 text-red-400 rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
@@ -1242,6 +1260,120 @@ export default function DocumentDetailPage() {
                   : <><FileEdit className="w-4 h-4"/> Create Draft</>
                 }
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Draft modal — QA must confirm they have read the document before releasing */}
+      {showReviewModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-400"/> Review Draft Before Release
+              </h2>
+              <button onClick={() => { setShowReviewModal(false); setReviewConfirmed(false); }}>
+                <X className="w-5 h-5 text-gray-400"/>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Document identity summary */}
+              <div className="bg-dark-900 border border-dark-700 rounded-xl p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Document</span>
+                  <span className="text-white font-mono font-bold">{doc.doc_code}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Title</span>
+                  <span className="text-white font-medium text-right max-w-[280px]">{doc.doc_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Version</span>
+                  <span className="text-white">v{activeVersion?.version_number}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Author</span>
+                  <span className="text-white">{activeVersion?.author_name || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Strategy</span>
+                  <span className={`font-medium ${strategy === 'word_template' ? 'text-green-400' : strategy === 'upload' ? 'text-amber-400' : 'text-blue-400'}`}>
+                    {strategy.replace('_', ' ')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Strategy-specific guidance */}
+              {strategy === 'word_template' && (
+                <div className="space-y-3">
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
+                    <p className="font-bold mb-1">Word Template document — download required</p>
+                    <p className="text-blue-400/80">This document was authored offline. You must download and read the full controlled document before you can release it.</p>
+                  </div>
+                  <button
+                    onClick={handleDownloadAssembled}
+                    disabled={assembling}
+                    className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors disabled:opacity-50"
+                  >
+                    <Download className="w-4 h-4"/>
+                    {assembling ? 'Assembling…' : 'Download Document to Review'}
+                  </button>
+                </div>
+              )}
+
+              {strategy === 'upload' && (
+                <div className="space-y-3">
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-sm">
+                    <p className="font-bold mb-1">Uploaded file — download required</p>
+                    <p className="text-amber-400/80">This document is a controlled uploaded file. Download and review the file before releasing.</p>
+                  </div>
+                  <button
+                    onClick={handleDownloadFile}
+                    className="w-full px-4 py-3 bg-dark-700 hover:bg-dark-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors"
+                  >
+                    <Download className="w-4 h-4"/> Download File to Review
+                  </button>
+                </div>
+              )}
+
+              {(strategy === 'structured' || strategy === 'richtext') && (
+                <div className="p-4 bg-primary-500/10 border border-primary-500/20 rounded-xl text-primary-400 text-sm">
+                  <p className="font-bold mb-1">Review the content in the Content tab</p>
+                  <p className="text-primary-400/80">Close this modal, read the full document content in the Content tab, then re-open this review step to confirm and proceed to release.</p>
+                </div>
+              )}
+
+              {/* Confirmation checkbox */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={reviewConfirmed}
+                  onChange={e => setReviewConfirmed(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded accent-green-500 flex-shrink-0 cursor-pointer"
+                />
+                <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
+                  I confirm I have read and reviewed the full content of this document and it is ready for release.
+                </span>
+              </label>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => { setShowReviewModal(false); setReviewConfirmed(false); }}
+                  className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  disabled={!reviewConfirmed}
+                  onClick={() => { setShowReviewModal(false); setShowApproval(true); }}
+                  className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <FileSignature className="w-4 h-4"/> Confirm & Proceed to Release
+                </button>
+              </div>
             </div>
           </div>
         </div>
