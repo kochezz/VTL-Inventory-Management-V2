@@ -416,10 +416,13 @@ router.post('/versions/:versionId/file', upload.single('document_file'), async (
 
 router.get('/versions/:versionId/file', async (req, res) => {
   try {
-    const { filePath, originalName } = await qmsService.getVersionFile(req.params.versionId);
+    const { fileBuffer, originalName } = await qmsService.getVersionFile(req.params.versionId);
     res.setHeader('Content-Disposition', `attachment; filename="${originalName}"`);
-    res.sendFile(filePath);
-  } catch (e) { res.status(404).json({ error: e.message }); }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.send(fileBuffer); // Send buffer directly instead of using res.sendFile()
+  } catch (e) { 
+    res.status(404).json({ error: e.message }); 
+  }
 });
 
 // NCR/CAPA traceability links on a draft version (3A)
@@ -443,10 +446,11 @@ router.post('/versions/:versionId/submit', async (req, res) => {
   try {
     // Guard: word_template documents must have an uploaded file before review
     const verCheck = await pool.query(
-      `SELECT content_strategy, file_path FROM qms_document_versions WHERE version_id = $1`,
+      `SELECT content_strategy, file_original_name FROM qms_document_versions WHERE version_id = $1`,
       [req.params.versionId]
     );
-    if (verCheck.rows.length && verCheck.rows[0].content_strategy === 'word_template' && !verCheck.rows[0].file_path) {
+    // Note: We now check file_original_name instead of file_path
+    if (verCheck.rows.length && verCheck.rows[0].content_strategy === 'word_template' && !verCheck.rows[0].file_original_name) {
       return res.status(400).json({
         error: 'Cannot submit for review: no completed document has been uploaded yet. Download the template, author the document in Word, then upload the completed file before submitting.'
       });

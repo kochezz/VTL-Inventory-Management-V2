@@ -435,7 +435,7 @@ const QmsService = {
     return result.rows[0];
   },
 
-  // -- Upload file (for FRM, CHK, LOG, REG) ----------------------------------
+  // -- Upload file (for FRM, CHK, LOG, REG, and word_template) ----------------
 
   async uploadVersionFile(versionId, fileBuffer, originalName, userId) {
     const verRes = await pool.query(
@@ -446,20 +446,24 @@ const QmsService = {
     const ver = verRes.rows[0];
     if (ver.status !== 'DRAFT') throw new Error('File can only be uploaded to a DRAFT version');
     if (String(ver.authored_by) !== String(userId)) throw new Error('Only the author can upload files');
-    if (ver.authored_by !== userId) throw new Error('Only the author can upload files');
 
     // If it was explicitly created as word_template, keep that strategy, otherwise set to 'upload'
     const newStrategy = ver.authoring_choice === 'word_template' ? 'word_template' : 'upload';
 
-    const filePath = buildFilePath(ver.doc_id, versionId, originalName);
-    fs.writeFileSync(filePath, fileBuffer);
-
+    // 1. Update metadata in the primary table (we no longer rely on file_path)
     await pool.query(`
       UPDATE qms_document_versions
-      SET file_path = $1, file_original_name = $2, content_strategy = $3,
+      SET file_original_name = $1, content_strategy = $2,
           updated_at = CURRENT_TIMESTAMP
-      WHERE version_id = $4
-    `, [filePath, originalName, newStrategy, versionId]);
+      WHERE version_id = $3
+    `, [originalName, newStrategy, versionId]);
+
+    // 2. Upsert the actual binary file data into the dedicated files table
+    await pool.query(`
+      INSERT INTO qms_document_files (version_id, file_data)
+      VALUES ($1, $2)
+      ON CONFLICT (version_id) DO UPDATE SET file_data = EXCLUDED.file_data
+    `, [versionId, fileBuffer]);
 
     await pool.query(`
       INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, notes)
@@ -472,15 +476,29 @@ const QmsService = {
   // -- Get file for download -------------------------------------------------
 
   async getVersionFile(versionId) {
-    const result = await pool.query(
-      'SELECT file_path, file_original_name FROM qms_document_versions WHERE version_id = $1',
+    // Check metadata
+    const verRes = await pool.query(
+      'SELECT file_original_name, file_path FROM qms_document_versions WHERE version_id = $1',
       [versionId]
     );
-    if (result.rows.length === 0) throw new Error('Version not found');
-    const { file_path, file_original_name } = result.rows[0];
-    if (!file_path) throw new Error('No file uploaded for this version');
-    if (!fs.existsSync(file_path)) throw new Error('File not found on server');
-    return { filePath: file_path, originalName: file_original_name };
+    if (verRes.rows.length === 0) throw new Error('Version not found');
+    const { file_original_name, file_path } = verRes.rows[0];
+
+    // Look for the file in the database
+    const fileRes = await pool.query('SELECT file_data FROM qms_document_files WHERE version_id = $1', [versionId]);
+
+    let fileBuffer;
+
+    if (fileRes.rows.length > 0) {
+      fileBuffer = fileRes.rows[0].file_data;
+    } else if (file_path && fs.existsSync(file_path)) {
+      // Fallback: if it hasn't been migrated yet and still survives on disk
+      fileBuffer = fs.readFileSync(file_path);
+    } else {
+      throw new Error('File missing from server. Please ask the author to re-upload the document.');
+    }
+
+    return { fileBuffer, originalName: file_original_name };
   },
 
   // -- Get version for template generation (Phase 5) -------------------------

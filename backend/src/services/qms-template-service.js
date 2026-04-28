@@ -15,18 +15,12 @@
 // Install: npm install docx (already installed)
 //          npm install docx-merger (for merging documents)
 //          npm install pizzip (for low-level docx manipulation)
-//
-// NOTE: Full merge of two .docx files (cover + content) requires careful XML
-// manipulation. We use a two-document approach — the cover sheet is generated
-// as a separate section within the same Document, and the uploaded content is
-// appended as raw XML body content via pizzip/JSZip manipulation.
 // ============================================================================
 
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   Header, Footer, AlignmentType, HeadingLevel, BorderStyle, WidthType,
-  ShadingType, PageBreak, LevelFormat, TabStopType, SimpleField,
-  SectionType, PageOrientation,VerticalAlign, PageBreakBefore, Numbering, StyleLevelType
+  ShadingType, PageBreak, LevelFormat, TabStopType, SimpleField
 } = require('docx');
 
 const fs      = require('fs');
@@ -105,7 +99,7 @@ function cell(text, width, opts = {}) {
     shading: { fill: opts.bg || WHITE, type: ShadingType.CLEAR },
     margins: cellPad,
     width: { size: width, type: WidthType.DXA },
-    verticalAlign: VerticalAlign.CENTER,
+    verticalAlign: "center", // FIX 1: Use string literal to avoid import crashes
     children: [new Paragraph({
       children: [new TextRun({
         text,
@@ -424,13 +418,18 @@ async function assembleDocument(docId, versionId) {
   `, [versionId]);
   const version = verRes.rows[0];
 
-  if (!version.file_path || !fs.existsSync(version.file_path)) {
-    // No uploaded file — generate a structured cover-only document
+  // FIX 2: Fetch uploaded file buffer from the database, not just disk
+  const fileRes = await pool.query('SELECT file_data FROM qms_document_files WHERE version_id = $1', [versionId]);
+  let uploadedBuffer;
+
+  if (fileRes.rows.length > 0) {
+    uploadedBuffer = fileRes.rows[0].file_data;
+  } else if (version.file_path && fs.existsSync(version.file_path)) {
+    uploadedBuffer = fs.readFileSync(version.file_path);
+  } else {
+    // No uploaded file found in DB or disk — generate a structured cover-only document
     return generateCoverOnlyDoc(doc, version);
   }
-
-  // Read the uploaded .docx
-  const uploadedBuffer = fs.readFileSync(version.file_path);
 
   // Build the cover sheet as a standalone section
   const coverDoc = new Document({
@@ -460,17 +459,22 @@ async function assembleDocument(docId, versionId) {
   // Merge cover + uploaded content using JSZip/pizzip XML surgery
   const mergedBuffer = await mergeDocxFiles(coverBuffer, uploadedBuffer, doc, version);
 
-  // Save assembled file
-  const UPLOAD_DIR = process.env.QMS_UPLOAD_DIR || path.join(__dirname, '../../uploads/qms');
-  const assembledPath = path.join(UPLOAD_DIR, `${docId}_${versionId}_assembled.docx`);
-  fs.writeFileSync(assembledPath, mergedBuffer);
+  // Save assembled file (Best-effort caching. If disk wipes, we just re-assemble next time)
+  try {
+    const UPLOAD_DIR = process.env.QMS_UPLOAD_DIR || path.join(__dirname, '../../uploads/qms');
+    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    
+    const assembledPath = path.join(UPLOAD_DIR, `${docId}_${versionId}_assembled.docx`);
+    fs.writeFileSync(assembledPath, mergedBuffer);
 
-  // Record in DB
-  await pool.query(`
-    UPDATE qms_document_versions
-    SET assembled_file_path = $1, assembled_at = CURRENT_TIMESTAMP
-    WHERE version_id = $2
-  `, [assembledPath, versionId]);
+    await pool.query(`
+      UPDATE qms_document_versions
+      SET assembled_file_path = $1, assembled_at = CURRENT_TIMESTAMP
+      WHERE version_id = $2
+    `, [assembledPath, versionId]);
+  } catch (err) {
+    console.warn('[QMS Template] Failed to cache assembled document to disk, returning buffer directly:', err.message);
+  }
 
   return mergedBuffer;
 }
