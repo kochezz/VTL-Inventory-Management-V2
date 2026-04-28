@@ -139,10 +139,6 @@ export default function DocumentDetailPage() {
   const [showAuthoringModal, setShowAuthoringModal] = useState(false);
   const [selectedAuthoringMode, setSelectedAuthoringMode] = useState<'structured' | 'word_template'>('structured');
 
-  // Review draft modal — shown to QA before the release e-signature modal
-  const [showReviewModal, setShowReviewModal] = useState(false);
-  const [reviewConfirmed, setReviewConfirmed] = useState(false);
-
   // Reject review modal
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason]       = useState('');
