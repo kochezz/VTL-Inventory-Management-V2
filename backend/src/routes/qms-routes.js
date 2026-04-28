@@ -441,6 +441,16 @@ router.post('/versions/:versionId/link-capa', async (req, res) => {
 
 router.post('/versions/:versionId/submit', async (req, res) => {
   try {
+    // Guard: word_template documents must have an uploaded file before review
+    const verCheck = await pool.query(
+      `SELECT content_strategy, file_path FROM qms_document_versions WHERE version_id = $1`,
+      [req.params.versionId]
+    );
+    if (verCheck.rows.length && verCheck.rows[0].content_strategy === 'word_template' && !verCheck.rows[0].file_path) {
+      return res.status(400).json({
+        error: 'Cannot submit for review: no completed document has been uploaded yet. Download the template, author the document in Word, then upload the completed file before submitting.'
+      });
+    }
     const { reviewer_id } = req.body;
     res.json(await qmsService.submitForReview(req.params.versionId, reviewer_id || null, req.user.user_id));
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -551,7 +561,7 @@ router.post('/training/acknowledge', async (req, res) => {
 });
 
 // ============================================================================
-// REVIEW TASKS
+// REVIEW TASKS (Phase 2)
 // ============================================================================
 
 router.get('/review-tasks',

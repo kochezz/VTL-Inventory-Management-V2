@@ -1312,12 +1312,22 @@ export default function DocumentDetailPage() {
                     <p className="font-bold mb-1">Word Template document — download required</p>
                     <p className="text-blue-400/80">This document was authored offline in Microsoft Word. Download the uploaded draft file to read the full content before releasing.</p>
                   </div>
-                  <button
-                    onClick={handleDownloadFile}
-                    className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors"
-                  >
-                    <Download className="w-4 h-4"/> Download Draft File to Review
-                  </button>
+                  {activeVersion?.file_original_name ? (
+                    <button
+                      onClick={handleDownloadFile}
+                      className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors"
+                    >
+                      <Download className="w-4 h-4"/> Download Draft File to Review
+                    </button>
+                  ) : (
+                    <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                      <div>
+                        <p className="font-bold">No file uploaded</p>
+                        <p className="text-red-400/80 mt-0.5">The author submitted this document for review without uploading the completed Word file. Ask the author to create a new draft, upload the completed document, and resubmit.</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
