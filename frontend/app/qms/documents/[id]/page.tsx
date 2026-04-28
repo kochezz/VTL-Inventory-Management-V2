@@ -551,6 +551,7 @@ export default function DocumentDetailPage() {
   const isReleased        = activeVersion?.status === 'RELEASED';
   const isAuthor          = activeVersion?.authored_by === user?.user_id;
   const isQA              = user?.role === 'qa' || user?.role === 'admin';
+  const canApprove        = ['admin', 'qa', 'manager', 'ceo', 'cfo'].includes(user?.role || '');
   const isDocOwnerDept    = user?.role === 'admin' || (user as any)?.department === doc?.doc_owner;
   const strategy          = activeVersion?.content_strategy || 'structured';
 
@@ -600,15 +601,12 @@ export default function DocumentDetailPage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {/* Phase 5 Action Bar additions */}
-                {isReleased && activeVersion?.content_strategy === 'word_template' && canApprove && (
-                  <button
-                    onClick={handleDownloadAssembled}
-                    disabled={assembling}
-                    className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors"
-                  >
+                {/* Controlled PDF Download */}
+                {isReleased && (
+                  <button onClick={handleDownloadControlledPDF} disabled={assembling}
+                    className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
                     <Download className="w-4 h-4 text-primary-400" />
-                    {assembling ? 'Assembling…' : 'Download Controlled .docx'}
+                    {assembling ? 'Generating PDF…' : 'Download Controlled PDF'}
                   </button>
                 )}
 
