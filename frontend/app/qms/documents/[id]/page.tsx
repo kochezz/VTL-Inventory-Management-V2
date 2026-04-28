@@ -11,6 +11,8 @@ import {
   FileText, Clock, User, Link, Trash2, ChevronDown
 } from 'lucide-react';
 
+const DEPARTMENTS = ['Quality Assurance', 'Production', 'Engineering', 'Inventory', 'Human Resources', 'Finance', 'Sales', 'Management', 'IT'];
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface Section { id: string; title: string; desc: string; }
@@ -52,15 +54,15 @@ const FALLBACK_SOP_SECTIONS: Section[] = [
 
 const statusColour = (s: string) => {
   switch (s) {
-    case 'RELEASED':   return 'bg-green-500/10 text-green-400 border-green-500/20';
-    case 'REVIEW':     return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-    case 'DRAFT':      return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
-    case 'SUPERSEDED': return 'bg-red-500/10 text-red-400 border-red-500/20';
-    case 'WITHDRAWN':  return 'bg-gray-500/10 text-gray-400 border-gray-500/30';
-    default:           return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
+    case 'RELEASED':         return 'bg-green-500/10 text-green-400 border-green-500/20';
+    case 'PENDING_APPROVAL': return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+    case 'REVIEW':           return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+    case 'DRAFT':            return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
+    case 'SUPERSEDED':       return 'bg-red-500/10 text-red-400 border-red-500/20';
+    case 'WITHDRAWN':        return 'bg-gray-500/10 text-gray-400 border-gray-500/30';
+    default:                 return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
   }
 };
-
 const actionColour = (action: string) => {
   if (action === 'RELEASED')  return 'text-green-400';
   if (action === 'SUBMITTED') return 'text-blue-400';
@@ -99,8 +101,9 @@ export default function DocumentDetailPage() {
 
   // Approval modal
   const [showApproval, setShowApproval] = useState(false);
+  const [showQaReviewModal, setShowQaReviewModal] = useState(false);
   const [signature, setSignature]       = useState('');
-
+  const [reviewConfirmed, setReviewConfirmed] = useState(false); 
   // Create draft modal (revision) — collects change_reason
   const [showDraftModal, setShowDraftModal]   = useState(false);
   const [changeReason, setChangeReason]       = useState('');
@@ -425,6 +428,19 @@ export default function DocumentDetailPage() {
 
   // ── Approve & release ─────────────────────────────────────────────────────
 
+  async function handleQaSignOff(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeVersion || !signature) return;
+    try {
+      setSaving(true);
+      await api.post(`/qms/versions/${activeVersion.version_id}/sign-off`, { signature_password: signature });
+      setShowQaReviewModal(false);
+      await fetchAll();
+      setSuccess('Review signed off. Document is now pending final approval.');
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err: any) { setError(err.response?.data?.error || 'Failed to sign off. Invalid signature?'); } finally { setSaving(false); setSignature(''); }
+  }
+  
   async function handleApproveRelease(e: React.FormEvent) {
     e.preventDefault();
     if (!activeVersion || !signature) return;
@@ -529,12 +545,14 @@ export default function DocumentDetailPage() {
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
-  const isDraft    = activeVersion?.status === 'DRAFT';
-  const isReview   = activeVersion?.status === 'REVIEW';
-  const isReleased = activeVersion?.status === 'RELEASED';
-  const isAuthor   = activeVersion?.authored_by === user?.user_id;
-  const canApprove = ['admin', 'qa', 'manager', 'ceo', 'cfo'].includes(user?.role || '');
-  const strategy   = activeVersion?.content_strategy || 'structured';
+  const isDraft           = activeVersion?.status === 'DRAFT';
+  const isReview          = activeVersion?.status === 'REVIEW';
+  const isPendingApproval = activeVersion?.status === 'PENDING_APPROVAL';
+  const isReleased        = activeVersion?.status === 'RELEASED';
+  const isAuthor          = activeVersion?.authored_by === user?.user_id;
+  const isQA              = user?.role === 'qa' || user?.role === 'admin';
+  const isDocOwnerDept    = user?.role === 'admin' || user?.department === doc?.owner_name;
+  const strategy          = activeVersion?.content_strategy || 'structured';
 
   // ── Loading / not found ───────────────────────────────────────────────────
 
@@ -626,29 +644,27 @@ export default function DocumentDetailPage() {
                     </button>
                   </>
                 )}
+                
+               {/* Review Actions */}
                 {isReview && isAuthor && (
                   <button onClick={handleRecallDraft} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors border border-dark-600">
                     <ArrowLeft className="w-4 h-4"/> Recall Submission
                   </button>
                 )}
-                {isReview && canApprove && (
-                  <>
-                    <button
-                      onClick={() => { setActiveTab('content'); setShowReviewModal(true); }}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-blue-500/20"
-                    >
-                      <FileText className="w-4 h-4"/> Review Draft
-                    </button>
-                    <button
-                      onClick={() => setShowApproval(true)}
-                      disabled={!reviewConfirmed}
-                      title={!reviewConfirmed ? 'You must review the draft first before releasing' : ''}
-                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-green-500/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
-                    >
-                      <FileSignature className="w-4 h-4"/> Release Document
-                    </button>
-                  </>
+                {isReview && isQA && (
+                  <button onClick={() => { setActiveTab('content'); setShowQaReviewModal(true); }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-blue-500/20">
+                    <CheckCircle2 className="w-4 h-4"/> Sign Off QA Review
+                  </button>
                 )}
+
+                {/* Approval Actions */}
+                {isPendingApproval && isDocOwnerDept && (
+                  <button onClick={() => setShowApproval(true)} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-green-500/20">
+                    <FileSignature className="w-4 h-4"/> Approve & Release
+                  </button>
+                )}
+
                 {(doc.status === 'RELEASED' || doc.status === 'PLANNED' || doc.status === 'DRAFT' || doc.status === 'REVIEW') && canApprove && (
                   <button onClick={() => setShowWithdrawModal(true)} className="px-4 py-2 bg-red-900/40 hover:bg-red-800/60 border border-red-700/30 text-red-400 rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
                     <Trash2 className="w-4 h-4"/> Withdraw
@@ -1054,6 +1070,50 @@ export default function DocumentDetailPage() {
         </div>
       )}
 
+      {/* QA Review Sign-Off modal */}
+      {showQaReviewModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-blue-400"/> Sign Off QA Review</h2>
+              <button onClick={() => setShowQaReviewModal(false)}><X className="w-5 h-5 text-gray-400"/></button>
+            </div>
+            <form onSubmit={handleQaSignOff} className="p-6 space-y-5">
+              <div className="space-y-3">
+                {strategy === 'word_template' || strategy === 'upload' ? (
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-sm">
+                    <p className="font-bold mb-1">Download required for review</p>
+                    <p className="text-amber-400/80 mb-2">Please ensure you have downloaded and reviewed the attached file.</p>
+                    <button type="button" onClick={handleDownloadFile} className="px-4 py-2 bg-dark-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 text-sm">
+                      <Download className="w-4 h-4"/> Download File to Review
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-primary-500/10 border border-primary-500/20 rounded-xl text-primary-400 text-sm">
+                    <p className="font-bold mb-1">Ensure you have read the content tab</p>
+                    <p className="text-primary-400/80">Verify all standard operating procedures and formatting are correct.</p>
+                  </div>
+                )}
+              </div>
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <input type="checkbox" checked={reviewConfirmed} onChange={e => setReviewConfirmed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-blue-500 flex-shrink-0 cursor-pointer"/>
+                <span className="text-sm text-gray-300 group-hover:text-white transition-colors">I confirm I have thoroughly reviewed this document and it is ready for final Department Approval.</span>
+              </label>
+              <div className="pt-2 border-t border-dark-700">
+                <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2"><Key className="w-4 h-4 text-primary-400"/> Digital Signature Password</label>
+                <input type="password" value={signature} onChange={e => setSignature(e.target.value)} required placeholder="Enter your login password"
+                  className="w-full px-4 py-2.5 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono tracking-widest focus:border-primary-500 outline-none"/>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => { setShowQaReviewModal(false); setShowRejectModal(true); }} className="px-4 py-2 bg-red-900/30 hover:bg-red-900/60 border border-red-700/50 text-red-400 rounded-lg font-bold text-sm whitespace-nowrap">Reject & Return</button>
+                <button type="button" onClick={() => setShowQaReviewModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
+                <button type="submit" disabled={saving || !signature || !reviewConfirmed} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">Sign Off Review</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Release approval modal */}
       {showApproval && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1161,13 +1221,10 @@ export default function DocumentDetailPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-gray-300 mb-2">Document Owner</label>
-                  <select value={editData.doc_owner} onChange={e => setEditData({ ...editData, doc_owner: e.target.value })}
-                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
-                    <option value="">Unassigned</option>
-                    {users.filter(u => ['qa', 'admin', 'manager', 'ceo', 'cfo', 'engineering'].includes(u.role)).map(u =>
-                      <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
-                    )}
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Document Owner (Department)</label>
+                  <select value={editData.doc_owner} onChange={e => setEditData({ ...editData, doc_owner: e.target.value })} required className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
+                    <option value="">Select Department...</option>
+                    {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
                 </div>
               </div>

@@ -187,11 +187,12 @@ const QmsService = {
         v.version_number, v.effective_date, v.review_due_date,
         v.content_strategy,
         u.full_name AS author_name,
-        d.doc_owner AS owner_name
+        owner.full_name AS owner_name
       FROM qms_documents d
       JOIN qms_sections s ON d.section_id = s.section_id
       LEFT JOIN qms_document_versions v ON d.current_version_id = v.version_id
       LEFT JOIN users u ON v.authored_by = u.user_id
+      LEFT JOIN users owner ON d.doc_owner = owner.user_id
       WHERE d.status != 'WITHDRAWN'
     `;
     const params = [];
@@ -208,9 +209,10 @@ const QmsService = {
   async getDocumentById(docId) {
     const docRes = await pool.query(`
       SELECT d.*, s.section_name, s.section_code,
-             d.doc_owner AS owner_name
+             owner.full_name AS owner_name
       FROM qms_documents d
       JOIN qms_sections s ON d.section_id = s.section_id
+      LEFT JOIN users owner ON d.doc_owner = owner.user_id
       WHERE d.doc_id = $1
     `, [docId]);
     if (docRes.rows.length === 0) throw new Error('Document not found');
@@ -650,103 +652,89 @@ const QmsService = {
 
   // -- Release document ------------------------------------------------------
 
-// ── PHASE 6: QA Sign Off Review ───────────────────────────────────────────
-  async signOffReview(versionId, reviewerId, signaturePassword, ipAddress) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await this.verifySignature(reviewerId, signaturePassword);
-
-      const verRes = await client.query('SELECT doc_id, status FROM qms_document_versions WHERE version_id = $1', [versionId]);
-      if (verRes.rows.length === 0) throw new Error('Version not found');
-      if (verRes.rows[0].status !== 'REVIEW') throw new Error('Document is not in REVIEW status.');
-
-      const userRes = await client.query('SELECT role, full_name FROM users WHERE user_id = $1', [reviewerId]);
-      if (userRes.rows[0].role !== 'qa' && userRes.rows[0].role !== 'admin') {
-          throw new Error('Only QA personnel can sign off on document reviews.');
-      }
-
-      await client.query(`UPDATE qms_document_versions SET status = 'PENDING_APPROVAL', reviewer_id = $1 WHERE version_id = $2`, [reviewerId, versionId]);
-      await client.query(`UPDATE qms_documents SET status = 'PENDING_APPROVAL' WHERE doc_id = $1`, [verRes.rows[0].doc_id]);
-      await client.query(`INSERT INTO qms_approvals (version_id, approver_id, role, status, action_at) VALUES ($1, $2, 'QA_REVIEWER', 'REVIEWED', CURRENT_TIMESTAMP)`, [versionId, reviewerId]);
-
-      await writeAuditTrail(client, {
-          doc_id: verRes.rows[0].doc_id, version_id: versionId, actor_id: reviewerId,
-          action: 'REVIEWED', from_status: 'REVIEW', to_status: 'PENDING_APPROVAL',
-          notes: 'QA successfully reviewed and signed off document', ip_address: ipAddress
-      });
-
-      await client.query('COMMIT');
-      return { success: true };
-    } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
-    } finally {
-        client.release();
-    }
-  },
-
-  // ── PHASE 6: Final Approval & Release ──────────────────────────────────────
   async releaseDocument(versionId, approverId, signaturePassword, ipAddress) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await this.verifySignature(approverId, signaturePassword);
 
-      const verRes = await client.query('SELECT doc_id, version_number, file_original_name, status FROM qms_document_versions WHERE version_id = $1', [versionId]);
+      // Verify digital signature
+      const userRes = await client.query(
+        'SELECT password_hash FROM users WHERE user_id = $1', [approverId]
+      );
+      const valid = await bcrypt.compare(signaturePassword, userRes.rows[0].password_hash);
+      if (!valid) throw new Error('Invalid digital signature password');
+
+      const verRes = await client.query(
+        'SELECT doc_id, version_number FROM qms_document_versions WHERE version_id = $1',
+        [versionId]
+      );
       if (verRes.rows.length === 0) throw new Error('Version not found');
-      const { doc_id, version_number, file_original_name, status } = verRes.rows[0];
+      const { doc_id, version_number } = verRes.rows[0];
 
-      // Must be PENDING_APPROVAL now, not REVIEW
-      if (status !== 'PENDING_APPROVAL') throw new Error('Document must be signed off by QA before final approval.');
-
-      const docRes = await client.query('SELECT doc_type, doc_code, doc_name, doc_owner FROM qms_documents WHERE doc_id = $1', [doc_id]);
-      const { doc_type, doc_code, doc_name, doc_owner } = docRes.rows[0];
-
-      // Verify the approver is in the correct department
-      const userRes = await client.query('SELECT role, department FROM users WHERE user_id = $1', [approverId]);
-      const user = userRes.rows[0];
-
-      if (user.role !== 'admin' && String(user.department) !== String(doc_owner)) {
-        throw new Error(`Only System Admins or members of the [${doc_owner || 'Unassigned'}] department can approve this document.`);
-      }
+      // Get doc type for training assignment
+      const docRes = await client.query(
+        'SELECT doc_type FROM qms_documents WHERE doc_id = $1', [doc_id]
+      );
+      const docType = docRes.rows[0].doc_type;
 
       const releaseVersion = version_number === '0.1' ? '1.0' : version_number;
 
-      // Standardize the filename upon release
-      let standardFileName = file_original_name;
-      if (file_original_name) {
-        const ext = path.extname(file_original_name) || (file_original_name.includes('.') ? file_original_name.substring(file_original_name.lastIndexOf('.')) : '');
-        standardFileName = `${doc_code}_v${releaseVersion}_CONTROLLED${ext}`;
-      }
+      // Supersede previous released version
+      await client.query(`
+        UPDATE qms_document_versions SET status = 'SUPERSEDED'
+        WHERE doc_id = $1 AND status = 'RELEASED'
+      `, [doc_id]);
 
-      await client.query(`UPDATE qms_document_versions SET status = 'SUPERSEDED' WHERE doc_id = $1 AND status = 'RELEASED'`, [doc_id]);
-
+      // Release this version
       await client.query(`
         UPDATE qms_document_versions
-        SET status = 'RELEASED', version_number = $1, approved_by = $2, effective_date = CURRENT_TIMESTAMP,
-            review_due_date = CURRENT_TIMESTAMP + INTERVAL '1 year', file_original_name = COALESCE($4, file_original_name)
+        SET status = 'RELEASED',
+            version_number = $1,
+            approved_by = $2,
+            effective_date = CURRENT_TIMESTAMP,
+            review_due_date = CURRENT_TIMESTAMP + INTERVAL '1 year'
         WHERE version_id = $3
-      `, [releaseVersion, approverId, versionId, standardFileName]);
+      `, [releaseVersion, approverId, versionId]);
 
-      await client.query(`UPDATE qms_documents SET status = 'RELEASED', current_version_id = $1 WHERE doc_id = $2`, [versionId, doc_id]);
+      // Update document master record
+      await client.query(`
+        UPDATE qms_documents SET status = 'RELEASED', current_version_id = $1
+        WHERE doc_id = $2
+      `, [versionId, doc_id]);
 
-      await client.query(`INSERT INTO qms_approvals (version_id, approver_id, role, status, action_at) VALUES ($1, $2, 'APPROVER', 'APPROVED', CURRENT_TIMESTAMP)`, [versionId, approverId]);
+      // Record approval
+      await client.query(`
+        INSERT INTO qms_approvals (version_id, approver_id, role, status, action_at)
+        VALUES ($1, $2, 'QA_MANAGER', 'APPROVED', CURRENT_TIMESTAMP)
+      `, [versionId, approverId]);
 
-      await writeAuditTrail(client, {
-        doc_id, version_id: versionId, actor_id: approverId,
-        action: 'RELEASED', from_status: 'PENDING_APPROVAL', to_status: 'RELEASED',
-        notes: `Released as Version ${releaseVersion} (e-signature verified). ${standardFileName ? 'File named: ' + standardFileName : ''}`, ip_address: ipAddress
-      });
+      // Write audit trail
+      await client.query(`
+        INSERT INTO qms_audit_trail (doc_id, version_id, actor_id, action, from_status, to_status, notes, ip_address)
+        VALUES ($1, $2, $3, 'RELEASED', 'REVIEW', 'RELEASED', $4, $5)
+      `, [doc_id, versionId, approverId, `Released as Version ${releaseVersion} (e-signature verified)`, ipAddress || null]);
 
-      await client.query(`UPDATE qms_review_tasks SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP WHERE doc_id = $1 AND status = 'OPEN'`, [doc_id]);
-      const taskCount = await createTrainingTasksForRelease(client, doc_id, versionId, doc_type);
+      // Close any open review task for this document (it's been reviewed & re-released)
+      await client.query(`
+        UPDATE qms_review_tasks SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP
+        WHERE doc_id = $1 AND status = 'OPEN'
+      `, [doc_id]);
+
+      // Auto-assign training tasks
+      const taskCount = await createTrainingTasksForRelease(client, doc_id, versionId, docType);
 
       await client.query('COMMIT');
 
+      // Notifications (outside transaction)
       if (taskCount > 0) {
         try {
           const notificationService = require('./notification-service');
+          const docInfoRes = await pool.query(
+            'SELECT doc_code, doc_name FROM qms_documents WHERE doc_id = $1', [doc_id]
+          );
+          const { doc_code, doc_name } = docInfoRes.rows[0];
+
+          // Get emails of all users with PENDING tasks for this version
           const pendingUsersRes = await pool.query(`
             SELECT u.email, u.full_name
             FROM qms_training_tasks tt
@@ -755,13 +743,20 @@ const QmsService = {
           `, [versionId]);
 
           for (const user of pendingUsersRes.rows) {
-            notificationService.notifyTrainingRequired(doc_code, doc_name, releaseVersion, user.full_name, user.email)
-              .catch(e => console.error(`Training notification failed for ${user.email}:`, e));
+            notificationService.notifyTrainingRequired(
+              doc_code, doc_name, releaseVersion, user.full_name, user.email
+            ).catch(e => console.error(`Training notification failed for ${user.email}:`, e));
           }
-        } catch (e) { console.error('Failed to send training notifications:', e); }
+        } catch (e) {
+          console.error('Failed to send training notifications:', e);
+        }
       }
 
-      return { success: true, message: `Document released as Version ${releaseVersion}`, training_tasks_created: taskCount };
+      return {
+        success: true,
+        message: `Document released as Version ${releaseVersion}`,
+        training_tasks_created: taskCount
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -1366,11 +1361,12 @@ const QmsService = {
     const docRes = await pool.query(`
       SELECT d.*,
              s.section_code, s.section_name, s.color_code,
-             d.doc_owner AS owner_name,
-             NULL AS owner_title,
-             NULL AS owner_dept
+             owner.full_name  AS owner_name,
+             owner.job_title  AS owner_title,
+             owner.department AS owner_dept
       FROM qms_documents d
       JOIN qms_sections s ON d.section_id = s.section_id
+      LEFT JOIN users owner ON d.doc_owner = owner.user_id
       WHERE d.doc_id = $1
     `, [docId]);
     if (docRes.rows.length === 0) throw new Error('Document not found');
