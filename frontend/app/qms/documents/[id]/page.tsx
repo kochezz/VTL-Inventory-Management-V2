@@ -551,7 +551,7 @@ export default function DocumentDetailPage() {
   const isReleased        = activeVersion?.status === 'RELEASED';
   const isAuthor          = activeVersion?.authored_by === user?.user_id;
   const isQA              = user?.role === 'qa' || user?.role === 'admin';
-  const isDocOwnerDept    = user?.role === 'admin' || user?.department === doc?.owner_name;
+  const isDocOwnerDept    = user?.role === 'admin' || (user as any)?.department === doc?.doc_owner;
   const strategy          = activeVersion?.content_strategy || 'structured';
 
   // ── Loading / not found ───────────────────────────────────────────────────
