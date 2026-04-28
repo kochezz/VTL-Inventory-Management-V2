@@ -326,7 +326,7 @@ router.delete('/document-links/:linkId',
 );
 
 // ============================================================================
-// VERSION LIFECYCLE (Updated in Phase 5)
+// VERSION LIFECYCLE 
 // ============================================================================
 
 router.post('/documents/:id/draft', async (req, res) => {
@@ -459,6 +459,23 @@ router.post('/versions/:versionId/submit', async (req, res) => {
     res.json(await qmsService.submitForReview(req.params.versionId, reviewer_id || null, req.user.user_id));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+
+router.post('/versions/:versionId/recall', async (req, res) => {
+  try {
+    res.json(await qmsService.recallDraft(req.params.versionId, req.user.user_id));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/versions/:versionId/reject',
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  async (req, res) => {
+    try {
+      const { reason } = req.body;
+      if (!reason) return res.status(400).json({ error: 'Rejection reason is required.' });
+      res.json(await qmsService.rejectReview(req.params.versionId, req.user.user_id, reason));
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  }
+);
 
 router.post('/versions/:versionId/approve',
   authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),

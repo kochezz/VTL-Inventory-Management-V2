@@ -66,6 +66,8 @@ const actionColour = (action: string) => {
   if (action === 'SUBMITTED') return 'text-blue-400';
   if (action === 'WITHDRAWN') return 'text-red-400';
   if (action === 'DRAFT_CREATED') return 'text-yellow-400';
+  if (action === 'RECALLED') return 'text-orange-400';
+  if (action === 'REJECTED') return 'text-red-400';
   return 'text-gray-400';
 };
 
@@ -138,6 +140,10 @@ export default function DocumentDetailPage() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
 
+  // Reject review modal
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason]       = useState('');
+
   // ── Load ─────────────────────────────────────────────────────────────────
 
   useEffect(() => { if (params.id) fetchAll(); }, [params.id]);
@@ -200,7 +206,6 @@ export default function DocumentDetailPage() {
       setTimeout(() => setSuccess(''), 6000);
     } catch (e: any) {
       console.error(e);
-      // 👇 Use the extractor here
       const msg = await extractBlobError(e, 'Template download failed. Please try again.');
       setError(msg);
     } finally {
@@ -221,7 +226,6 @@ export default function DocumentDetailPage() {
       window.URL.revokeObjectURL(url);
     } catch (e: any) {
       console.error(e);
-      // 👇 Use the extractor here
       const msg = await extractBlobError(e, 'Document assembly failed. Please try again.');
       setError(msg);
     } finally {
@@ -287,12 +291,11 @@ export default function DocumentDetailPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       
-      await fetchAll();
+      await fetchAll(); // refresh to show word_template strategy
       setSuccess('Template downloaded. Edit in Microsoft Word, then upload the completed file.');
       setTimeout(() => setSuccess(''), 8000);
     } catch (e: any) {
       console.error(e);
-      // 👇 Use the extractor here
       const msg = await extractBlobError(e, 'Template download failed. Use the button in the content area.');
       setError(msg);
     } finally {
@@ -313,6 +316,7 @@ export default function DocumentDetailPage() {
     }
     return error.response?.data?.error || error.message || defaultMsg;
   }
+  
   // ── Save draft (structured / richtext) ───────────────────────────────────
 
   async function handleSaveDraft() {
@@ -385,6 +389,37 @@ export default function DocumentDetailPage() {
       setTimeout(() => setSuccess(''), 4000);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to submit');
+    } finally { setSaving(false); }
+  }
+
+  // ── Recall & Reject (Phase 5/6) ───────────────────────────────────────────
+
+  async function handleRecallDraft() {
+    if (!activeVersion) return;
+    try {
+      setSaving(true);
+      await api.post(`/qms/versions/${activeVersion.version_id}/recall`);
+      await fetchAll();
+      setSuccess('Submission recalled. You can now edit the draft again.');
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err: any) {
+      setError(await extractBlobError(err, 'Failed to recall submission'));
+    } finally { setSaving(false); }
+  }
+
+  async function handleRejectReview(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeVersion || !rejectReason.trim()) return;
+    try {
+      setSaving(true);
+      await api.post(`/qms/versions/${activeVersion.version_id}/reject`, { reason: rejectReason });
+      setShowRejectModal(false);
+      setRejectReason('');
+      await fetchAll();
+      setSuccess('Document rejected and returned to the author as a Draft.');
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err: any) {
+      setError(await extractBlobError(err, 'Failed to reject document'));
     } finally { setSaving(false); }
   }
 
@@ -590,6 +625,11 @@ export default function DocumentDetailPage() {
                       <Send className="w-4 h-4"/> Submit for Review
                     </button>
                   </>
+                )}
+                {isReview && isAuthor && (
+                  <button onClick={handleRecallDraft} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors border border-dark-600">
+                    <ArrowLeft className="w-4 h-4"/> Recall Submission
+                  </button>
                 )}
                 {isReview && canApprove && (
                   <>
@@ -1369,20 +1409,63 @@ export default function DocumentDetailPage() {
               {/* Actions */}
               <div className="flex gap-3 pt-1">
                 <button
-                  onClick={() => { setShowReviewModal(false); setReviewConfirmed(false); }}
-                  className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm transition-colors"
+                  onClick={() => { setShowReviewModal(false); setShowRejectModal(true); }}
+                  className="px-4 py-2 bg-red-900/30 hover:bg-red-900/60 border border-red-700/50 text-red-400 rounded-lg font-bold text-sm transition-colors whitespace-nowrap"
                 >
-                  Close
+                  Reject & Return
                 </button>
-                <button
-                  disabled={!reviewConfirmed}
-                  onClick={() => { setShowReviewModal(false); setShowApproval(true); }}
-                  className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <FileSignature className="w-4 h-4"/> Confirm & Proceed to Release
-                </button>
+                <div className="flex-1 flex gap-2">
+                  <button
+                    onClick={() => { setShowReviewModal(false); setReviewConfirmed(false); }}
+                    className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    disabled={!reviewConfirmed}
+                    onClick={() => { setShowReviewModal(false); setShowApproval(true); }}
+                    className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <FileSignature className="w-4 h-4"/> Proceed to Release
+                  </button>
+                </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Review Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-400"/> Reject & Return to Draft
+              </h2>
+              <button onClick={() => setShowRejectModal(false)}><X className="w-5 h-5 text-gray-400"/></button>
+            </div>
+            <form onSubmit={handleRejectReview} className="p-6 space-y-4">
+              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+                Rejecting this document returns it to <strong>DRAFT</strong> status so the author can make corrections. This rejection reason will be permanently recorded in the Audit Trail.
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Rejection Reason / Fixes Required <span className="text-red-400">*</span></label>
+                <textarea
+                  value={rejectReason} onChange={e => setRejectReason(e.target.value)} required
+                  placeholder="e.g. Missing CCP step in section 6. Please update the procedure and resubmit."
+                  rows={4}
+                  className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-red-500 outline-none resize-none"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowRejectModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
+                <button type="submit" disabled={!rejectReason.trim() || saving}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                  {saving ? 'Rejecting...' : <><ArrowLeft className="w-4 h-4"/> Confirm Rejection</>}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

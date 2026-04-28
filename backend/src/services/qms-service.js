@@ -577,6 +577,79 @@ const QmsService = {
     }
   },
 
+  // -- Recall draft (Author pulls back from review) ---------------------------
+
+  async recallDraft(versionId, userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const verRes = await client.query(
+        'SELECT doc_id, status, authored_by FROM qms_document_versions WHERE version_id = $1',
+        [versionId]
+      );
+      if (verRes.rows.length === 0) throw new Error('Version not found');
+      const ver = verRes.rows[0];
+
+      if (ver.status !== 'REVIEW') throw new Error('You can only recall documents that are currently in REVIEW.');
+      if (String(ver.authored_by) !== String(userId)) throw new Error('Only the author can recall this submission.');
+
+      // Revert version and document back to DRAFT
+      await client.query(`UPDATE qms_document_versions SET status = 'DRAFT', reviewer_id = NULL WHERE version_id = $1`, [versionId]);
+      await client.query(`UPDATE qms_documents SET status = 'DRAFT' WHERE doc_id = $1`, [ver.doc_id]);
+
+      await writeAuditTrail(client, {
+        doc_id: ver.doc_id, version_id: versionId, actor_id: userId,
+        action: 'RECALLED', from_status: 'REVIEW', to_status: 'DRAFT',
+        notes: 'Author recalled submission to make edits'
+      });
+
+      await client.query('COMMIT');
+      return { success: true, message: 'Draft recalled successfully.' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  // -- Reject review (QA sends back to author) -------------------------------
+
+  async rejectReview(versionId, userId, reason) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const verRes = await client.query(
+        'SELECT doc_id, status FROM qms_document_versions WHERE version_id = $1',
+        [versionId]
+      );
+      if (verRes.rows.length === 0) throw new Error('Version not found');
+      const ver = verRes.rows[0];
+
+      if (ver.status !== 'REVIEW') throw new Error('You can only reject documents that are currently in REVIEW.');
+
+      // Revert version and document back to DRAFT
+      await client.query(`UPDATE qms_document_versions SET status = 'DRAFT', reviewer_id = NULL WHERE version_id = $1`, [versionId]);
+      await client.query(`UPDATE qms_documents SET status = 'DRAFT' WHERE doc_id = $1`, [ver.doc_id]);
+
+      await writeAuditTrail(client, {
+        doc_id: ver.doc_id, version_id: versionId, actor_id: userId,
+        action: 'REJECTED', from_status: 'REVIEW', to_status: 'DRAFT',
+        notes: `QA Rejected: ${reason}`
+      });
+
+      await client.query('COMMIT');
+      return { success: true, message: 'Document rejected and returned to draft.' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
   // -- Release document ------------------------------------------------------
 
   async releaseDocument(versionId, approverId, signaturePassword, ipAddress) {
