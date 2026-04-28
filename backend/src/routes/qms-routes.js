@@ -221,7 +221,7 @@ router.put('/documents/:id',
 // ── Withdrawal ────────────────────────────────────────────────────────────────
 
 router.post('/documents/:id/withdraw',
-  authorize(['admin', 'qa', 'manager', 'ceo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
   async (req, res) => {
     try {
       const { signature_password, withdraw_reason } = req.body;
@@ -363,10 +363,28 @@ router.get('/documents/:id/assembled',
   async (req, res) => {
     try {
       const doc = await qmsService.getDocumentById(req.params.id);
-      if (!doc.current_version_id) {
-        return res.status(404).json({ error: 'No released version found' });
+
+      // If a released version exists, serve that (normal post-release path)
+      let versionId = doc.current_version_id;
+
+      // If no released version yet (DRAFT or REVIEW), fall back to the most
+      // recent version so QA reviewers can download the draft for review
+      if (!versionId) {
+        const latestRes = await pool.query(
+          `SELECT version_id
+             FROM qms_document_versions
+            WHERE doc_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [req.params.id]
+        );
+        if (!latestRes.rows.length) {
+          return res.status(404).json({ error: 'No version found for this document.' });
+        }
+        versionId = latestRes.rows[0].version_id;
       }
-      await templateService.streamAssembledDocument(req.params.id, doc.current_version_id, res);
+
+      await templateService.streamAssembledDocument(req.params.id, versionId, res);
     } catch (e) {
       if (!res.headersSent) res.status(500).json({ error: e.message });
     }
@@ -533,7 +551,7 @@ router.post('/training/acknowledge', async (req, res) => {
 });
 
 // ============================================================================
-// REVIEW TASKS (Phase 2)
+// REVIEW TASKS
 // ============================================================================
 
 router.get('/review-tasks',

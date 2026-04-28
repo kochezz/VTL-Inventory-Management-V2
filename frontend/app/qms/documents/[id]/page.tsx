@@ -1310,15 +1310,13 @@ export default function DocumentDetailPage() {
                 <div className="space-y-3">
                   <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
                     <p className="font-bold mb-1">Word Template document — download required</p>
-                    <p className="text-blue-400/80">This document was authored offline. You must download and read the full controlled document before you can release it.</p>
+                    <p className="text-blue-400/80">This document was authored offline in Microsoft Word. Download the uploaded draft file to read the full content before releasing.</p>
                   </div>
                   <button
-                    onClick={handleDownloadAssembled}
-                    disabled={assembling}
-                    className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors disabled:opacity-50"
+                    onClick={handleDownloadFile}
+                    className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors"
                   >
-                    <Download className="w-4 h-4"/>
-                    {assembling ? 'Assembling…' : 'Download Document to Review'}
+                    <Download className="w-4 h-4"/> Download Draft File to Review
                   </button>
                 </div>
               )}
