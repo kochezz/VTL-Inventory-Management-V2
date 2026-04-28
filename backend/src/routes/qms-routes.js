@@ -477,6 +477,18 @@ router.post('/versions/:versionId/reject',
   }
 );
 
+router.post('/versions/:versionId/sign-off',
+  authorize(['admin', 'qa']),
+  async (req, res) => {
+    try {
+      const { signature_password } = req.body;
+      if (!signature_password) return res.status(400).json({ error: 'Digital signature is required.' });
+      const ip = req.ip || req.headers['x-forwarded-for'];
+      res.json(await qmsService.signOffReview(req.params.versionId, req.user.user_id, signature_password, ip));
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  }
+);
+
 router.post('/versions/:versionId/approve',
   authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
   async (req, res) => {

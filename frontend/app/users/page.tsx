@@ -10,6 +10,19 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 
+// ── Standardized Departments List ──────────────────────────────────────────
+const DEPARTMENTS = [
+  'Quality Assurance', 
+  'Production', 
+  'Engineering', 
+  'Inventory', 
+  'Human Resources',
+  'Finance', 
+  'Sales', 
+  'Management', 
+  'IT'
+];
+
 export default function UsersPage() {
   const router = useRouter();
   const { user: currentUser, isAuthenticated, token } = useAuth();
@@ -159,7 +172,7 @@ export default function UsersPage() {
       qa: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
       staff: 'bg-green-500/10 text-green-400 border-green-500/20',
       operator: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-      sales: 'bg-pink-500/10 text-pink-400 border-pink-500/20', // FIX: Added Sales Role Badge
+      sales: 'bg-pink-500/10 text-pink-400 border-pink-500/20', 
       super_viewer: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
       viewer: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
     };
@@ -203,7 +216,7 @@ export default function UsersPage() {
             <option value="qa">QA</option>
             <option value="staff">Staff</option>
             <option value="operator">Operator</option>
-            <option value="sales">Sales & Marketing</option> {/* FIX: Added Sales Role Filter */}
+            <option value="sales">Sales & Marketing</option>
             <option value="super_viewer">Super Viewer</option>
             <option value="viewer">Viewer</option>
           </select>
@@ -286,7 +299,7 @@ export default function UsersPage() {
                       <option value="manager">Manager</option>
                       <option value="engineering">Engineering</option>
                       <option value="qa">QA</option>
-                      <option value="sales">Sales & Marketing</option> {/* FIX: Added Sales Role Form Option */}
+                      <option value="sales">Sales & Marketing</option>
                       <option value="staff">Staff</option>
                       <option value="operator">Operator (Line Staff)</option>
                       <option value="super_viewer">Super Viewer</option>
@@ -351,7 +364,20 @@ export default function UsersPage() {
                   <div><label className="block text-xs text-gray-400 mb-1">Employee ID Number</label><input type="text" value={formData.employee_number} onChange={e => setFormData({...formData, employee_number: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white font-mono" /></div>
                   <div className="col-span-2"><label className="block text-xs text-gray-400 mb-1">Job Title</label><input type="text" value={formData.job_title} onChange={e => setFormData({...formData, job_title: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
                   
-                  <div><label className="block text-xs text-gray-400 mb-1">Department / Division</label><input type="text" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white" /></div>
+                  {/* Department Dropdown replaces free-text input */}
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Department / Division</label>
+                    <select 
+                      value={formData.department} 
+                      onChange={e => setFormData({...formData, department: e.target.value})} 
+                      className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white"
+                    >
+                      <option value="">Unassigned</option>
+                      {DEPARTMENTS.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
                   
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Reports to (Manager)</label>
