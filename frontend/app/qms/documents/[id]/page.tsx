@@ -619,7 +619,7 @@ export default function DocumentDetailPage() {
                     <Printer className="w-4 h-4"/> Print
                   </button>
                 )}
-                {doc.status !== 'WITHDRAWN' && (user.role === 'admin' || user.role === 'qa') && (
+                {doc.status !== 'WITHDRAWN' && (user?.role === 'admin' || user?.role === 'qa') && (
                   <button onClick={openEditModal} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
                     <FileEdit className="w-4 h-4"/> Edit Details
                   </button>
