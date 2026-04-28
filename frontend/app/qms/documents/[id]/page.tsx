@@ -73,7 +73,10 @@ const actionColour = (action: string) => {
   return 'text-gray-400';
 };
 
+// Review draft modal — shown to QA before the release e-signature modal
+
 // ============================================================================
+
 export default function DocumentDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -92,6 +95,7 @@ export default function DocumentDetailPage() {
   const [activeTab, setActiveTab]         = useState<'content'|'links'|'trail'>('content');
 
   // Structured editor content
+
   const [content, setContent] = useState<Record<string, string>>({});
 
   // Upload mode
