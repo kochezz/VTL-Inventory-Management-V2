@@ -8,7 +8,7 @@ import {
   ArrowLeft, Save, Send, CheckCircle2, AlertCircle,
   FileSignature, History, ShieldCheck, Key, X, Printer,
   FilePlus, RefreshCw, FileEdit, Upload, Download,
-  FileText, Clock, User, Link, Trash2, ChevronDown, CheckSquare
+  FileText, Clock, User, Link, Trash2, ChevronDown
 } from 'lucide-react';
 
 const DEPARTMENTS = ['Quality Assurance', 'Production', 'Engineering', 'Inventory', 'Human Resources', 'Finance', 'Sales', 'Management', 'IT'];
@@ -63,7 +63,6 @@ const statusColour = (s: string) => {
     default:                 return 'bg-gray-500/10 text-gray-400 border-gray-500/20';
   }
 };
-
 const actionColour = (action: string) => {
   if (action === 'RELEASED')  return 'text-green-400';
   if (action === 'SUBMITTED') return 'text-blue-400';
@@ -73,6 +72,8 @@ const actionColour = (action: string) => {
   if (action === 'REJECTED') return 'text-red-400';
   return 'text-gray-400';
 };
+
+// Review draft modal — shown to QA before the release e-signature modal
 
 // ============================================================================
 
@@ -94,6 +95,7 @@ export default function DocumentDetailPage() {
   const [activeTab, setActiveTab]         = useState<'content'|'links'|'trail'>('content');
 
   // Structured editor content
+
   const [content, setContent] = useState<Record<string, string>>({});
 
   // Upload mode
@@ -101,12 +103,11 @@ export default function DocumentDetailPage() {
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // Approval modals
+  // Approval modal
   const [showApproval, setShowApproval] = useState(false);
   const [showQaReviewModal, setShowQaReviewModal] = useState(false);
   const [signature, setSignature]       = useState('');
   const [reviewConfirmed, setReviewConfirmed] = useState(false); 
-  
   // Create draft modal (revision) — collects change_reason
   const [showDraftModal, setShowDraftModal]   = useState(false);
   const [changeReason, setChangeReason]       = useState('');
@@ -133,12 +134,11 @@ export default function DocumentDetailPage() {
   const [linkRelationship, setLinkRelationship] = useState('references');
   const [allDocs, setAllDocs]               = useState<any[]>([]);
 
-  // Authoring & Templates
+  // ── PHASE 5 ADDITIONS: Authoring & Templates ────────────────────────────
   const [authoringOptions, setAuthoringOptions] = useState<any[]>([]);
   const [templateAvailable, setTemplateAvailable] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [assembling, setAssembling] = useState(false);
-  
   // Authoring mode modal — shown before draft creation for SOP/POL/MAN
   const [showAuthoringModal, setShowAuthoringModal] = useState(false);
   const [selectedAuthoringMode, setSelectedAuthoringMode] = useState<'structured' | 'word_template'>('structured');
@@ -150,17 +150,6 @@ export default function DocumentDetailPage() {
   // ── Load ─────────────────────────────────────────────────────────────────
 
   useEffect(() => { if (params.id) fetchAll(); }, [params.id]);
-
-  async function extractBlobError(error: any, defaultMsg: string) {
-    if (error.response?.data instanceof Blob) {
-      try {
-        const text = await error.response.data.text();
-        const json = JSON.parse(text);
-        return json.error || defaultMsg;
-      } catch { return defaultMsg; }
-    }
-    return error.response?.data?.error || error.message || defaultMsg;
-  }
 
   async function fetchAll() {
     try {
@@ -178,6 +167,7 @@ export default function DocumentDetailPage() {
       setAuditTrail(trailRes.data);
       setReviewConfirmed(false); // reset on each load — reviewer must re-confirm each session
 
+      // Phase 5: Fetch authoring options for this doc type
       if (d.doc_type) {
         api.get(`/qms/schema/${d.doc_type}`).then(schemaRes => {
           setAuthoringOptions(schemaRes.data.authoring_options || []);
@@ -215,30 +205,34 @@ export default function DocumentDetailPage() {
       window.URL.revokeObjectURL(url);
       
       await fetchAll();
-      setSuccess('Template downloaded. Edit it in Microsoft Word, then upload the PDF.');
+      setSuccess('Template downloaded. Edit it in Microsoft Word, then upload it using the "Upload Completed File" button.');
       setTimeout(() => setSuccess(''), 6000);
     } catch (e: any) {
-      setError(await extractBlobError(e, 'Template download failed.'));
+      console.error(e);
+      const msg = await extractBlobError(e, 'Template download failed. Please try again.');
+      setError(msg);
     } finally {
       setDownloadingTemplate(false);
     }
   }
 
-  async function handleDownloadControlledPDF() {
+  async function handleDownloadAssembled() {
     setAssembling(true);
     try {
-      const res = await api.get(`/qms/documents/${params.id}/pdf?mode=current`, { responseType: 'blob' });
+      const res = await api.get(`/qms/documents/${params.id}/assembled`, { responseType: 'blob' });
       const blob = new Blob([res.data]);
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      a.download = `${doc.doc_code}_v${activeVersion?.version_number}_CONTROLLED.pdf`;
+      a.download = `${doc.doc_code}_v${activeVersion?.version_number}_controlled.docx`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (e: any) {
-      setError(await extractBlobError(e, 'PDF generation failed. Ensure your uploaded file is a PDF.'));
-    } finally { 
-      setAssembling(false); 
+      console.error(e);
+      const msg = await extractBlobError(e, 'Document assembly failed. Please try again.');
+      setError(msg);
+    } finally {
+      setAssembling(false);
     }
   }
 
@@ -247,15 +241,19 @@ export default function DocumentDetailPage() {
   const WORD_TEMPLATE_TYPES = ['SOP', 'POL', 'MAN'];
 
   async function handleCreateDraft() {
+    // Revision of released doc — collect change_reason first (existing behaviour)
     if (doc.status === 'RELEASED') { setShowDraftModal(true); return; }
+    // First draft of SOP/POL/MAN — show authoring mode selector
     if (WORD_TEMPLATE_TYPES.includes(doc?.doc_type)) {
       setSelectedAuthoringMode('structured');
       setShowAuthoringModal(true);
       return;
     }
+    // All other types — go straight to draft creation
     await doCreateDraft('');
   }
 
+  // Called when user confirms their choice in the authoring modal
   async function handleConfirmAuthoringMode() {
     setShowAuthoringModal(false);
     await doCreateDraft('', selectedAuthoringMode);
@@ -268,6 +266,7 @@ export default function DocumentDetailPage() {
       if (authoringChoice) payload.authoring_choice = authoringChoice;
       const res = await api.post(`/qms/documents/${doc.doc_id}/draft`, payload);
 
+      // If word_template chosen, auto-download template after draft is created
       if (authoringChoice === 'word_template' && res.data?.version_id) {
         setTimeout(() => triggerTemplateDownload(res.data.version_id, res.data.version_number), 800);
       }
@@ -275,15 +274,14 @@ export default function DocumentDetailPage() {
       setShowDraftModal(false);
       setChangeReason('');
       await fetchAll();
-      setSuccess(`Draft v${res.data.version_number} created.`);
+      setSuccess(`Draft v${res.data.version_number} created (${res.data.content_strategy || authoringChoice || 'structured'} mode).`);
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Failed to create draft'); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to create draft');
+    } finally { setSaving(false); }
   }
 
+  // Template download triggered immediately after draft creation
   async function triggerTemplateDownload(versionId: string, versionNumber: string) {
     setDownloadingTemplate(true);
     try {
@@ -296,14 +294,32 @@ export default function DocumentDetailPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       
-      await fetchAll();
+      await fetchAll(); // refresh to show word_template strategy
+      setSuccess('Template downloaded. Edit in Microsoft Word, then upload the completed file.');
+      setTimeout(() => setSuccess(''), 8000);
     } catch (e: any) {
-      setError(await extractBlobError(e, 'Template download failed.'));
+      console.error(e);
+      const msg = await extractBlobError(e, 'Template download failed. Use the button in the content area.');
+      setError(msg);
     } finally {
       setDownloadingTemplate(false);
     }
   }
 
+  // Helper to extract JSON error messages hidden inside a Blob
+  async function extractBlobError(error: any, defaultMsg: string) {
+    if (error.response?.data instanceof Blob) {
+      try {
+        const text = await error.response.data.text();
+        const json = JSON.parse(text);
+        return json.error || defaultMsg;
+      } catch {
+        return defaultMsg;
+      }
+    }
+    return error.response?.data?.error || error.message || defaultMsg;
+  }
+  
   // ── Save draft (structured / richtext) ───────────────────────────────────
 
   async function handleSaveDraft() {
@@ -313,11 +329,9 @@ export default function DocumentDetailPage() {
       await api.put(`/qms/versions/${activeVersion.version_id}`, { content_data: content });
       setSuccess('Draft saved.');
       setTimeout(() => setSuccess(''), 2500);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Failed to save'); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to save');
+    } finally { setSaving(false); }
   }
 
   // ── File upload ───────────────────────────────────────────────────────────
@@ -329,23 +343,24 @@ export default function DocumentDetailPage() {
       setUploading(true);
       const formData = new FormData();
       formData.append('document_file', file);
-      await api.post(`/qms/versions/${activeVersion.version_id}/file`, formData, { 
-        headers: { 'Content-Type': 'multipart/form-data' } 
+      await api.post(`/qms/versions/${activeVersion.version_id}/file`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
       setUploadedFileName(file.name);
       setSuccess(`"${file.name}" uploaded successfully.`);
       setTimeout(() => setSuccess(''), 3000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Upload failed'); 
-    } finally { 
-      setUploading(false); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Upload failed');
+    } finally { setUploading(false); }
   }
 
+  // Updated to use the secure auth-based API download as well
   async function handleDownloadFile() {
     if (!activeVersion) return;
     try {
-      const res = await api.get(`/qms/versions/${activeVersion.version_id}/file`, { responseType: 'blob' });
+      const res = await api.get(`/qms/versions/${activeVersion.version_id}/file`, {
+        responseType: 'blob'
+      });
       const blob = new Blob([res.data]);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -353,8 +368,9 @@ export default function DocumentDetailPage() {
       a.download = activeVersion.file_original_name || `${doc.doc_code}_file`;
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch (err) { 
-      setError('File download failed.'); 
+    } catch (err) {
+      console.error(err);
+      setError('File download failed.');
     }
   }
 
@@ -365,6 +381,7 @@ export default function DocumentDetailPage() {
     if (!activeVersion) return;
     try {
       setSaving(true);
+      // Save content first if structured/richtext
       if (activeVersion.content_strategy !== 'upload' && activeVersion.content_strategy !== 'word_template') {
         await api.put(`/qms/versions/${activeVersion.version_id}`, { content_data: content });
       }
@@ -373,11 +390,9 @@ export default function DocumentDetailPage() {
       await fetchAll();
       setSuccess('Submitted for QA Review. Notification sent.');
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Failed to submit'); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to submit');
+    } finally { setSaving(false); }
   }
 
   // ── Recall & Reject (Phase 5/6) ───────────────────────────────────────────
@@ -390,11 +405,9 @@ export default function DocumentDetailPage() {
       await fetchAll();
       setSuccess('Submission recalled. You can now edit the draft again.');
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(await extractBlobError(err, 'Failed to recall submission')); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(await extractBlobError(err, 'Failed to recall submission'));
+    } finally { setSaving(false); }
   }
 
   async function handleRejectReview(e: React.FormEvent) {
@@ -408,14 +421,12 @@ export default function DocumentDetailPage() {
       await fetchAll();
       setSuccess('Document rejected and returned to the author as a Draft.');
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(await extractBlobError(err, 'Failed to reject document')); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(await extractBlobError(err, 'Failed to reject document'));
+    } finally { setSaving(false); }
   }
 
-  // ── QA Sign Off & Department Approval ─────────────────────────────────────
+  // ── Approve & release ─────────────────────────────────────────────────────
 
   async function handleQaSignOff(e: React.FormEvent) {
     e.preventDefault();
@@ -427,13 +438,9 @@ export default function DocumentDetailPage() {
       await fetchAll();
       setSuccess('Review signed off. Document is now pending final approval.');
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Failed to sign off. Invalid signature?'); 
-    } finally { 
-      setSaving(false); setSignature(''); 
-    }
+    } catch (err: any) { setError(err.response?.data?.error || 'Failed to sign off. Invalid signature?'); } finally { setSaving(false); setSignature(''); }
   }
-
+  
   async function handleApproveRelease(e: React.FormEvent) {
     e.preventDefault();
     if (!activeVersion || !signature) return;
@@ -444,11 +451,9 @@ export default function DocumentDetailPage() {
       await fetchAll();
       setSuccess('Document officially released!');
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Failed to release. Invalid signature or missing permissions?'); 
-    } finally { 
-      setSaving(false); setSignature(''); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to release. Invalid signature?');
+    } finally { setSaving(false); setSignature(''); }
   }
 
   // ── Withdraw ──────────────────────────────────────────────────────────────
@@ -457,16 +462,16 @@ export default function DocumentDetailPage() {
     e.preventDefault();
     try {
       setSaving(true);
-      await api.post(`/qms/documents/${doc.doc_id}/withdraw`, { signature_password: withdrawSig, withdraw_reason: withdrawReason });
+      await api.post(`/qms/documents/${doc.doc_id}/withdraw`, {
+        signature_password: withdrawSig, withdraw_reason: withdrawReason
+      });
       setShowWithdrawModal(false);
       await fetchAll();
       setSuccess('Document formally withdrawn.');
       setTimeout(() => setSuccess(''), 4000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Withdrawal failed'); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Withdrawal failed');
+    } finally { setSaving(false); }
   }
 
   // ── Edit metadata ─────────────────────────────────────────────────────────
@@ -502,11 +507,9 @@ export default function DocumentDetailPage() {
       await fetchAll();
       setSuccess('Document details updated.');
       setTimeout(() => setSuccess(''), 3000);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Update failed'); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Update failed');
+    } finally { setSaving(false); }
   }
 
   // ── Add link ──────────────────────────────────────────────────────────────
@@ -522,13 +525,15 @@ export default function DocumentDetailPage() {
   async function handleAddLink(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await api.post('/qms/document-links', { parent_doc_id: doc.doc_id, child_doc_id: linkDocId, relationship: linkRelationship });
+      await api.post('/qms/document-links', {
+        parent_doc_id: doc.doc_id, child_doc_id: linkDocId, relationship: linkRelationship
+      });
       setShowLinkModal(false);
       await fetchAll();
       setSuccess('Document link added.');
       setTimeout(() => setSuccess(''), 2500);
-    } catch (err: any) { 
-      setError(err.response?.data?.error || 'Link failed'); 
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Link failed');
     }
   }
 
@@ -538,7 +543,7 @@ export default function DocumentDetailPage() {
     await fetchAll();
   }
 
-  // ── Derived state & Permissions ───────────────────────────────────────────
+  // ── Derived state ─────────────────────────────────────────────────────────
 
   const isDraft           = activeVersion?.status === 'DRAFT';
   const isReview          = activeVersion?.status === 'REVIEW';
@@ -547,10 +552,7 @@ export default function DocumentDetailPage() {
   const isAuthor          = activeVersion?.authored_by === user?.user_id;
   const isQA              = user?.role === 'qa' || user?.role === 'admin';
   const canApprove        = ['admin', 'qa', 'manager', 'ceo', 'cfo'].includes(user?.role || '');
-  
-  // By-pass global User type strictness for the dynamically added 'department' property
   const isDocOwnerDept    = user?.role === 'admin' || (user as any)?.department === doc?.doc_owner;
-  
   const strategy          = activeVersion?.content_strategy || 'structured';
 
   // ── Loading / not found ───────────────────────────────────────────────────
@@ -563,6 +565,8 @@ export default function DocumentDetailPage() {
     </DashboardLayout>
   );
   if (!doc) return <DashboardLayout><div className="p-10 text-center text-red-400">Document not found</div></DashboardLayout>;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -578,8 +582,10 @@ export default function DocumentDetailPage() {
               <div>
                 <div className="flex items-center gap-3 mb-1">
                   <span className="text-sm font-mono font-bold text-primary-400 bg-primary-500/10 px-2 py-0.5 rounded">{doc.doc_code}</span>
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded border ${statusColour(doc.status)}`}>{doc.status.replace('_', ' ')}</span>
-                  {doc.status === 'WITHDRAWN' && <span className="text-xs text-red-400 italic">Formally withdrawn — not in active use</span>}
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded border ${statusColour(doc.status)}`}>{doc.status}</span>
+                  {doc.status === 'WITHDRAWN' && (
+                    <span className="text-xs text-red-400 italic">Formally withdrawn — not in active use</span>
+                  )}
                 </div>
                 <h1 className="text-2xl font-bold text-white">{doc.doc_name}</h1>
               </div>
@@ -590,7 +596,7 @@ export default function DocumentDetailPage() {
               <div className="flex gap-4 text-sm text-gray-400">
                 <p><strong>Section:</strong> {doc.section_code} — {doc.section_name}</p>
                 <p><strong>Type:</strong> {doc.doc_type}</p>
-                <p><strong>Department:</strong> {doc.doc_owner || 'Unassigned'}</p>
+                {doc.owner_name && <p><strong>Owner:</strong> {doc.owner_name}</p>}
                 {activeVersion && <p><strong>Version:</strong> v{activeVersion.version_number}</p>}
               </div>
 
@@ -619,13 +625,11 @@ export default function DocumentDetailPage() {
                     <Printer className="w-4 h-4"/> Print
                   </button>
                 )}
-                {doc.status !== 'WITHDRAWN' && (user.role === 'admin' || user.role === 'qa') && (
+                {canApprove && doc.status !== 'WITHDRAWN' && (
                   <button onClick={openEditModal} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
                     <FileEdit className="w-4 h-4"/> Edit Details
                   </button>
                 )}
-
-                {/* Draft Actions */}
                 {isDraft && isAuthor && (
                   <>
                     {strategy !== 'upload' && strategy !== 'word_template' && (
@@ -634,12 +638,12 @@ export default function DocumentDetailPage() {
                       </button>
                     )}
                     <button onClick={() => setShowSubmitModal(true)} disabled={saving} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors shadow-lg shadow-blue-500/20">
-                      <Send className="w-4 h-4"/> Submit for QA Review
+                      <Send className="w-4 h-4"/> Submit for Review
                     </button>
                   </>
                 )}
-
-                {/* Review Actions */}
+                
+               {/* Review Actions */}
                 {isReview && isAuthor && (
                   <button onClick={handleRecallDraft} disabled={saving} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors border border-dark-600">
                     <ArrowLeft className="w-4 h-4"/> Recall Submission
@@ -648,7 +652,7 @@ export default function DocumentDetailPage() {
                 {isReview && isQA && (
                   <button onClick={() => { setActiveTab('content'); setShowQaReviewModal(true); }}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors shadow-lg shadow-blue-500/20">
-                    <CheckSquare className="w-4 h-4"/> Sign Off QA Review
+                    <CheckCircle2 className="w-4 h-4"/> Sign Off QA Review
                   </button>
                 )}
 
@@ -659,8 +663,7 @@ export default function DocumentDetailPage() {
                   </button>
                 )}
 
-                {/* Withdrawal */}
-                {(doc.status === 'RELEASED' || doc.status === 'PLANNED' || doc.status === 'DRAFT' || doc.status === 'REVIEW' || doc.status === 'PENDING_APPROVAL') && canApprove && (
+                {(doc.status === 'RELEASED' || doc.status === 'PLANNED' || doc.status === 'DRAFT' || doc.status === 'REVIEW') && canApprove && (
                   <button onClick={() => setShowWithdrawModal(true)} className="px-4 py-2 bg-red-900/40 hover:bg-red-800/60 border border-red-700/30 text-red-400 rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
                     <Trash2 className="w-4 h-4"/> Withdraw
                   </button>
@@ -694,6 +697,8 @@ export default function DocumentDetailPage() {
 
               {/* Left: Content area */}
               <div className="lg:col-span-2 space-y-4">
+
+                {/* Tab bar */}
                 <div className="flex gap-1 bg-dark-900 border border-dark-700 rounded-xl p-1 w-fit">
                   {(['content', 'links', 'trail'] as const).map(tab => (
                     <button key={tab} onClick={() => setActiveTab(tab)}
@@ -706,39 +711,53 @@ export default function DocumentDetailPage() {
                 {/* CONTENT TAB */}
                 {activeTab === 'content' && (
                   <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
+                    {/* Document header */}
                     <div className="bg-dark-900 border-b border-dark-700 p-6 flex justify-between items-start">
                       <div className="flex gap-4">
                         <div className="w-14 h-14 bg-dark-950 border border-dark-700 rounded-lg flex items-center justify-center font-black text-lg text-gray-500">VTL</div>
                         <div>
                           <h2 className="text-base font-black text-white uppercase tracking-widest">VILAGIO TRADING LIMITED</h2>
                           <p className="text-sm font-bold text-primary-400 mt-0.5">{doc.doc_name}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Strategy: <span className={`font-medium text-blue-400`}>{strategy.replace('_', ' ')}</span></p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Strategy: <span className={`font-medium ${strategy === 'upload' ? 'text-amber-400' : strategy === 'richtext' ? 'text-purple-400' : strategy === 'word_template' ? 'text-green-400' : 'text-blue-400'}`}>{strategy.replace('_', ' ')}</span>
+                          </p>
                         </div>
                       </div>
                       <div className="text-right text-sm text-gray-400 space-y-1">
                         <p><strong>Doc No:</strong> {doc.doc_code}</p>
                         <p><strong>Rev:</strong> {activeVersion?.version_number || '-'}</p>
-                        <p><strong>Status:</strong> <span className="text-yellow-400">{activeVersion?.status.replace('_', ' ') || doc.status.replace('_', ' ')}</span></p>
+                        <p><strong>Status:</strong> <span className={isReleased ? 'text-green-400' : 'text-yellow-400'}>{activeVersion?.status || doc.status}</span></p>
                       </div>
                     </div>
 
+                    {/* Editor area */}
                     <div className="p-6 min-h-[400px] bg-dark-950">
                       {!activeVersion ? (
-                        <div className="text-center py-20 text-gray-500 italic">No content drafted yet. Click "Author First Draft" to begin.</div>
+                        <div className="text-center py-20 text-gray-500 italic">
+                          No content drafted yet. Click "Author First Draft" to begin.
+                        </div>
                       ) : strategy === 'word_template' ? (
+                        // ── word_template mode ──
                         <div className="space-y-4">
                           {isDraft && isAuthor && (
                             <div className="flex items-center gap-3 p-4 bg-primary-500/10 border border-primary-500/20 rounded-xl mb-4">
                               <CheckCircle2 className="w-5 h-5 text-primary-400 flex-shrink-0" />
                               <div>
                                 <p className="text-primary-400 font-bold text-sm">Word Template Mode</p>
-                                <p className="text-gray-400 text-xs mt-0.5">Download the template, edit offline, save as PDF, and upload the completed file.</p>
+                                <p className="text-gray-400 text-xs mt-0.5">
+                                  Download the template, edit offline, and upload the completed file.
+                                </p>
                               </div>
-                              <button onClick={handleDownloadTemplate} disabled={downloadingTemplate} className="ml-auto px-3 py-1.5 bg-dark-700 hover:bg-dark-600 text-gray-300 rounded-lg text-xs transition-colors flex-shrink-0">
+                              <button
+                                onClick={handleDownloadTemplate}
+                                disabled={downloadingTemplate}
+                                className="ml-auto px-3 py-1.5 bg-dark-700 hover:bg-dark-600 text-gray-300 rounded-lg text-xs transition-colors disabled:opacity-50 flex-shrink-0"
+                              >
                                 {downloadingTemplate ? 'Downloading...' : 'Download Template'}
                               </button>
                             </div>
                           )}
+
                           <div className="border-2 border-dashed border-dark-600 rounded-xl p-8 text-center">
                             {uploadedFileName ? (
                               <div className="space-y-3">
@@ -746,16 +765,21 @@ export default function DocumentDetailPage() {
                                   <CheckCircle2 className="w-7 h-7" />
                                   <div className="text-left">
                                     <p className="font-bold text-sm text-white">{uploadedFileName}</p>
-                                    <p className="text-xs text-gray-400 mt-0.5">Completed file uploaded securely.</p>
+                                    <p className="text-xs text-gray-400 mt-0.5">Completed template uploaded — system will add cover sheet on release</p>
                                   </div>
                                 </div>
                                 <div className="flex justify-center gap-3">
                                   {isDraft && isAuthor && (
-                                    <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-xs font-medium transition-colors">Replace File</button>
+                                    <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                                      className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-xs font-medium transition-colors">
+                                      Replace File
+                                    </button>
                                   )}
                                   {!isDraft && (
-                                    <button onClick={handleDownloadFile} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-colors">
-                                      <Download className="w-3.5 h-3.5" /> Download Uploaded File
+                                    <button onClick={handleDownloadAssembled} disabled={assembling}
+                                      className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-colors">
+                                      <Download className="w-3.5 h-3.5" />
+                                      {assembling ? 'Assembling…' : 'Download Controlled Document'}
                                     </button>
                                   )}
                                 </div>
@@ -764,19 +788,26 @@ export default function DocumentDetailPage() {
                               <div className="space-y-3">
                                 <Upload className="w-10 h-10 text-gray-600 mx-auto" />
                                 <div>
-                                  <p className="text-white font-medium text-sm">Upload your completed document (PDF recommended)</p>
+                                  <p className="text-white font-medium text-sm">Upload your completed Word document</p>
+                                  <p className="text-gray-500 text-xs mt-1">The system will add the cover sheet and running headers/footers automatically</p>
                                 </div>
                                 {isDraft && isAuthor && (
-                                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-bold mx-auto transition-colors">
+                                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                                    className="px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 mx-auto transition-colors disabled:opacity-50">
                                     {uploading ? 'Uploading…' : 'Upload Completed File'}
                                   </button>
                                 )}
                               </div>
                             )}
                           </div>
-                          <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc" className="hidden" onChange={handleFileUpload}/>
+                          <input ref={fileInputRef} type="file" accept=".docx,.doc,.pdf" className="hidden" onChange={handleFileUpload}/>
+                          <div className="bg-dark-800 border border-dark-700 rounded-lg p-4 text-sm text-gray-400">
+                            <p className="font-medium text-gray-300 mb-1">How this works</p>
+                            <p>You authored this document offline using the VTL Word template. On release, the system automatically prepends the official cover sheet (with document metadata, approval signatures, and revision history pulled from the QMS) and injects running headers and footers on every page. The final assembled document can be downloaded from this page or from the Inspector View.</p>
+                          </div>
                         </div>
                       ) : strategy === 'upload' ? (
+                        /* ── UPLOAD MODE ── */
                         <div className="space-y-6">
                           <div className="border-2 border-dashed border-dark-600 rounded-xl p-10 text-center">
                             {uploadedFileName ? (
@@ -789,11 +820,12 @@ export default function DocumentDetailPage() {
                                   </div>
                                 </div>
                                 <div className="flex justify-center gap-3">
-                                  <button onClick={handleDownloadFile} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm flex items-center gap-2">
+                                  <button onClick={handleDownloadFile} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm flex items-center gap-2 transition-colors">
                                     <Download className="w-4 h-4"/> Download Template
                                   </button>
                                   {isDraft && isAuthor && (
-                                    <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm flex items-center gap-2">
+                                    <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                                      className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors">
                                       <Upload className="w-4 h-4"/> {uploading ? 'Uploading...' : 'Replace File'}
                                     </button>
                                   )}
@@ -803,34 +835,58 @@ export default function DocumentDetailPage() {
                               <div className="space-y-4">
                                 <Upload className="w-12 h-12 text-gray-600 mx-auto"/>
                                 <div>
-                                  <p className="text-white font-medium">Upload controlled template (PDF recommended)</p>
+                                  <p className="text-white font-medium">Upload controlled template</p>
+                                  <p className="text-gray-500 text-sm mt-1">Word (.docx), Excel (.xlsx), or PDF. Max 20 MB.</p>
                                 </div>
                                 {isDraft && isAuthor && (
-                                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center gap-2 mx-auto">
+                                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                                    className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium flex items-center gap-2 mx-auto transition-colors">
                                     <Upload className="w-4 h-4"/> {uploading ? 'Uploading...' : 'Choose File'}
                                   </button>
                                 )}
                               </div>
                             )}
                           </div>
-                          <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx,.doc,.xls" className="hidden" onChange={handleFileUpload}/>
+                          <input ref={fileInputRef} type="file" accept=".docx,.xlsx,.doc,.xls,.pdf" className="hidden" onChange={handleFileUpload}/>
+                          <div className="bg-dark-800 border border-dark-700 rounded-lg p-4 text-sm text-gray-400">
+                            <p className="font-medium text-gray-300 mb-2">About upload mode</p>
+                            <p>Forms, checklists, logs, and registers are managed as file uploads. Upload the master blank template here. Users download it, complete it physically or digitally, and retain the completed record. The version control and approval workflow applies to the template itself.</p>
+                          </div>
                         </div>
                       ) : strategy === 'richtext' ? (
+                        /* ── RICH TEXT MODE ── */
                         <div className="space-y-4">
-                          <div className={`prose prose-invert max-w-none bg-white text-black p-8 rounded border min-h-[500px] overflow-x-auto ${isDraft && isAuthor ? 'border-primary-500/50' : 'border-gray-300'}`}
-                            contentEditable={isDraft && isAuthor} suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: content.html_content || '<p>Start typing...</p>' }}
+                          {isDraft && isAuthor && (
+                            <p className="text-xs text-primary-400 bg-primary-500/10 px-3 py-1 rounded-full border border-primary-500/20 w-fit">
+                              Click directly on the document below to type
+                            </p>
+                          )}
+                          <div
+                            className={`prose prose-invert max-w-none bg-white text-black p-8 rounded border min-h-[500px] overflow-x-auto ${isDraft && isAuthor ? 'border-primary-500/50' : 'border-gray-300'}`}
+                            contentEditable={isDraft && isAuthor}
+                            suppressContentEditableWarning
+                            dangerouslySetInnerHTML={{ __html: content.html_content || '<p>Start typing...</p>' }}
                             onBlur={e => setContent({ ...content, html_content: e.currentTarget.innerHTML })}
                           />
                         </div>
                       ) : (
+                        /* ── STRUCTURED MODE ── */
                         <div className="space-y-8">
                           {sections.map(sec => (
                             <div key={sec.id} className="space-y-2">
                               <h3 className="text-white font-bold border-b border-dark-700 pb-2 text-sm uppercase tracking-wider">{sec.title}</h3>
                               {isDraft && isAuthor ? (
-                                <textarea value={content[sec.id] || ''} onChange={e => setContent({ ...content, [sec.id]: e.target.value })} placeholder={sec.desc} rows={sec.id === 'procedure' ? 8 : 3} className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-gray-300 focus:outline-none focus:border-primary-500 transition-colors resize-y text-sm"/>
+                                <textarea
+                                  value={content[sec.id] || ''}
+                                  onChange={e => setContent({ ...content, [sec.id]: e.target.value })}
+                                  placeholder={sec.desc}
+                                  rows={sec.id === 'procedure' ? 8 : 3}
+                                  className="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-gray-300 focus:outline-none focus:border-primary-500 transition-colors resize-y text-sm"
+                                />
                               ) : (
-                                <div className="text-gray-300 whitespace-pre-wrap leading-relaxed py-2 text-sm">{content[sec.id] || <span className="text-gray-600 italic">Not specified</span>}</div>
+                                <div className="text-gray-300 whitespace-pre-wrap leading-relaxed py-2 text-sm">
+                                  {content[sec.id] || <span className="text-gray-600 italic">Not specified</span>}
+                                </div>
                               )}
                             </div>
                           ))}
@@ -862,7 +918,11 @@ export default function DocumentDetailPage() {
                                 <p className="text-gray-500 text-xs">{l.doc_type} · {l.status}</p>
                               </div>
                             </div>
-                            <button onClick={() => handleRemoveLink(l.link_id)} className="text-gray-600 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4"/></button>
+                            {canApprove && l.relationship !== 'referenced_by' && (
+                              <button onClick={() => handleRemoveLink(l.link_id)} className="text-gray-600 hover:text-red-400 transition-colors">
+                                <Trash2 className="w-4 h-4"/>
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -888,7 +948,9 @@ export default function DocumentDetailPage() {
                               <div className="flex items-start justify-between gap-2">
                                 <div>
                                   <span className={`text-xs font-bold uppercase tracking-wider ${actionColour(entry.action)}`}>{entry.action.replace(/_/g, ' ')}</span>
-                                  {entry.from_status && entry.to_status && <span className="text-xs text-gray-500 ml-2">{entry.from_status} → {entry.to_status}</span>}
+                                  {entry.from_status && entry.to_status && (
+                                    <span className="text-xs text-gray-500 ml-2">{entry.from_status} → {entry.to_status}</span>
+                                  )}
                                 </div>
                                 <span className="text-xs text-gray-500 flex-shrink-0">{new Date(entry.created_at).toLocaleString()}</span>
                               </div>
@@ -909,8 +971,7 @@ export default function DocumentDetailPage() {
                   <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-primary-400"/> Governance</h3>
                   <div className="space-y-3 text-sm">
                     <div><p className="text-gray-500 mb-0.5">Author</p><p className="text-white font-medium">{activeVersion?.author_name || '-'}</p></div>
-                    {activeVersion?.reviewer_name && <div><p className="text-gray-500 mb-0.5">Reviewed By (QA)</p><p className="text-white font-medium">{activeVersion.reviewer_name}</p></div>}
-                    {activeVersion?.approver_name && <div><p className="text-gray-500 mb-0.5">Approved By ({doc.doc_owner || 'Dept'})</p><p className="text-green-400 font-medium">{activeVersion.approver_name}</p></div>}
+                    {activeVersion?.reviewer_name && <div><p className="text-gray-500 mb-0.5">Reviewer</p><p className="text-white font-medium">{activeVersion.reviewer_name}</p></div>}
                     {activeVersion?.change_reason && <div><p className="text-gray-500 mb-0.5">Change reason</p><p className="text-white">{activeVersion.change_reason}</p></div>}
                     <div><p className="text-gray-500 mb-0.5">Effective date</p><p className="text-white font-medium">{activeVersion?.effective_date ? new Date(activeVersion.effective_date).toLocaleDateString() : 'Not released'}</p></div>
                     <div><p className="text-gray-500 mb-0.5">Review due</p><p className={`font-medium ${activeVersion?.review_due_date && new Date(activeVersion.review_due_date) < new Date() ? 'text-red-400' : 'text-white'}`}>
@@ -926,7 +987,7 @@ export default function DocumentDetailPage() {
                       <div key={v.version_id} onClick={() => { setActiveVersion(v); setContent(v.content_data || {}); setUploadedFileName(v.file_original_name || ''); }}
                         className={`pl-4 border-l-2 cursor-pointer transition-all hover:bg-dark-700/30 p-2 rounded-r-lg ${activeVersion?.version_id === v.version_id ? 'border-primary-500 bg-dark-700/50' : 'border-dark-600'}`}>
                         <p className="text-white font-bold text-sm">Version {v.version_number}</p>
-                        <p className="text-xs text-gray-400">{v.status.replace('_', ' ')} · {new Date(v.created_at).toLocaleDateString()}</p>
+                        <p className="text-xs text-gray-400">{v.status} · {new Date(v.created_at).toLocaleDateString()}</p>
                         {v.change_reason && <p className="text-xs text-gray-500 italic mt-0.5 truncate" title={v.change_reason}>{v.change_reason}</p>}
                       </div>
                     ))}
@@ -940,7 +1001,7 @@ export default function DocumentDetailPage() {
 
       {/* ── MODALS ─────────────────────────────────────────────────────────── */}
 
-      {/* Create revision modal */}
+      {/* Create revision modal (change_reason) */}
       {showDraftModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
@@ -950,22 +1011,30 @@ export default function DocumentDetailPage() {
             </div>
             <div className="p-6 space-y-4">
               <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-400 text-sm">
-                A revision of a released document requires a documented change reason.
+                A revision of a released document requires a documented change reason. This is recorded in the audit trail.
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Change Reason <span className="text-red-400">*</span></label>
-                <textarea value={changeReason} onChange={e => setChangeReason(e.target.value)} rows={4} className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none resize-none"/>
+                <textarea
+                  value={changeReason} onChange={e => setChangeReason(e.target.value)}
+                  placeholder="Describe what changed and why (e.g. Updated section 6 to reflect new equipment SOPs following NCR-2604-001)"
+                  rows={4}
+                  className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none resize-none"
+                />
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setShowDraftModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
-                <button onClick={() => doCreateDraft(changeReason)} disabled={!changeReason.trim() || saving} className="flex-1 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">Create Draft</button>
+                <button onClick={() => doCreateDraft(changeReason)} disabled={!changeReason.trim() || saving}
+                  className="flex-1 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">
+                  {saving ? 'Creating...' : 'Create Draft'}
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Submit for review modal */}
+      {/* Submit for review modal (reviewer assignment) */}
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
@@ -976,17 +1045,23 @@ export default function DocumentDetailPage() {
             <form onSubmit={handleSubmitReview} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2"><User className="w-4 h-4"/> Assign Reviewer (optional)</label>
-                <select value={reviewerId} onChange={e => setReviewerId(e.target.value)} className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none">
-                  <option value="">Broadcast to all QA personnel</option>
-                  {users.filter(u => u.role === 'qa' || u.role === 'admin').map(u => (<option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>))}
+                <select value={reviewerId} onChange={e => setReviewerId(e.target.value)}
+                  className="w-full px-4 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none">
+                  <option value="">Broadcast to all QA / Admin roles</option>
+                  {users.filter(u => ['qa', 'admin', 'manager', 'ceo', 'cfo'].includes(u.role)).map(u => (
+                    <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
+                  ))}
                 </select>
+                <p className="text-xs text-gray-500 mt-1">Assigning a named reviewer sends the notification directly to them. Leave blank to notify all QA personnel.</p>
               </div>
               <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-xs">
                 Once submitted, you will no longer be able to edit this draft.
               </div>
               <div className="flex gap-3">
                 <button type="button" onClick={() => setShowSubmitModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
-                <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">Submit for Review</button>
+                <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">
+                  {saving ? 'Submitting...' : 'Submit for Review'}
+                </button>
               </div>
             </form>
           </div>
@@ -998,7 +1073,7 @@ export default function DocumentDetailPage() {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2"><CheckSquare className="w-5 h-5 text-blue-400"/> Sign Off QA Review</h2>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-blue-400"/> Sign Off QA Review</h2>
               <button onClick={() => setShowQaReviewModal(false)}><X className="w-5 h-5 text-gray-400"/></button>
             </div>
             <form onSubmit={handleQaSignOff} className="p-6 space-y-5">
@@ -1037,37 +1112,12 @@ export default function DocumentDetailPage() {
         </div>
       )}
 
-      {/* Reject Review Modal */}
-      {showRejectModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2"><AlertCircle className="w-5 h-5 text-red-400"/> Reject & Return to Draft</h2>
-              <button onClick={() => setShowRejectModal(false)}><X className="w-5 h-5 text-gray-400"/></button>
-            </div>
-            <form onSubmit={handleRejectReview} className="p-6 space-y-4">
-              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
-                Rejecting this document returns it to <strong>DRAFT</strong> status so the author can make corrections. This rejection reason will be permanently recorded in the Audit Trail.
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Rejection Reason / Fixes Required <span className="text-red-400">*</span></label>
-                <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} required rows={4} className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-red-500 outline-none resize-none"/>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowRejectModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
-                <button type="submit" disabled={!rejectReason.trim() || saving} className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">Confirm Rejection</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Release approval modal */}
       {showApproval && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/50 flex justify-between">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2"><FileSignature className="w-5 h-5 text-green-400"/> Final Document Approval</h2>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2"><FileSignature className="w-5 h-5 text-green-400"/> QA Official Release</h2>
               <button onClick={() => setShowApproval(false)}><X className="w-5 h-5 text-gray-400"/></button>
             </div>
             <form onSubmit={handleApproveRelease} className="p-6 space-y-4">
@@ -1078,10 +1128,13 @@ export default function DocumentDetailPage() {
                 <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2"><Key className="w-4 h-4 text-primary-400"/> Digital Signature Password</label>
                 <input type="password" value={signature} onChange={e => setSignature(e.target.value)} required placeholder="Enter your login password"
                   className="w-full px-4 py-2.5 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono tracking-widest focus:border-primary-500 outline-none"/>
+                <p className="text-xs text-gray-500 mt-2">Your password constitutes an electronic signature per 21 CFR Part 11.</p>
               </div>
               <div className="flex gap-3">
                 <button type="button" onClick={() => setShowApproval(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg">Cancel</button>
-                <button type="submit" disabled={saving || !signature} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg disabled:opacity-50">Sign & Release</button>
+                <button type="submit" disabled={saving || !signature} className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg disabled:opacity-50">
+                  {saving ? 'Verifying...' : 'Sign & Release'}
+                </button>
               </div>
             </form>
           </div>
@@ -1098,19 +1151,25 @@ export default function DocumentDetailPage() {
             </div>
             <form onSubmit={handleWithdraw} className="p-6 space-y-4">
               <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
-                Withdrawal permanently retires this document from the active QMS.
+                Withdrawal permanently retires this document from the active QMS. It will remain visible in the audit trail but cannot be used or referenced. This is <strong>not</strong> the same as creating a new revision.
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Withdrawal Reason <span className="text-red-400">*</span></label>
-                <textarea value={withdrawReason} onChange={e => setWithdrawReason(e.target.value)} required rows={3} className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-red-500 outline-none resize-none"/>
+                <textarea value={withdrawReason} onChange={e => setWithdrawReason(e.target.value)} required rows={3}
+                  placeholder="e.g. Process no longer in use following restructure. Superseded by QA-OPS-SOP-012."
+                  className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-red-500 outline-none resize-none"/>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2"><Key className="w-4 h-4"/> Digital Signature</label>
-                <input type="password" value={withdrawSig} onChange={e => setWithdrawSig(e.target.value)} required className="w-full px-4 py-2.5 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono tracking-widest focus:border-red-500 outline-none"/>
+                <input type="password" value={withdrawSig} onChange={e => setWithdrawSig(e.target.value)} required placeholder="Your login password"
+                  className="w-full px-4 py-2.5 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono tracking-widest focus:border-red-500 outline-none"/>
               </div>
               <div className="flex gap-3">
                 <button type="button" onClick={() => setShowWithdrawModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
-                <button type="submit" disabled={saving || !withdrawReason.trim() || !withdrawSig} className="flex-1 px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg font-bold text-sm disabled:opacity-50">Confirm Withdrawal</button>
+                <button type="submit" disabled={saving || !withdrawReason.trim() || !withdrawSig}
+                  className="flex-1 px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg font-bold text-sm disabled:opacity-50">
+                  {saving ? 'Processing...' : 'Confirm Withdrawal'}
+                </button>
               </div>
             </form>
           </div>
@@ -1129,27 +1188,32 @@ export default function DocumentDetailPage() {
               <div className="bg-dark-900 p-4 rounded-xl border border-dark-700">
                 <label className="block text-sm font-bold text-gray-300 mb-2">Document Code</label>
                 <div className="relative">
-                  <input type="text" required value={editData.doc_code} onChange={e => setEditData({ ...editData, doc_code: e.target.value.toUpperCase() })} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono uppercase focus:border-primary-500 outline-none"/>
+                  <input type="text" required value={editData.doc_code}
+                    onChange={e => setEditData({ ...editData, doc_code: e.target.value.toUpperCase() })}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono uppercase focus:border-primary-500 outline-none"/>
                   {isGenCode && <div className="absolute right-3 top-1/2 -translate-y-1/2 text-primary-400"><RefreshCw className="w-4 h-4 animate-spin"/></div>}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-300 mb-2">Document Type</label>
-                  <select value={editData.doc_type} onChange={e => setEditData({ ...editData, doc_type: e.target.value })} required className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
+                  <select value={editData.doc_type} onChange={e => setEditData({ ...editData, doc_type: e.target.value })} required
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
                     <option value="SOP">SOP</option><option value="POL">POL</option><option value="MAN">MAN</option>
                     <option value="FRM">FRM</option><option value="LOG">LOG</option><option value="CHK">CHK</option><option value="REG">REG</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-300 mb-2">Document Title</label>
-                  <input type="text" required value={editData.doc_name} onChange={e => setEditData({ ...editData, doc_name: e.target.value })} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none"/>
+                  <input type="text" required value={editData.doc_name} onChange={e => setEditData({ ...editData, doc_name: e.target.value })}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none"/>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-300 mb-2">Section</label>
-                  <select value={editData.section_id} onChange={e => setEditData({ ...editData, section_id: e.target.value })} required className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
+                  <select value={editData.section_id} onChange={e => setEditData({ ...editData, section_id: e.target.value })} required
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
                     <option value="">Select...</option>
                     {allSections.map(s => <option key={s.section_id} value={s.section_id}>{s.section_code} — {s.section_name}</option>)}
                   </select>
@@ -1164,7 +1228,8 @@ export default function DocumentDetailPage() {
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-300 mb-2">ERP Module Link</label>
-                <select value={editData.erp_link_module} onChange={e => setEditData({ ...editData, erp_link_module: e.target.value })} className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
+                <select value={editData.erp_link_module} onChange={e => setEditData({ ...editData, erp_link_module: e.target.value })}
+                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500 outline-none">
                   <option value="">None</option><option value="Production">Production</option>
                   <option value="Inventory">Inventory</option><option value="HR">Human Resources</option>
                   <option value="IT">Information Technology</option><option value="QC Lab">QC Lab</option>
@@ -1181,47 +1246,281 @@ export default function DocumentDetailPage() {
         </div>
       )}
 
-      {/* Authoring mode selection modal */}
+      {/* Authoring mode selection modal — shown before first draft creation for SOP/POL/MAN */}
       {showAuthoringModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl">
+
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2"><FileEdit className="w-5 h-5 text-primary-500"/> Choose Authoring Method</h2>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <FileEdit className="w-5 h-5 text-primary-500"/>
+                Choose Authoring Method
+              </h2>
               <button onClick={() => setShowAuthoringModal(false)}><X className="w-6 h-6 text-gray-400"/></button>
             </div>
-            <div className="p-6 space-y-4">
-              <p className="text-gray-400 text-sm">Select how you want to author <span className="text-white font-medium">{doc?.doc_name}</span>. This is set at draft creation and cannot be changed afterwards.</p>
 
-              <div onClick={() => setSelectedAuthoringMode('structured')} className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${selectedAuthoringMode === 'structured' ? 'border-primary-500 bg-primary-500/10' : 'border-dark-600 bg-dark-900 hover:border-dark-500'}`}>
+            <div className="p-6 space-y-4">
+              <p className="text-gray-400 text-sm">
+                Select how you want to author <span className="text-white font-medium">{doc?.doc_name}</span>.
+                This is set at draft creation and cannot be changed afterwards.
+              </p>
+
+              {/* Option 1 — Structured editor */}
+              <div
+                onClick={() => setSelectedAuthoringMode('structured')}
+                className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${
+                  selectedAuthoringMode === 'structured'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-dark-600 bg-dark-900 hover:border-dark-500'
+                }`}
+              >
                 <div className="flex items-start gap-4">
-                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${selectedAuthoringMode === 'structured' ? 'border-primary-500 bg-primary-500' : 'border-dark-500'}`}>
+                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${
+                    selectedAuthoringMode === 'structured' ? 'border-primary-500 bg-primary-500' : 'border-dark-500'
+                  }`}>
                     {selectedAuthoringMode === 'structured' && <div className="w-2 h-2 rounded-full bg-white"/>}
                   </div>
                   <div>
                     <p className="text-white font-bold text-sm">Built-in Structured Editor</p>
-                    <p className="text-gray-400 text-sm mt-1">Fill in each section directly in the browser. Best for straightforward documents without complex tables or images.</p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      Fill in each section directly in the browser. Best for straightforward documents without complex tables or images.
+                    </p>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      <span className="text-xs px-2 py-1 bg-green-500/10 text-green-400 rounded border border-green-500/20">Simple setup</span>
+                      <span className="text-xs px-2 py-1 bg-green-500/10 text-green-400 rounded border border-green-500/20">No download needed</span>
+                      <span className="text-xs px-2 py-1 bg-yellow-500/10 text-yellow-400 rounded border border-yellow-500/20">Plain text only</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div onClick={() => setSelectedAuthoringMode('word_template')} className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${selectedAuthoringMode === 'word_template' ? 'border-purple-500 bg-purple-500/10' : 'border-dark-600 bg-dark-900 hover:border-dark-500'}`}>
+              {/* Option 2 — Word template */}
+              <div
+                onClick={() => setSelectedAuthoringMode('word_template')}
+                className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${
+                  selectedAuthoringMode === 'word_template'
+                    ? 'border-purple-500 bg-purple-500/10'
+                    : 'border-dark-600 bg-dark-900 hover:border-dark-500'
+                }`}
+              >
                 <div className="flex items-start gap-4">
-                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${selectedAuthoringMode === 'word_template' ? 'border-purple-500 bg-purple-500' : 'border-dark-500'}`}>
+                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${
+                    selectedAuthoringMode === 'word_template' ? 'border-purple-500 bg-purple-500' : 'border-dark-500'
+                  }`}>
                     {selectedAuthoringMode === 'word_template' && <div className="w-2 h-2 rounded-full bg-white"/>}
                   </div>
                   <div>
-                    <p className="text-white font-bold text-sm">Word Template / PDF Upload</p>
-                    <p className="text-gray-400 text-sm mt-1">Download a template, author offline in Word, then <strong>Save As PDF</strong> and upload the completed file. The system wraps it in a controlled cover sheet.</p>
+                    <p className="text-white font-bold text-sm">
+                      Word Template
+                      <span className="text-xs text-purple-400 font-normal ml-2">Recommended for complex documents</span>
+                    </p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      Download a pre-populated Word template, author offline in Microsoft Word with full formatting, tables, and images, then upload the completed file. The system adds the cover sheet, headers, and footers automatically on release.
+                    </p>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">Full Word formatting</span>
+                      <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">Tables &amp; images</span>
+                      <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 rounded border border-purple-500/20">System cover sheet on release</span>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {selectedAuthoringMode === 'word_template' && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                  <p>The Word template downloads automatically when you click "Create Draft". Follow the authoring guidelines in QA-QMS-SOP-002 before uploading your completed document.</p>
+                </div>
+              )}
             </div>
+
             <div className="px-6 py-4 border-t border-dark-700 flex justify-end gap-3">
-              <button onClick={() => setShowAuthoringModal(false)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg text-sm">Cancel</button>
-              <button onClick={handleConfirmAuthoringMode} disabled={saving} className={`px-8 py-2.5 text-white rounded-lg font-bold flex items-center gap-2 text-sm disabled:opacity-50 ${selectedAuthoringMode === 'word_template' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-primary-600 hover:bg-primary-700'}`}>
-                {saving ? 'Creating…' : 'Create Draft'}
+              <button
+                onClick={() => setShowAuthoringModal(false)}
+                className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAuthoringMode}
+                disabled={saving}
+                className={`px-8 py-2.5 text-white rounded-lg font-bold flex items-center gap-2 text-sm transition-colors disabled:opacity-50 ${
+                  selectedAuthoringMode === 'word_template'
+                    ? 'bg-purple-600 hover:bg-purple-700'
+                    : 'bg-primary-600 hover:bg-primary-700'
+                }`}
+              >
+                {saving ? 'Creating…' : selectedAuthoringMode === 'word_template'
+                  ? <><Download className="w-4 h-4"/> Create Draft &amp; Download Template</>
+                  : <><FileEdit className="w-4 h-4"/> Create Draft</>
+                }
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Draft modal — QA must confirm they have read the document before releasing */}
+      {showReviewModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-400"/> Review Draft Before Release
+              </h2>
+              <button onClick={() => { setShowReviewModal(false); setReviewConfirmed(false); }}>
+                <X className="w-5 h-5 text-gray-400"/>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Document identity summary */}
+              <div className="bg-dark-900 border border-dark-700 rounded-xl p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Document</span>
+                  <span className="text-white font-mono font-bold">{doc.doc_code}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Title</span>
+                  <span className="text-white font-medium text-right max-w-[280px]">{doc.doc_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Version</span>
+                  <span className="text-white">v{activeVersion?.version_number}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Author</span>
+                  <span className="text-white">{activeVersion?.author_name || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Strategy</span>
+                  <span className={`font-medium ${strategy === 'word_template' ? 'text-green-400' : strategy === 'upload' ? 'text-amber-400' : 'text-blue-400'}`}>
+                    {strategy.replace('_', ' ')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Strategy-specific guidance */}
+              {strategy === 'word_template' && (
+                <div className="space-y-3">
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 text-sm">
+                    <p className="font-bold mb-1">Word Template document — download required</p>
+                    <p className="text-blue-400/80">This document was authored offline in Microsoft Word. Download the uploaded draft file to read the full content before releasing.</p>
+                  </div>
+                  {activeVersion?.file_original_name ? (
+                    <button
+                      onClick={handleDownloadFile}
+                      className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors"
+                    >
+                      <Download className="w-4 h-4"/> Download Draft File to Review
+                    </button>
+                  ) : (
+                    <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                      <div>
+                        <p className="font-bold">No file uploaded</p>
+                        <p className="text-red-400/80 mt-0.5">The author submitted this document for review without uploading the completed Word file. Ask the author to create a new draft, upload the completed document, and resubmit.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {strategy === 'upload' && (
+                <div className="space-y-3">
+                  <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-sm">
+                    <p className="font-bold mb-1">Uploaded file — download required</p>
+                    <p className="text-amber-400/80">This document is a controlled uploaded file. Download and review the file before releasing.</p>
+                  </div>
+                  <button
+                    onClick={handleDownloadFile}
+                    className="w-full px-4 py-3 bg-dark-700 hover:bg-dark-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-colors"
+                  >
+                    <Download className="w-4 h-4"/> Download File to Review
+                  </button>
+                </div>
+              )}
+
+              {(strategy === 'structured' || strategy === 'richtext') && (
+                <div className="p-4 bg-primary-500/10 border border-primary-500/20 rounded-xl text-primary-400 text-sm">
+                  <p className="font-bold mb-1">Review the content in the Content tab</p>
+                  <p className="text-primary-400/80">Close this modal, read the full document content in the Content tab, then re-open this review step to confirm and proceed to release.</p>
+                </div>
+              )}
+
+              {/* Confirmation checkbox */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={reviewConfirmed}
+                  onChange={e => setReviewConfirmed(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded accent-green-500 flex-shrink-0 cursor-pointer"
+                />
+                <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
+                  I confirm I have read and reviewed the full content of this document and it is ready for release.
+                </span>
+              </label>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => { setShowReviewModal(false); setShowRejectModal(true); }}
+                  className="px-4 py-2 bg-red-900/30 hover:bg-red-900/60 border border-red-700/50 text-red-400 rounded-lg font-bold text-sm transition-colors whitespace-nowrap"
+                >
+                  Reject & Return
+                </button>
+                <div className="flex-1 flex gap-2">
+                  <button
+                    onClick={() => { setShowReviewModal(false); setReviewConfirmed(false); }}
+                    className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    disabled={!reviewConfirmed}
+                    onClick={() => { setShowReviewModal(false); setShowApproval(true); }}
+                    className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <FileSignature className="w-4 h-4"/> Proceed to Release
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Review Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-400"/> Reject & Return to Draft
+              </h2>
+              <button onClick={() => setShowRejectModal(false)}><X className="w-5 h-5 text-gray-400"/></button>
+            </div>
+            <form onSubmit={handleRejectReview} className="p-6 space-y-4">
+              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
+                Rejecting this document returns it to <strong>DRAFT</strong> status so the author can make corrections. This rejection reason will be permanently recorded in the Audit Trail.
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Rejection Reason / Fixes Required <span className="text-red-400">*</span></label>
+                <textarea
+                  value={rejectReason} onChange={e => setRejectReason(e.target.value)} required
+                  placeholder="e.g. Missing CCP step in section 6. Please update the procedure and resubmit."
+                  rows={4}
+                  className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-red-500 outline-none resize-none"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowRejectModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
+                <button type="submit" disabled={!rejectReason.trim() || saving}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                  {saving ? 'Rejecting...' : <><ArrowLeft className="w-4 h-4"/> Confirm Rejection</>}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
