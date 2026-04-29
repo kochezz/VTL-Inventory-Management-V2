@@ -309,10 +309,9 @@ function buildTemplateSections(docType) {
 async function generateBlankTemplate(docId, versionId, userId, res) {
   // Fetch document and version details
   const docRes = await pool.query(`
-    SELECT d.*, s.section_code, s.section_name, owner.full_name AS owner_name
+    SELECT d.*, s.section_code, s.section_name, d.doc_owner AS owner_name
     FROM qms_documents d
     JOIN qms_sections s ON d.section_id = s.section_id
-    LEFT JOIN users owner ON d.doc_owner = owner.user_id
     WHERE d.doc_id = $1
   `, [docId]);
   if (docRes.rows.length === 0) throw new Error('Document not found');
@@ -397,10 +396,9 @@ async function generateBlankTemplate(docId, versionId, userId, res) {
 
 async function assembleDocument(docId, versionId) {
   const docRes = await pool.query(`
-    SELECT d.*, s.section_code, s.section_name, owner.full_name AS owner_name
+    SELECT d.*, s.section_code, s.section_name, d.doc_owner AS owner_name
     FROM qms_documents d
     JOIN qms_sections s ON d.section_id = s.section_id
-    LEFT JOIN users owner ON d.doc_owner = owner.user_id
     WHERE d.doc_id = $1
   `, [docId]);
   const doc = docRes.rows[0];
