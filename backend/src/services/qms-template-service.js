@@ -246,7 +246,7 @@ function buildCoverSheet(doc, version, mode) {
         new TableRow({ children: [
           cell('Reviewer',  2000),
           cell(version.reviewer_name || '—', 2500),
-          cell(version.reviewed_by   ? 'Signed via Vilagio ERP' : '—', 2900, { italic: true, color: BRAND_LIGHT }),
+          cell(version.reviewer_id   ? 'Signed via Vilagio ERP' : '—', 2900, { italic: true, color: BRAND_LIGHT }),
           cell('—', 1670),
         ]}),
         new TableRow({ children: [
@@ -320,7 +320,7 @@ async function generateBlankTemplate(docId, versionId, userId, res) {
   const verRes = await pool.query(`
     SELECT v.*, u.full_name AS author_name
     FROM qms_document_versions v
-    LEFT JOIN users u ON v.authored_by = u.user_id
+    LEFT JOIN users u ON v.authored_by::uuid = u.user_id
     WHERE v.version_id = $1
   `, [versionId]);
   if (verRes.rows.length === 0) throw new Error('Version not found');
@@ -409,9 +409,9 @@ async function assembleDocument(docId, versionId) {
            rv.full_name AS reviewer_name,
            ap.full_name AS approver_name
     FROM qms_document_versions v
-    LEFT JOIN users a  ON v.authored_by  = a.user_id
-    LEFT JOIN users rv ON v.reviewer_id  = rv.user_id
-    LEFT JOIN users ap ON v.approved_by  = ap.user_id
+    LEFT JOIN users a  ON v.authored_by::uuid  = a.user_id
+    LEFT JOIN users rv ON v.reviewer_id::uuid  = rv.user_id
+    LEFT JOIN users ap ON v.approved_by::uuid  = ap.user_id
     WHERE v.version_id = $1
   `, [versionId]);
   const version = verRes.rows[0];
@@ -560,19 +560,18 @@ async function generateCoverOnlyDoc(doc, version) {
 // ============================================================================
 
 async function streamAssembledDocument(docId, versionId, res) {
-  const verRes = await pool.query(
-    'SELECT assembled_file_path, doc_code FROM qms_document_versions v JOIN qms_documents d ON v.doc_id = d.doc_id WHERE v.version_id = $1',
-    [versionId]
+  // Always re-assemble from live DB data — never serve from disk cache.
+  // The cached file was written before release when approved_by / reviewer_id /
+  // effective_date were still null. Serving it post-release means the cover
+  // sheet shows blanks in the Approval Record and Document Identity table.
+  const docCodeRes = await pool.query(
+    'SELECT doc_code FROM qms_documents WHERE doc_id = $1',
+    [docId]
   );
+  const docCode = docCodeRes.rows[0]?.doc_code || 'document';
 
-  let buffer;
-  if (verRes.rows[0]?.assembled_file_path && fs.existsSync(verRes.rows[0].assembled_file_path)) {
-    buffer = fs.readFileSync(verRes.rows[0].assembled_file_path);
-  } else {
-    buffer = await assembleDocument(docId, versionId);
-  }
+  const buffer = await assembleDocument(docId, versionId);
 
-  const docCode = verRes.rows[0]?.doc_code || 'document';
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   res.setHeader('Content-Disposition', `attachment; filename="${docCode}_controlled.docx"`);
   res.send(buffer);
