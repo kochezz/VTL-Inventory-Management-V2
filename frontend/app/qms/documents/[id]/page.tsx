@@ -247,7 +247,17 @@ export default function DocumentDetailPage() {
   const WORD_TEMPLATE_TYPES = ['SOP', 'POL', 'MAN'];
 
   async function handleCreateDraft() {
-    if (doc.status === 'RELEASED') { setShowDraftModal(true); return; }
+    if (doc.status === 'RELEASED') {
+      // Pre-select the previous version's authoring strategy so revisions default to the same method
+      const prevStrategy = activeVersion?.content_strategy;
+      if (prevStrategy === 'word_template' || prevStrategy === 'structured') {
+        setSelectedAuthoringMode(prevStrategy);
+      } else {
+        setSelectedAuthoringMode('structured');
+      }
+      setShowDraftModal(true);
+      return;
+    }
     if (WORD_TEMPLATE_TYPES.includes(doc?.doc_type)) {
       setSelectedAuthoringMode('structured');
       setShowAuthoringModal(true);
@@ -959,7 +969,7 @@ export default function DocumentDetailPage() {
       {/* Create revision modal */}
       {showDraftModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl">
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between">
               <h2 className="text-lg font-bold text-white flex items-center gap-2"><FilePlus className="w-5 h-5 text-yellow-400"/> Create New Revision</h2>
               <button onClick={() => setShowDraftModal(false)}><X className="w-5 h-5 text-gray-400"/></button>
@@ -970,11 +980,46 @@ export default function DocumentDetailPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Change Reason <span className="text-red-400">*</span></label>
-                <textarea value={changeReason} onChange={e => setChangeReason(e.target.value)} rows={4} className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none resize-none"/>
+                <textarea value={changeReason} onChange={e => setChangeReason(e.target.value)} rows={3} className="w-full px-4 py-3 bg-dark-900 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500 outline-none resize-none"/>
               </div>
+
+              {WORD_TEMPLATE_TYPES.includes(doc?.doc_type) && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-300">Authoring Method for this Revision</label>
+                  <div onClick={() => setSelectedAuthoringMode('word_template')} className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${selectedAuthoringMode === 'word_template' ? 'border-purple-500 bg-purple-500/10' : 'border-dark-600 bg-dark-900 hover:border-dark-500'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${selectedAuthoringMode === 'word_template' ? 'border-purple-500 bg-purple-500' : 'border-dark-500'}`}>
+                        {selectedAuthoringMode === 'word_template' && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
+                      </div>
+                      <div>
+                        <p className="text-white font-bold text-sm">Word Template / PDF Upload</p>
+                        <p className="text-gray-400 text-xs mt-0.5">Download the pre-populated template, update it in Word, then upload the completed file.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div onClick={() => setSelectedAuthoringMode('structured')} className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${selectedAuthoringMode === 'structured' ? 'border-primary-500 bg-primary-500/10' : 'border-dark-600 bg-dark-900 hover:border-dark-500'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${selectedAuthoringMode === 'structured' ? 'border-primary-500 bg-primary-500' : 'border-dark-500'}`}>
+                        {selectedAuthoringMode === 'structured' && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
+                      </div>
+                      <div>
+                        <p className="text-white font-bold text-sm">Built-in Structured Editor</p>
+                        <p className="text-gray-400 text-xs mt-0.5">Fill in each section directly in the browser.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setShowDraftModal(false)} className="flex-1 px-4 py-2 bg-dark-700 text-white rounded-lg text-sm">Cancel</button>
-                <button onClick={() => doCreateDraft(changeReason)} disabled={!changeReason.trim() || saving} className="flex-1 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-bold text-sm disabled:opacity-50">Create Draft</button>
+                <button
+                  onClick={() => doCreateDraft(changeReason, WORD_TEMPLATE_TYPES.includes(doc?.doc_type) ? selectedAuthoringMode : undefined)}
+                  disabled={!changeReason.trim() || saving}
+                  className={`flex-1 px-4 py-2 text-white rounded-lg font-bold text-sm disabled:opacity-50 ${selectedAuthoringMode === 'word_template' && WORD_TEMPLATE_TYPES.includes(doc?.doc_type) ? 'bg-purple-600 hover:bg-purple-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}
+                >
+                  {saving ? 'Creating…' : 'Create Draft'}
+                </button>
               </div>
             </div>
           </div>
