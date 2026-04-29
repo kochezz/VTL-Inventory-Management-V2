@@ -358,6 +358,19 @@ export default function DocumentDetailPage() {
     }
   }
 
+  // ── Print ─────────────────────────────────────────────────────────────────
+  // word_template and upload docs have no renderable HTML in the DOM —
+  // for those, the PDF audit pack is the correct printable artifact.
+  // structured / richtext render in-page so window.print() works correctly.
+
+  function handlePrint() {
+    if (strategy === 'word_template' || strategy === 'upload') {
+      handleDownloadControlledPDF();
+    } else {
+      window.print();
+    }
+  }
+
   // ── Submit for review ─────────────────────────────────────────────────────
 
   async function handleSubmitReview(e: React.FormEvent) {
@@ -615,8 +628,11 @@ export default function DocumentDetailPage() {
                   </button>
                 )}
                 {activeVersion && (
-                  <button onClick={() => window.print()} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
-                    <Printer className="w-4 h-4"/> Print
+                  <button onClick={handlePrint} disabled={assembling} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors disabled:opacity-50">
+                    <Printer className="w-4 h-4"/>
+                    {(strategy === 'word_template' || strategy === 'upload')
+                      ? (assembling ? 'Generating PDF…' : 'Print / Download PDF')
+                      : 'Print'}
                   </button>
                 )}
                 {doc.status !== 'WITHDRAWN' && (user?.role === 'admin' || user?.role === 'qa') && (
@@ -1260,6 +1276,97 @@ export default function DocumentDetailPage() {
           </div>
         </div>
       )}
+
+      {/* ── Print-only output (structured / richtext only) ────────────────────
+          hidden on screen, shown only when window.print() is called.
+          word_template and upload docs are handled by handlePrint() → PDF download.
+      ──────────────────────────────────────────────────────────────────────── */}
+      {(strategy === 'structured' || strategy === 'richtext') && activeVersion && (
+        <div className="hidden print:block bg-white text-black font-sans w-full p-8">
+
+          {/* Cover header */}
+          <div className="border-b-2 border-black pb-4 mb-6">
+            <div className="flex items-center gap-6 mb-4">
+              <div className="w-16 h-16 bg-gray-900 flex items-center justify-center rounded font-black text-white text-lg flex-shrink-0">VTL</div>
+              <div>
+                <h1 className="text-xl font-black uppercase tracking-widest text-black">VILAGIO TRADING LIMITED</h1>
+                <p className="text-xs text-gray-600 mt-0.5">Plot No. 28441, Gymkhana | Chingola, Zambia | quality@vilag.io</p>
+                <p className="text-xs text-gray-600">Quality Management System — ISO 9001:2015 Compliant</p>
+              </div>
+            </div>
+            <div className="text-center bg-gray-100 border-y-2 border-black py-2 mb-3">
+              <p className="text-xs font-bold uppercase tracking-widest text-gray-600">{doc.doc_type === 'SOP' ? 'Standard Operating Procedure' : doc.doc_type === 'POL' ? 'Corporate Policy' : doc.doc_type === 'MAN' ? 'Quality Manual' : 'Controlled Document'}</p>
+            </div>
+            <table className="w-full text-xs border border-black">
+              <tbody>
+                <tr className="border-b border-black">
+                  <td className="p-2 font-bold bg-gray-50 border-r border-black w-1/4 uppercase">Document Title</td>
+                  <td className="p-2 font-bold text-sm" colSpan={3}>{doc.doc_name}</td>
+                </tr>
+                <tr className="border-b border-black">
+                  <td className="p-2 font-bold bg-gray-50 border-r border-black uppercase">Document No.</td>
+                  <td className="p-2 font-mono font-bold">{doc.doc_code}</td>
+                  <td className="p-2 font-bold bg-gray-50 border-x border-black uppercase">Revision</td>
+                  <td className="p-2 font-mono">{activeVersion.version_number}</td>
+                </tr>
+                <tr className="border-b border-black">
+                  <td className="p-2 font-bold bg-gray-50 border-r border-black uppercase">Section</td>
+                  <td className="p-2">{doc.section_code} — {doc.section_name}</td>
+                  <td className="p-2 font-bold bg-gray-50 border-x border-black uppercase">Status</td>
+                  <td className="p-2 font-bold">{activeVersion.status}</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold bg-gray-50 border-r border-black uppercase">Effective Date</td>
+                  <td className="p-2">{isReleased && activeVersion.effective_date ? new Date(activeVersion.effective_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : 'UNRELEASED DRAFT'}</td>
+                  <td className="p-2 font-bold bg-gray-50 border-x border-black uppercase">Review Due</td>
+                  <td className="p-2">{activeVersion.review_due_date ? new Date(activeVersion.review_due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Document body */}
+          <div className="space-y-5 text-sm">
+            {strategy === 'richtext' ? (
+              <div dangerouslySetInnerHTML={{ __html: content.html_content || '' }} />
+            ) : (
+              sections.map(sec => {
+                const body = content[sec.id];
+                if (!body) return null;
+                return (
+                  <div key={sec.id} className="break-inside-avoid">
+                    <h3 className="font-bold text-sm border-b border-black pb-1 mb-2 uppercase">{sec.title}</h3>
+                    <div className="whitespace-pre-wrap leading-relaxed text-justify px-1 text-xs">{body}</div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Signature block */}
+          <div className="mt-12 pt-4 border-t-2 border-black text-xs">
+            <div className="grid grid-cols-2 gap-12 mb-4">
+              <div>
+                <p className="font-bold uppercase text-gray-500 mb-3">Authored By</p>
+                <p className="font-bold text-base border-b border-gray-400 pb-1">{activeVersion.author_name || '—'}</p>
+                <p className="text-gray-500 mt-1">Date: {new Date(activeVersion.created_at).toLocaleDateString('en-GB')}</p>
+              </div>
+              <div>
+                <p className="font-bold uppercase text-gray-500 mb-3">Approved By (QA Manager)</p>
+                <p className={`font-bold text-base border-b border-gray-400 pb-1 ${isReleased ? 'italic text-blue-900' : 'text-gray-400'}`}>
+                  {isReleased ? 'Electronically Signed & Approved' : 'Pending Approval'}
+                </p>
+                <p className="text-gray-500 mt-1">Date: {isReleased && activeVersion.effective_date ? new Date(activeVersion.effective_date).toLocaleDateString('en-GB') : '—'}</p>
+              </div>
+            </div>
+            <div className="text-center text-gray-400 font-bold text-xs uppercase tracking-widest border-t border-gray-200 pt-3">
+              Vilagio QMS Standard · Printed copies are uncontrolled · Verify against ERP before use
+            </div>
+          </div>
+
+        </div>
+      )}
+
     </>
   );
 }

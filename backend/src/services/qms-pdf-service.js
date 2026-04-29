@@ -90,7 +90,7 @@ class QMSPDFBuilder {
   }
 
   drawPageFooter() {
-    const y = PH - 30;
+    const y = PH - M + 8;  // 800pt — inside page boundary, safely below content area
     this.pdf
       .fillColor(BRAND.light).fontSize(7)
       .text(`Vilagio Trading Limited · QMS Audit Pack · Generated ${fmtFull(this.pack.generated_at)}`, M, y, { width: CW - 60 })
@@ -452,7 +452,7 @@ async function generateAuditPack(docId, mode, res) {
 
   const pdf = new PDFDocument({
     size: 'A4',
-    margin: M,
+    margins: { top: 0, bottom: 0, left: 0, right: 0 },
     info: {
       Title:    `${doc.doc_code} — ${doc.doc_name}`,
       Author:   'Vilagio QMS',
