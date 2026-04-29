@@ -191,7 +191,7 @@ const QmsService = {
       FROM qms_documents d
       JOIN qms_sections s ON d.section_id = s.section_id
       LEFT JOIN qms_document_versions v ON d.current_version_id = v.version_id
-      LEFT JOIN users u ON v.authored_by = u.user_id
+      LEFT JOIN users u ON v.authored_by::uuid = u.user_id
       WHERE d.status != 'WITHDRAWN'
     `;
     const params = [];
@@ -221,9 +221,9 @@ const QmsService = {
              rv.full_name AS reviewer_name,
              ap.full_name AS approver_name
       FROM qms_document_versions v
-      LEFT JOIN users a  ON v.authored_by  = a.user_id
-      LEFT JOIN users rv ON v.reviewer_id  = rv.user_id
-      LEFT JOIN users ap ON v.approved_by  = ap.user_id
+      LEFT JOIN users a  ON v.authored_by::uuid = a.user_id
+      LEFT JOIN users rv ON v.reviewer_id::uuid = rv.user_id
+      LEFT JOIN users ap ON v.approved_by::uuid = ap.user_id
       WHERE v.doc_id = $1
       ORDER BY v.created_at DESC
     `, [docId]);
@@ -355,6 +355,7 @@ const QmsService = {
 
       let newVersionNumber = '0.1';
       let previousContent = {};
+      let inheritedStrategy = null; // strategy carried forward from the released version
 
       if (doc.status === 'RELEASED' && doc.current_version_id) {
         const prevRes = await client.query(
@@ -364,12 +365,16 @@ const QmsService = {
         if (prevRes.rows.length > 0) {
           const currentVer = parseFloat(prevRes.rows[0].version_number);
           newVersionNumber = (currentVer + 1.0).toFixed(1);
-          
-          // Carry forward content only for structured docs; upload docs start fresh
-          const prevStrategy = prevRes.rows[0].content_strategy;
-          if (prevStrategy === 'structured' || prevStrategy === 'richtext') {
+
+          // Inherit the previous version's authoring strategy
+          inheritedStrategy = prevRes.rows[0].content_strategy;
+
+          // Carry forward content for in-browser strategies; file-based strategies start
+          // fresh (author re-uploads) but inherit the strategy type so same workflow applies
+          if (inheritedStrategy === 'structured' || inheritedStrategy === 'richtext') {
             previousContent = prevRes.rows[0].content_data || {};
           }
+          // word_template / upload: previousContent stays {} — author will re-upload
         }
       } else if (doc.status === 'PLANNED') {
         // Pre-populate richtext types with HTML template for convenience
@@ -380,8 +385,9 @@ const QmsService = {
         throw new Error(`Cannot create draft. Document is currently in "${doc.status}" status.`);
       }
 
-      // Phase 5: Determine Authoring Choice & Strategy dynamically
-      const authoringChoice = authoringChoiceParam || (['SOP', 'POL', 'MAN'].includes(doc.doc_type) ? 'structured' : 'upload');
+      // Phase 5: Determine Authoring Choice & Strategy.
+      // Priority: explicit caller param > inherited from released version > doc-type default
+      const authoringChoice = authoringChoiceParam || inheritedStrategy || (['SOP', 'POL', 'MAN'].includes(doc.doc_type) ? 'structured' : 'upload');
       const contentStrategy = authoringChoice; // content_strategy mirrors authoring_choice at creation
 
       const verRes = await client.query(`
@@ -884,8 +890,8 @@ const QmsService = {
     let query = `
       SELECT n.*, r.full_name AS raised_by_name, a.full_name AS assigned_to_name
       FROM qms_ncr n
-      LEFT JOIN users r ON n.raised_by = r.user_id
-      LEFT JOIN users a ON n.assigned_to = a.user_id
+      LEFT JOIN users r ON n.raised_by::uuid = r.user_id
+      LEFT JOIN users a ON n.assigned_to::uuid = a.user_id
       WHERE 1=1
     `;
     const params = [];
@@ -954,7 +960,7 @@ const QmsService = {
       SELECT c.*, n.ncr_code, o.full_name AS owner_name, v.full_name AS verified_by_name
       FROM qms_capa c
       JOIN qms_ncr n ON c.ncr_id = n.ncr_id
-      LEFT JOIN users o ON c.action_owner = o.user_id
+      LEFT JOIN users o ON c.action_owner::uuid = o.user_id
       LEFT JOIN users v ON c.verified_by = v.user_id
       WHERE 1=1
     `;
@@ -1016,7 +1022,7 @@ const QmsService = {
     const result = await pool.query(`
       SELECT a.*, u.full_name AS auditor_name
       FROM qms_audits a
-      LEFT JOIN users u ON a.lead_auditor = u.user_id
+      LEFT JOIN users u ON a.lead_auditor::uuid = u.user_id
       ORDER BY a.audit_date DESC
     `);
     return result.rows;
@@ -1107,7 +1113,7 @@ const QmsService = {
         v.updated_at     AS task_date
       FROM qms_document_versions v
       JOIN qms_documents d ON v.doc_id = d.doc_id
-      JOIN users author ON v.authored_by = author.user_id
+      JOIN users author ON v.authored_by::uuid = author.user_id
       WHERE v.reviewer_id = $1
         AND v.status = 'REVIEW'
       ORDER BY v.updated_at DESC
@@ -1193,7 +1199,7 @@ const QmsService = {
       FROM qms_review_tasks rt
       JOIN qms_documents d ON rt.doc_id = d.doc_id
       JOIN qms_document_versions v ON d.current_version_id = v.version_id
-      LEFT JOIN users u ON rt.assigned_to = u.user_id
+      LEFT JOIN users u ON rt.assigned_to::uuid = u.user_id
       WHERE 1=1
     `;
     const params = [];
@@ -1303,7 +1309,7 @@ const QmsService = {
       SELECT ncr_id, ncr_code, description, severity, status,
              u.full_name AS raised_by_name, created_at
       FROM qms_ncr n
-      LEFT JOIN users u ON n.raised_by = u.user_id
+      LEFT JOIN users u ON n.raised_by::uuid = u.user_id
       WHERE n.status IN ('OPEN', 'CAPA_REQUIRED')
       ORDER BY n.created_at DESC
     `);
@@ -1316,7 +1322,7 @@ const QmsService = {
              n.ncr_code, u.full_name AS owner_name, c.due_date
       FROM qms_capa c
       JOIN qms_ncr n ON c.ncr_id = n.ncr_id
-      LEFT JOIN users u ON c.action_owner = u.user_id
+      LEFT JOIN users u ON c.action_owner::uuid = u.user_id
       WHERE c.status IN ('OPEN', 'IN_PROGRESS')
       ORDER BY c.due_date ASC
     `);
@@ -1334,7 +1340,7 @@ const QmsService = {
         capa.capa_id, capa.capa_code, capa.action_description AS capa_description,
         capa.status AS capa_status
       FROM qms_document_versions v
-      LEFT JOIN users author ON v.authored_by = author.user_id
+      LEFT JOIN users author ON v.authored_by::uuid = author.user_id
       LEFT JOIN qms_ncr  ncr  ON v.triggered_by_ncr_id  = ncr.ncr_id
       LEFT JOIN qms_capa capa ON v.triggered_by_capa_id = capa.capa_id
       WHERE v.doc_id = $1
@@ -1352,7 +1358,7 @@ const QmsService = {
         v.created_at
       FROM qms_document_versions v
       JOIN qms_documents d ON v.doc_id = d.doc_id
-      LEFT JOIN users author ON v.authored_by = author.user_id
+      LEFT JOIN users author ON v.authored_by::uuid = author.user_id
       WHERE v.triggered_by_ncr_id = $1
       ORDER BY v.created_at DESC
     `, [ncrId]);
@@ -1384,9 +1390,9 @@ const QmsService = {
              ncr.ncr_code, ncr.description AS ncr_description, ncr.severity AS ncr_severity,
              capa.capa_code, capa.action_description AS capa_description
       FROM qms_document_versions v
-      LEFT JOIN users author   ON v.authored_by  = author.user_id
-      LEFT JOIN users reviewer ON v.reviewer_id  = reviewer.user_id
-      LEFT JOIN users approver ON v.approved_by  = approver.user_id
+      LEFT JOIN users author   ON v.authored_by::uuid = author.user_id
+      LEFT JOIN users reviewer ON v.reviewer_id::uuid = reviewer.user_id
+      LEFT JOIN users approver ON v.approved_by::uuid = approver.user_id
       LEFT JOIN qms_ncr  ncr   ON v.triggered_by_ncr_id  = ncr.ncr_id
       LEFT JOIN qms_capa capa  ON v.triggered_by_capa_id = capa.capa_id
       WHERE v.doc_id = $1
@@ -1400,7 +1406,7 @@ const QmsService = {
              u.role      AS approver_role
       FROM qms_approvals a
       JOIN qms_document_versions v ON a.version_id = v.version_id
-      LEFT JOIN users u ON a.approver_id = u.user_id
+      LEFT JOIN users u ON a.approver_id::uuid = u.user_id
       WHERE v.doc_id = $1
       ORDER BY a.action_at ASC
     `, [docId]);
@@ -1471,7 +1477,7 @@ const QmsService = {
              c.capa_code, c.action_description, c.status AS capa_status
       FROM qms_ncr n
       JOIN qms_document_versions v ON n.triggered_version_id = v.version_id
-      LEFT JOIN users raiser ON n.raised_by = raiser.user_id
+      LEFT JOIN users raiser ON n.raised_by::uuid = raiser.user_id
       LEFT JOIN qms_capa c ON c.ncr_id = n.ncr_id
       WHERE v.doc_id = $1
       ORDER BY n.created_at ASC

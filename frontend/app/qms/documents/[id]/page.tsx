@@ -278,15 +278,21 @@ export default function DocumentDetailPage() {
       if (authoringChoice) payload.authoring_choice = authoringChoice;
       const res = await api.post(`/qms/documents/${doc.doc_id}/draft`, payload);
 
-      if (authoringChoice === 'word_template' && res.data?.version_id) {
+      // Use the strategy the BACKEND actually assigned — may be inherited from
+      // the previous released version, not just what the caller passed in.
+      // This ensures revisions of word_template docs auto-download the new template.
+      const resolvedStrategy = res.data?.content_strategy || authoringChoice;
+      if (resolvedStrategy === 'word_template' && res.data?.version_id) {
         setTimeout(() => triggerTemplateDownload(res.data.version_id, res.data.version_number), 800);
       }
 
       setShowDraftModal(false);
       setChangeReason('');
       await fetchAll();
-      setSuccess(`Draft v${res.data.version_number} created.`);
-      setTimeout(() => setSuccess(''), 4000);
+      setSuccess(`Draft v${res.data.version_number} created.${
+        resolvedStrategy === 'word_template' ? ' Template downloading — author in Word and upload the completed file.' : ''
+      }`.trim());
+      setTimeout(() => setSuccess(''), 6000);
     } catch (err: any) { 
       setError(err.response?.data?.error || 'Failed to create draft'); 
     } finally { 
