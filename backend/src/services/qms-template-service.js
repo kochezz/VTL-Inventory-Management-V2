@@ -148,7 +148,15 @@ function placeholderPara() {
   });
 }
 
-function buildHeader(docCode, docName, version) {
+function buildHeader(docCode, docName, versionNumber, status) {
+  const statusText = status === 'RELEASED'
+    ? 'RELEASED — CONTROLLED DOCUMENT'
+    : status === 'SUPERSEDED'
+    ? 'SUPERSEDED VERSION'
+    : (status === 'REVIEW' || status === 'PENDING_APPROVAL')
+    ? 'UNDER REVIEW'
+    : 'DRAFT — NOT FOR DISTRIBUTION';
+
   return new Header({
     children: [
       new Paragraph({
@@ -157,7 +165,7 @@ function buildHeader(docCode, docName, version) {
         children: [
           new TextRun({ text: `${docCode}  |  ${docName}`, size: 16, color: BRAND_LIGHT, font: 'Arial' }),
           new TextRun({ text: '\t', size: 16, font: 'Arial' }),
-          new TextRun({ text: `v${version}  |  DRAFT — NOT FOR DISTRIBUTION`, bold: true, size: 16, color: BRAND_BLUE, font: 'Arial' }),
+          new TextRun({ text: `v${versionNumber}  |  ${statusText}`, bold: true, size: 16, color: BRAND_BLUE, font: 'Arial' }),
         ],
         tabStops: [{ type: TabStopType.RIGHT, position: CONTENT }]
       })
@@ -376,7 +384,7 @@ async function generateBlankTemplate(docId, versionId, userId, res) {
           margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN }
         }
       },
-      headers: { default: buildHeader(doc.doc_code, doc.doc_name, version.version_number) },
+      headers: { default: buildHeader(doc.doc_code, doc.doc_name, version.version_number, version.status) },
       footers: { default: buildFooter(doc.doc_code) },
       children: [
         ...buildCoverSheet(doc, version, 'template'),
@@ -446,7 +454,7 @@ async function assembleDocument(docId, versionId) {
           margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN }
         }
       },
-      headers: { default: buildHeader(doc.doc_code, doc.doc_name, version.version_number) },
+      headers: { default: buildHeader(doc.doc_code, doc.doc_name, version.version_number, version.status) },
       footers: { default: buildFooter(doc.doc_code) },
       children: buildCoverSheet(doc, version, 'assembled')
     }]
@@ -496,7 +504,22 @@ async function mergeDocxFiles(coverBuffer, contentBuffer, doc, version) {
     console.warn('[QMS Template] Could not extract body from uploaded document — returning cover only');
     return coverBuffer;
   }
-  const innerBodyContent = bodyMatch[1];
+
+  // Strip any embedded cover page from the uploaded file. When authors download the blank
+  // template it includes a cover sheet (ending with a page break) in the Word body. If that
+  // file is uploaded back without removing the cover, the assembled document would contain
+  // two cover pages. We detect the first page break paragraph and discard everything before it,
+  // keeping only the actual SOP content sections.
+  let innerBodyContent = bodyMatch[1];
+  const pageBreakParaMatch = innerBodyContent.match(/<w:p(?:\s[^>]*)?>(?:(?!<\/w:p>)[\s\S])*?<w:br[^>]+w:type=["']page["'][^>]*\/>(?:(?!<\/w:p>)[\s\S])*?<\/w:p>/);
+  if (pageBreakParaMatch) {
+    const afterBreak = innerBodyContent.slice(
+      innerBodyContent.indexOf(pageBreakParaMatch[0]) + pageBreakParaMatch[0].length
+    );
+    if (afterBreak.trim().length > 0) {
+      innerBodyContent = afterBreak;
+    }
+  }
 
   // Get the cover document XML
   let coverDocXml = await coverZip.file('word/document.xml').async('string');
@@ -547,7 +570,7 @@ async function generateCoverOnlyDoc(doc, version) {
           margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN }
         }
       },
-      headers: { default: buildHeader(doc.doc_code, doc.doc_name, version.version_number) },
+      headers: { default: buildHeader(doc.doc_code, doc.doc_name, version.version_number, version.status) },
       footers: { default: buildFooter(doc.doc_code) },
       children: buildCoverSheet(doc, version, 'assembled')
     }]
