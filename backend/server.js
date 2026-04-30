@@ -29,6 +29,9 @@ const salesRoutes             = require('./src/routes/sales-routes');
 // FIX: Imported the missing Sales Analytics routes!
 const salesAnalyticsRoutes    = require('./src/routes/sales-analytics-routes');
 
+// Mobile app aggregate routes
+const mobileRoutes            = require('./src/routes/mobile-routes');
+
 // QMS Periodic Review Scheduler (Render-safe — uses setInterval, not cron)
 const qmsScheduler            = require('./src/services/qms-scheduler');
 
@@ -99,6 +102,9 @@ app.use('/api/sales',              salesRoutes);
 
 // FIX: Mounted the missing Sales Analytics routes so the frontend can reach them!
 app.use('/api/sales-analytics',    salesAnalyticsRoutes);
+
+// Mobile app aggregate routes
+app.use('/api/mobile',             mobileRoutes);
 
 // ============================================================================
 // HEALTH CHECK

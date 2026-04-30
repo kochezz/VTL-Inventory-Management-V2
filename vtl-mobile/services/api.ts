@@ -1,0 +1,197 @@
+import axios, { InternalAxiosRequestConfig } from 'axios';
+import * as SecureStore from 'expo-secure-store';
+import { router } from 'expo-router';
+
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+export const apiClient = axios.create({
+  baseURL: BASE_URL,
+  timeout: 15000,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+// Attach Bearer token to every request
+apiClient.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  const token = await SecureStore.getItemAsync('vtl_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// On 401: attempt refresh, retry once, then force logout
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true;
+      try {
+        const refreshToken = await SecureStore.getItemAsync('vtl_refresh');
+        if (!refreshToken) throw new Error('No refresh token');
+
+        const { data } = await axios.post(`${BASE_URL}/api/auth/refresh`, { refreshToken });
+        await SecureStore.setItemAsync('vtl_token', data.token);
+
+        original.headers.Authorization = `Bearer ${data.token}`;
+        return apiClient(original);
+      } catch {
+        await SecureStore.deleteItemAsync('vtl_token');
+        await SecureStore.deleteItemAsync('vtl_refresh');
+        router.replace('/(auth)/login');
+        return Promise.reject(error);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// ── Typed API methods ────────────────────────────────────────────────────────
+
+export interface DashboardSummary {
+  active_batches: number;
+  open_ncrs: number;
+  overdue_capas: number;
+  low_stock_items: number;
+  zero_stock_items: number;
+  pending_docs_review: number;
+  qms_completion_pct: number;
+  recent_transactions_count: number;
+}
+
+export interface Alert {
+  id: string;
+  type: 'NCR' | 'CAPA_OVERDUE' | 'ZERO_STOCK' | 'DOC_REVIEW';
+  title: string;
+  description: string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  created_at: string;
+  actor_name: string | null;
+}
+
+export interface OperationsSummary {
+  batches: Batch[];
+  low_stock: LowStockItem[];
+  recent_transactions: Transaction[];
+}
+
+export interface Batch {
+  batch_id: string;
+  batch_number: string;
+  product_name: string;
+  status: string;
+  created_at: string;
+  created_by_name: string | null;
+}
+
+export interface LowStockItem {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  quantity: number;
+  reorder_level: number;
+  warehouse_location: string | null;
+}
+
+export interface Transaction {
+  transaction_type: string;
+  product_name: string;
+  quantity: number;
+  location: string;
+  operator_name: string | null;
+  created_at: string;
+}
+
+export interface QualitySummary {
+  qms_sections: QmsSection[];
+  open_ncrs: Ncr[];
+  overdue_capas: Capa[];
+  upcoming_audits: Audit[];
+  training_compliance_pct: number;
+}
+
+export interface QmsSection {
+  section_id: string;
+  section_name: string;
+  completion_percentage: number;
+  total_docs: number;
+  released_docs: number;
+}
+
+export interface Ncr {
+  ncr_id: string;
+  ncr_code: string;
+  description: string;
+  severity: string;
+  status: string;
+  created_at: string;
+  raised_by_name: string | null;
+}
+
+export interface Capa {
+  capa_id: string;
+  capa_code: string;
+  action_description: string;
+  due_date: string;
+  status: string;
+  owner_name: string | null;
+}
+
+export interface Audit {
+  audit_id: string;
+  audit_code: string;
+  audit_type: string;
+  audit_date: string;
+  scope: string;
+  status: string;
+  lead_auditor_name: string | null;
+}
+
+export interface PeopleSummary {
+  users_by_role: { role: string; count: number }[];
+  training_leaderboard: { top_10: TrainingUser[]; bottom_5: TrainingUser[] };
+  pending_acknowledgements: PendingAck[];
+  recent_activity: ActivityItem[];
+}
+
+export interface TrainingUser {
+  user_id: string;
+  full_name: string;
+  role: string;
+  acknowledged_count: number;
+}
+
+export interface PendingAck {
+  user_id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  pending_count: number;
+}
+
+export interface ActivityItem {
+  activity_id: string;
+  activity_type: string;
+  table_name: string;
+  created_at: string;
+  actor_name: string | null;
+}
+
+export const api = {
+  getDashboard: (): Promise<DashboardSummary> =>
+    apiClient.get('/api/mobile/dashboard').then((r) => r.data),
+
+  getAlerts: (limit = 20): Promise<Alert[]> =>
+    apiClient.get('/api/mobile/alerts', { params: { limit } }).then((r) => r.data),
+
+  getOperations: (): Promise<OperationsSummary> =>
+    apiClient.get('/api/mobile/operations').then((r) => r.data),
+
+  getQuality: (): Promise<QualitySummary> =>
+    apiClient.get('/api/mobile/quality').then((r) => r.data),
+
+  getPeople: (): Promise<PeopleSummary> =>
+    apiClient.get('/api/mobile/people').then((r) => r.data),
+};
+
+export default api;

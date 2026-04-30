@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "VTL Executive",
+    "slug": "vtl-executive",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F2942"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.vtl.executive"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F2942"
+      },
+      "package": "com.vtl.executive"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "scheme": "vtl-executive",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications"
+    ]
+  }
+}
