@@ -6,7 +6,8 @@ import {
 import { useAuthStore } from '../../stores/authStore';
 import { useRouter } from 'expo-router';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+// Hardcoded to bypass .env caching issues — matches BASE_URL in api.ts exactly
+const API_URL = 'https://vilagio-erp-backend.onrender.com/api';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -20,17 +21,20 @@ export default function LoginScreen() {
 
   // RAW TEST — bypasses axios and authStore completely
   const handleRawTest = async () => {
-    setDebugOutput('Testing...\n');
-    setDebugOutput(prev => prev + 'API_URL = ' + API_URL + '\n');
+    setDebugOutput('');
+    const lines: string[] = [];
 
-    if (!API_URL) {
-      setDebugOutput(prev => prev + 'ERROR: EXPO_PUBLIC_API_URL is undefined!\n');
-      setDebugOutput(prev => prev + 'Check your .env file and restart with --clear\n');
-      return;
-    }
+    const addLine = (line: string) => {
+      lines.push(line);
+      setDebugOutput(lines.join('\n'));
+    };
 
+    addLine('Testing...');
+    addLine('API_URL = ' + API_URL);
+
+    // /auth/login is relative to BASE_URL which already has /api
     const loginUrl = API_URL + '/auth/login';
-    setDebugOutput(prev => prev + 'POST to: ' + loginUrl + '\n');
+    addLine('POST to: ' + loginUrl);
 
     try {
       const response = await fetch(loginUrl, {
@@ -42,15 +46,29 @@ export default function LoginScreen() {
         body: JSON.stringify({ email, password }),
       });
 
-      setDebugOutput(prev => prev + 'HTTP Status: ' + response.status + '\n');
-      setDebugOutput(prev => prev + 'Content-Type: ' + response.headers.get('content-type') + '\n');
+      addLine('HTTP Status: ' + response.status);
+      addLine('Content-Type: ' + (response.headers.get('content-type') ?? 'none'));
 
       const rawText = await response.text();
-      setDebugOutput(prev => prev + 'Raw Response (first 500 chars):\n' + rawText.substring(0, 500) + '\n');
+      addLine('--- Raw Response ---');
+      addLine(rawText.substring(0, 600));
+
+      // If 200, try to parse as JSON to confirm it works
+      if (response.status === 200) {
+        try {
+          const json = JSON.parse(rawText);
+          addLine('--- Parsed OK ---');
+          addLine('Has token: ' + !!json.token);
+          addLine('Has user: ' + !!json.user);
+          addLine('User email: ' + (json.user?.email ?? 'n/a'));
+        } catch {
+          addLine('WARNING: Status 200 but response is not valid JSON');
+        }
+      }
 
     } catch (err: any) {
-      setDebugOutput(prev => prev + 'FETCH ERROR: ' + err.message + '\n');
-      setDebugOutput(prev => prev + 'This usually means wrong URL or no network\n');
+      addLine('FETCH ERROR: ' + err.message);
+      addLine('Check network connectivity and URL');
     }
   };
 
@@ -61,11 +79,12 @@ export default function LoginScreen() {
     }
     setLoading(true);
     setError('');
+    setDebugOutput('');
     try {
       await login(email, password);
       router.replace('/(tabs)');
     } catch (err: any) {
-      setError(err.message || 'Login failed');
+      setError(err.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -113,7 +132,7 @@ export default function LoginScreen() {
         }
       </TouchableOpacity>
 
-      {/* DEBUG BUTTON — REMOVE AFTER FIXING */}
+      {/* DEBUG BUTTON — remove once login is confirmed working */}
       <TouchableOpacity
         style={styles.debugButton}
         onPress={handleRawTest}
@@ -124,7 +143,7 @@ export default function LoginScreen() {
       {debugOutput ? (
         <View style={styles.debugBox}>
           <Text style={styles.debugLabel}>DEBUG OUTPUT:</Text>
-          <ScrollView style={styles.debugScroll}>
+          <ScrollView style={styles.debugScroll} nestedScrollEnabled>
             <Text style={styles.debugText}>{debugOutput}</Text>
           </ScrollView>
         </View>
@@ -168,6 +187,7 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     marginBottom: 16,
     textAlign: 'center',
+    fontSize: 14,
   },
   loginButton: {
     width: '100%',
@@ -184,15 +204,17 @@ const styles = StyleSheet.create({
   },
   debugButton: {
     width: '100%',
-    backgroundColor: '#334155',
+    backgroundColor: '#1E293B',
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
     paddingVertical: 12,
     alignItems: 'center',
     marginBottom: 16,
   },
   debugButtonText: {
-    color: '#94A3B8',
-    fontSize: 14,
+    color: '#64748B',
+    fontSize: 13,
   },
   debugBox: {
     width: '100%',
@@ -201,20 +223,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#0EA5E9',
     padding: 12,
-    maxHeight: 300,
+    maxHeight: 320,
   },
   debugLabel: {
     color: '#0EA5E9',
     fontWeight: 'bold',
     marginBottom: 8,
     fontSize: 12,
+    letterSpacing: 1,
   },
   debugScroll: {
-    maxHeight: 250,
+    maxHeight: 270,
   },
   debugText: {
     color: '#94A3B8',
     fontSize: 11,
     fontFamily: 'monospace',
+    lineHeight: 18,
   },
 });

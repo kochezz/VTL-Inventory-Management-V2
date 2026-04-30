@@ -3,8 +3,17 @@
   "compilerOptions": {
     "strict": true,
     "jsx": "react-native",
-    "lib": ["DOM", "ESNext"],
-    "types": ["node"]
+    "lib": [
+      "DOM",
+      "ESNext"
+    ],
+    "types": [
+      "node"
+    ]
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.d.ts", "expo-env.d.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.d.ts"
+  ]
 }

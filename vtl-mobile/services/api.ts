@@ -2,12 +2,16 @@ import axios, { InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
+// BASE_URL already includes /api — do NOT add /api again in any endpoint below
+const BASE_URL = 'https://vilagio-erp-backend.onrender.com/api';
 
 export const apiClient = axios.create({
   baseURL: BASE_URL,
   timeout: 15000,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  },
 });
 
 // Attach Bearer token to every request
@@ -16,13 +20,20 @@ apiClient.interceptors.request.use(async (config: InternalAxiosRequestConfig) =>
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  console.log('API REQUEST:', config.method?.toUpperCase(), BASE_URL + config.url);
   return config;
 });
 
 // On 401: attempt refresh, retry once, then force logout
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log('API RESPONSE:', response.status, response.config.url);
+    return response;
+  },
   async (error) => {
+    console.log('API ERROR:', error.response?.status, error.config?.url);
+    console.log('API ERROR DATA:', JSON.stringify(error.response?.data));
+
     const original = error.config;
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
@@ -30,7 +41,8 @@ apiClient.interceptors.response.use(
         const refreshToken = await SecureStore.getItemAsync('vtl_refresh');
         if (!refreshToken) throw new Error('No refresh token');
 
-        const { data } = await axios.post(`${BASE_URL}/api/auth/refresh`, { refreshToken });
+        // Refresh endpoint — /auth/refresh (baseURL already has /api)
+        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken });
         await SecureStore.setItemAsync('vtl_token', data.token);
 
         original.headers.Authorization = `Bearer ${data.token}`;
@@ -46,7 +58,7 @@ apiClient.interceptors.response.use(
   }
 );
 
-// ── Typed API methods ────────────────────────────────────────────────────────
+// ── Typed interfaces ─────────────────────────────────────────────────────────
 
 export interface DashboardSummary {
   active_batches: number;
@@ -67,12 +79,6 @@ export interface Alert {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
   created_at: string;
   actor_name: string | null;
-}
-
-export interface OperationsSummary {
-  batches: Batch[];
-  low_stock: LowStockItem[];
-  recent_transactions: Transaction[];
 }
 
 export interface Batch {
@@ -102,12 +108,10 @@ export interface Transaction {
   created_at: string;
 }
 
-export interface QualitySummary {
-  qms_sections: QmsSection[];
-  open_ncrs: Ncr[];
-  overdue_capas: Capa[];
-  upcoming_audits: Audit[];
-  training_compliance_pct: number;
+export interface OperationsSummary {
+  batches: Batch[];
+  low_stock: LowStockItem[];
+  recent_transactions: Transaction[];
 }
 
 export interface QmsSection {
@@ -147,11 +151,12 @@ export interface Audit {
   lead_auditor_name: string | null;
 }
 
-export interface PeopleSummary {
-  users_by_role: { role: string; count: number }[];
-  training_leaderboard: { top_10: TrainingUser[]; bottom_5: TrainingUser[] };
-  pending_acknowledgements: PendingAck[];
-  recent_activity: ActivityItem[];
+export interface QualitySummary {
+  qms_sections: QmsSection[];
+  open_ncrs: Ncr[];
+  overdue_capas: Capa[];
+  upcoming_audits: Audit[];
+  training_compliance_pct: number;
 }
 
 export interface TrainingUser {
@@ -177,21 +182,33 @@ export interface ActivityItem {
   actor_name: string | null;
 }
 
+export interface PeopleSummary {
+  users_by_role: { role: string; count: number }[];
+  training_leaderboard: { top_10: TrainingUser[]; bottom_5: TrainingUser[] };
+  pending_acknowledgements: PendingAck[];
+  recent_activity: ActivityItem[];
+}
+
+// ── API methods ──────────────────────────────────────────────────────────────
+// NOTE: paths here are RELATIVE to BASE_URL which already ends in /api
+// So '/mobile/dashboard' becomes 'https://.../api/mobile/dashboard' ✓
+// Do NOT write '/api/mobile/dashboard' — that would double the /api prefix ✗
+
 export const api = {
   getDashboard: (): Promise<DashboardSummary> =>
-    apiClient.get('/api/mobile/dashboard').then((r) => r.data),
+    apiClient.get('/mobile/dashboard').then((r) => r.data),
 
   getAlerts: (limit = 20): Promise<Alert[]> =>
-    apiClient.get('/api/mobile/alerts', { params: { limit } }).then((r) => r.data),
+    apiClient.get('/mobile/alerts', { params: { limit } }).then((r) => r.data),
 
   getOperations: (): Promise<OperationsSummary> =>
-    apiClient.get('/api/mobile/operations').then((r) => r.data),
+    apiClient.get('/mobile/operations').then((r) => r.data),
 
   getQuality: (): Promise<QualitySummary> =>
-    apiClient.get('/api/mobile/quality').then((r) => r.data),
+    apiClient.get('/mobile/quality').then((r) => r.data),
 
   getPeople: (): Promise<PeopleSummary> =>
-    apiClient.get('/api/mobile/people').then((r) => r.data),
+    apiClient.get('/mobile/people').then((r) => r.data),
 };
 
 export default api;
