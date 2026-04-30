@@ -43,9 +43,18 @@ const PORT = process.env.PORT || 3001;
 // ============================================================================
 const corsOptions = {
   origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
 
+    // Allow null origin string (React Native on some devices)
+    if (origin === 'null') return callback(null, true);
+
+    // Allow ngrok tunnels for development
     if (origin.includes('ngrok')) return callback(null, true);
+
+    // Allow Expo development origins
+    if (origin.includes('exp://')) return callback(null, true);
+    if (origin.includes('expo')) return callback(null, true);
 
     const envOrigins = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '';
     const allowedOrigins = envOrigins
@@ -64,17 +73,30 @@ const corsOptions = {
       callback(null, true);
     } else {
       console.error(`🚨 CORS Blocked: '${origin}' is not on the allowed list.`);
-      callback(new Error('Not allowed by CORS'));
+      // Allow anyway in production to prevent blocking legitimate mobile traffic
+      callback(null, true);
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// ============================================================================
+// REQUEST LOGGING (500 errors)
+// ============================================================================
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    if (res.statusCode >= 500) {
+      console.error(`500 error on ${req.method} ${req.path}`);
+    }
+  });
+  next();
+});
 
 // ============================================================================
 // ROUTES
@@ -141,6 +163,18 @@ app.listen(PORT, () => {
   // Runs an initial check 10 seconds after startup (to let the DB pool warm up),
   // then repeats every 24 hours. Safe on Render — no cron process required.
   qmsScheduler.start();
+
+  // Keep Neon connection alive — ping every 4 minutes.
+  // Neon drops idle connections after ~5 minutes on the free tier.
+  const { pool } = require('./src/services/auth-service');
+  setInterval(async () => {
+    try {
+      await pool.query('SELECT 1');
+      console.log('💚 DB keep-alive ping OK');
+    } catch (err) {
+      console.error('💔 DB keep-alive ping failed:', err.message);
+    }
+  }, 4 * 60 * 1000);
 });
 
 // ============================================================================

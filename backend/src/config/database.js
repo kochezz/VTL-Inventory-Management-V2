@@ -16,10 +16,10 @@ const config = {
   },
 
   pool: {
-    min: parseInt(process.env.DB_POOL_MIN) || 2,
+    min: parseInt(process.env.DB_POOL_MIN) || 0,
     max: parseInt(process.env.DB_POOL_MAX) || 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 30000,
   },
 
   query: {
@@ -120,8 +120,10 @@ const pool = new Pool({
   connectionTimeoutMillis: config.pool.connectionTimeoutMillis,
 });
 
+// Non-fatal error handler — prevents Node.js from crashing on
+// "Connection terminated unexpectedly" (Neon idle drop)
 pool.on("error", (err) => {
-  console.error("❌ Unexpected PG pool error:", err);
+  console.error("PG pool error (non-fatal):", err.message);
 });
 
 module.exports = {

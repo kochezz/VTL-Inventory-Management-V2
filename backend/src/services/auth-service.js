@@ -2,19 +2,25 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
-// Database connection pool
+// Database connection pool — Neon serverless resilience settings
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  min: 0,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 30000,
+  allowExitOnIdle: false,
 });
 
-// Test database connection
 pool.on('connect', () => {
   console.log('✅ Database connected successfully');
 });
 
+// Non-fatal error handler — prevents Node.js from crashing on
+// "Connection terminated unexpectedly" (Neon idle drop)
 pool.on('error', (err) => {
-  console.error('❌ Database connection error:', err);
+  console.error('PG pool error (non-fatal):', err.message);
 });
 
 // Generate access token (short-lived)
