@@ -232,13 +232,31 @@ export default function DocumentDetailPage() {
       const url  = window.URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      a.download = `${doc.doc_code}_v${activeVersion?.version_number}_CONTROLLED.pdf`;
+      a.download = `QMS_AuditPack_${doc.doc_code}_current_${new Date().toISOString().slice(0,10)}.pdf`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (e: any) {
-      setError(await extractBlobError(e, 'PDF generation failed. Ensure your uploaded file is a PDF.'));
-    } finally { 
-      setAssembling(false); 
+      setError(await extractBlobError(e, 'PDF generation failed.'));
+    } finally {
+      setAssembling(false);
+    }
+  }
+
+  async function handleDownloadAssembledDoc() {
+    setAssembling(true);
+    try {
+      const res = await api.get(`/qms/documents/${params.id}/assembled`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `${doc.doc_code}_v${activeVersion?.version_number}_CONTROLLED.docx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError('Controlled document download failed.');
+    } finally {
+      setAssembling(false);
     }
   }
 
@@ -624,12 +642,12 @@ export default function DocumentDetailPage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {/* Controlled PDF Download */}
+                {/* Assembled controlled document download — always fresh from DB */}
                 {isReleased && (
-                  <button onClick={handleDownloadControlledPDF} disabled={assembling}
+                  <button onClick={handleDownloadAssembledDoc} disabled={assembling}
                     className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors">
                     <Download className="w-4 h-4 text-primary-400" />
-                    {assembling ? 'Generating PDF…' : 'Download Controlled PDF'}
+                    {assembling ? 'Generating…' : 'Download Controlled Document'}
                   </button>
                 )}
 
@@ -644,11 +662,14 @@ export default function DocumentDetailPage() {
                   </button>
                 )}
                 {activeVersion && (
-                  <button onClick={handlePrint} disabled={assembling} className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors disabled:opacity-50">
+                  <button
+                    onClick={isReleased ? handleDownloadControlledPDF : handlePrint}
+                    disabled={assembling}
+                    className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg font-medium flex items-center gap-2 text-sm transition-colors disabled:opacity-50">
                     <Printer className="w-4 h-4"/>
-                    {(strategy === 'word_template' || strategy === 'upload')
-                      ? (assembling ? 'Generating PDF…' : 'Print / Download PDF')
-                      : 'Print'}
+                    {isReleased
+                      ? (assembling ? 'Generating PDF…' : 'Audit Pack PDF')
+                      : (strategy === 'word_template' || strategy === 'upload' ? 'Print / Download PDF' : 'Print')}
                   </button>
                 )}
                 {doc.status !== 'WITHDRAWN' && (user?.role === 'admin' || user?.role === 'qa') && (
