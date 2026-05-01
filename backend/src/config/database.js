@@ -96,11 +96,11 @@ function getSummary() {
 // Validate on load (same idea as your original)
 const validation = validateConfig();
 if (!validation.valid) {
-  console.error("❌ Database configuration errors:");
+  console.error("❌ Database configuration errors — server will attempt to start anyway:");
   validation.errors.forEach((e) => console.error(`   - ${e}`));
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("Invalid database configuration");
-  }
+  // Do NOT throw here — a synchronous throw during require() crashes the entire
+  // process before app.listen fires, causing Render to serve its own 404 page.
+  // Let the pool fail on the first query instead, where the error is recoverable.
 }
 if (validation.warnings.length) {
   console.warn("⚠️  Database configuration warnings:");

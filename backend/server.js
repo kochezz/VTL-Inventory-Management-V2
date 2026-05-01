@@ -87,12 +87,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // ============================================================================
-// REQUEST LOGGING (500 errors)
+// REQUEST LOGGING — every request + 500 errors
 // ============================================================================
 app.use((req, res, next) => {
+  console.log(`→ ${req.method} ${req.originalUrl}`);
   res.on('finish', () => {
-    if (res.statusCode >= 500) {
-      console.error(`500 error on ${req.method} ${req.path}`);
+    if (res.statusCode >= 400) {
+      console.log(`← ${res.statusCode} ${req.method} ${req.originalUrl}`);
     }
   });
   next();
@@ -137,6 +138,15 @@ app.get('/health', (req, res) => {
     message: 'Vilagio API is running',
     timestamp: new Date().toISOString()
   });
+});
+
+// ============================================================================
+// 404 — must come after all route registrations, before error handler
+// Returns JSON (not plain text) so the mobile app can parse it safely
+// ============================================================================
+app.use((req, res, next) => {
+  console.log(`❌ 404 Not Found triggered for: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: 'Route not found', path: req.originalUrl });
 });
 
 // ============================================================================
