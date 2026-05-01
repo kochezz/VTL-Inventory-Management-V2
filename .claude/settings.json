@@ -8,7 +8,9 @@
       "PowerShell(Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Write-Host \"Port 8081 cleared\")",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(node -e \"require\\('./src/services/mobile-service.js'\\)\")",
+      "Bash(node -e \"require\\('./src/services/mobile-service.js'\\); require\\('./src/routes/mobile-routes.js'\\)\")"
     ]
   }
 }
