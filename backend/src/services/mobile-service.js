@@ -461,8 +461,6 @@ const mobileService = {
   }
 };
 
-};
-
 // ── Push notification helper ──────────────────────────────────────────────────
 // Uses the Expo push API directly — no server-side SDK needed.
 // Call this from any service that needs to notify mobile users.
