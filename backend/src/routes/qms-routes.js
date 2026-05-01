@@ -517,6 +517,22 @@ router.get('/ncrs/open', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/qms/ncrs/:id — full NCR detail for mobile app
+router.get('/ncrs/:id', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT n.*, r.full_name AS raised_by_name, a.full_name AS assigned_to_name
+       FROM qms_ncr n
+       LEFT JOIN users r ON n.raised_by::uuid = r.user_id
+       LEFT JOIN users a ON n.assigned_to::uuid = a.user_id
+       WHERE n.ncr_id = $1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'NCR not found' });
+    res.json(result.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/ncrs/:id/document-impact', async (req, res) => {
   try { res.json(await qmsService.getNCRDocumentImpact(req.params.id)); }
   catch (e) { res.status(500).json({ error: e.message }); }

@@ -201,6 +201,71 @@ export interface PeopleSummary {
   recent_activity: ActivityItem[];
 }
 
+// ── Batch detail ─────────────────────────────────────────────────────────────
+
+export interface BatchComponent {
+  component_id: string;
+  component_name: string;
+  sku: string;
+  quantity_assigned: number;
+  quantity_required: number;
+  material_status: string;
+  supplier_batch_lot: string | null;
+  location_name: string | null;
+  location_code: string | null;
+}
+
+export interface QAGate {
+  gate_id: string;
+  gate_number: number;
+  gate_name: string;
+  status: string;
+  approved_by_name: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
+}
+
+export interface BatchDetail {
+  batch_id: string;
+  batch_number: string;
+  batch_record_code: string;
+  product_name: string;
+  sku: string;
+  production_date: string;
+  production_line: string;
+  shift: string;
+  planned_quantity: number;
+  actual_output: number;
+  rejected_bottles: number;
+  yield_percentage: number;
+  status: string;
+  display_status: string;
+  line_supervisor_name: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  components: BatchComponent[];
+  qa_gates: QAGate[];
+}
+
+// ── NCR detail ────────────────────────────────────────────────────────────────
+
+export interface NCRDetail {
+  ncr_id: string;
+  ncr_code: string;
+  description: string;
+  severity: string;
+  status: string;
+  raised_by: string;
+  raised_by_name: string | null;
+  assigned_to: string | null;
+  assigned_to_name: string | null;
+  root_cause: string | null;
+  resolution: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
 // ── API methods ──────────────────────────────────────────────────────────────
 // NOTE: paths here are RELATIVE to BASE_URL which already ends in /api
 // So '/mobile/dashboard' becomes 'https://.../api/mobile/dashboard' ✓
@@ -221,6 +286,12 @@ export const api = {
 
   getPeople: (): Promise<PeopleSummary> =>
     apiClient.get('/mobile/people').then((r) => r.data),
+
+  getBatch: (id: string): Promise<BatchDetail> =>
+    apiClient.get(`/production/batches/${id}`).then((r) => r.data),
+
+  getNCR: (id: string): Promise<NCRDetail> =>
+    apiClient.get(`/qms/ncrs/${id}`).then((r) => r.data),
 };
 
 export default api;
