@@ -78,7 +78,7 @@ const mobileService = {
     const query = `
       SELECT * FROM (
 
-        -- NCRs raised in last 48 hours
+        -- NCRs this month
         SELECT
           n.ncr_id::text                    AS id,
           'NCR'                             AS type,
@@ -89,11 +89,11 @@ const mobileService = {
           u.full_name                       AS actor_name
         FROM qms_ncr n
         LEFT JOIN users u ON n.raised_by::uuid = u.user_id
-        WHERE n.created_at >= NOW() - INTERVAL '48 hours'
+        WHERE n.created_at >= DATE_TRUNC('month', NOW())
 
         UNION ALL
 
-        -- Overdue CAPAs
+        -- Overdue CAPAs created this month
         SELECT
           c.capa_id::text                       AS id,
           'CAPA_OVERDUE'                        AS type,
@@ -106,10 +106,11 @@ const mobileService = {
         LEFT JOIN users u ON c.action_owner::uuid = u.user_id
         WHERE c.due_date < NOW()
           AND c.status NOT IN ('CLOSED','VERIFIED')
+          AND c.created_at >= DATE_TRUNC('month', NOW())
 
         UNION ALL
 
-        -- Zero-stock products
+        -- Zero-stock products updated this month
         SELECT
           i.inventory_id::text                                AS id,
           'ZERO_STOCK'                                        AS type,
@@ -120,11 +121,13 @@ const mobileService = {
           NULL                                                AS actor_name
         FROM inventory i
         JOIN products p ON i.product_id = p.product_id
-        WHERE i.quantity_on_hand = 0 AND p.is_active = true
+        WHERE i.quantity_on_hand = 0
+          AND p.is_active = true
+          AND COALESCE(i.last_updated, NOW()) >= DATE_TRUNC('month', NOW())
 
         UNION ALL
 
-        -- Documents awaiting review
+        -- Documents awaiting review created this month
         SELECT
           d.doc_id::text                                      AS id,
           'DOC_REVIEW'                                        AS type,
@@ -135,6 +138,7 @@ const mobileService = {
           NULL                                                AS actor_name
         FROM qms_documents d
         WHERE d.status = 'REVIEW'
+          AND d.created_at >= DATE_TRUNC('month', NOW())
 
       ) alerts
       ORDER BY created_at DESC NULLS LAST
@@ -142,10 +146,15 @@ const mobileService = {
     `;
     try {
       const result = await pool.query(query, [limit]);
-      return result.rows;
+      const alerts = result.rows;
+      return {
+        alerts,
+        total_this_month: alerts.length,
+        month_label: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }),
+      };
     } catch (err) {
       console.error('❌ getAlertFeed error:', err.message);
-      return [];
+      return { alerts: [], total_this_month: 0, month_label: '' };
     }
   },
 

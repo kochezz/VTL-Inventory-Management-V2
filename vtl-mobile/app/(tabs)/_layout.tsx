@@ -1,8 +1,6 @@
 import { Tabs } from 'expo-router';
-import { Home, Settings2, ShieldCheck, TrendingUp, Users } from 'lucide-react-native';
+import { Text } from 'react-native';
 import { COLORS } from '../../constants/theme';
-
-type IconProps = { color: string; size: number };
 
 export default function TabLayout() {
   return (
@@ -11,16 +9,16 @@ export default function TabLayout() {
         headerShown: false,
         tabBarStyle: {
           backgroundColor: COLORS.surface,
-          borderTopColor: COLORS.border,
           borderTopWidth: 1,
+          borderTopColor: COLORS.border,
           height: 64,
           paddingBottom: 8,
         },
         tabBarActiveTintColor: COLORS.sky,
-        tabBarInactiveTintColor: '#64748B',
+        tabBarInactiveTintColor: COLORS.textMuted,
         tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '500',
+          fontSize: 10,
+          fontWeight: '600',
         },
       }}
     >
@@ -28,35 +26,45 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }: IconProps) => <Home color={color} size={size} />,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 20, color }}>⌂</Text>
+          ),
         }}
       />
       <Tabs.Screen
         name="operations"
         options={{
           title: 'Operations',
-          tabBarIcon: ({ color, size }: IconProps) => <Settings2 color={color} size={size} />,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 20, color }}>⚙</Text>
+          ),
         }}
       />
       <Tabs.Screen
         name="quality"
         options={{
           title: 'Quality',
-          tabBarIcon: ({ color, size }: IconProps) => <ShieldCheck color={color} size={size} />,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 20, color }}>🛡</Text>
+          ),
         }}
       />
       <Tabs.Screen
         name="commercial"
         options={{
           title: 'Commercial',
-          tabBarIcon: ({ color, size }: IconProps) => <TrendingUp color={color} size={size} />,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 20, color }}>📊</Text>
+          ),
         }}
       />
       <Tabs.Screen
         name="people"
         options={{
           title: 'People',
-          tabBarIcon: ({ color, size }: IconProps) => <Users color={color} size={size} />,
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 20, color }}>👥</Text>
+          ),
         }}
       />
     </Tabs>

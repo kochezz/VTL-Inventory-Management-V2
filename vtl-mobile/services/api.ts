@@ -93,6 +93,12 @@ export interface Alert {
   actor_name: string | null;
 }
 
+export interface AlertFeedResponse {
+  alerts: Alert[];
+  total_this_month: number;
+  month_label: string;
+}
+
 export interface Batch {
   batch_id: string;
   batch_number: string;
@@ -309,7 +315,7 @@ export const api = {
   getDashboard: (): Promise<DashboardSummary> =>
     apiClient.get('/mobile/dashboard').then((r) => r.data),
 
-  getAlerts: (limit = 20): Promise<Alert[]> =>
+  getAlerts: (limit = 50): Promise<AlertFeedResponse> =>
     apiClient.get('/mobile/alerts', { params: { limit } }).then((r) => r.data),
 
   getOperations: (): Promise<OperationsSummary> =>
