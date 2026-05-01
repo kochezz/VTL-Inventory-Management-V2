@@ -4,10 +4,15 @@
 
 const express = require('express');
 const router  = express.Router();
-const { authenticate } = require('../middleware/auth-middleware');
-const mobileService    = require('../services/mobile-service');
+const { authenticate, authorize } = require('../middleware/auth-middleware');
+const mobileService = require('../services/mobile-service');
+const qmsService    = require('../services/qms-service');
 
 router.use(authenticate);
+
+const APPROVERS = ['admin', 'qa', 'manager', 'ceo', 'cfo'];
+
+// ── Read endpoints ────────────────────────────────────────────────────────────
 
 router.get('/dashboard', async (req, res) => {
   try {
@@ -79,6 +84,71 @@ router.post('/register-device', async (req, res) => {
   } catch (err) {
     console.error('❌ POST /api/mobile/register-device:', err.message);
     res.status(500).json({ message: 'Failed to register device' });
+  }
+});
+
+// ── Micro-action endpoints ────────────────────────────────────────────────────
+
+router.post('/approve/ncr/:id', authorize(APPROVERS), async (req, res) => {
+  try {
+    const { status, root_cause, resolution, signature_password } = req.body;
+    if (!signature_password) {
+      return res.status(400).json({ message: 'signature_password is required' });
+    }
+    const result = await qmsService.updateNCR(
+      req.params.id,
+      { status, root_cause, resolution },
+      req.user.user_id,
+      signature_password
+    );
+    res.json(result);
+  } catch (err) {
+    console.error('❌ POST /api/mobile/approve/ncr:', err.message);
+    const status = err.message.includes('Invalid digital signature') ? 401
+      : err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ message: err.message });
+  }
+});
+
+router.post('/approve/capa/:id', authorize(APPROVERS), async (req, res) => {
+  try {
+    const { status, effectiveness_review, signature_password } = req.body;
+    if (!signature_password) {
+      return res.status(400).json({ message: 'signature_password is required' });
+    }
+    const result = await qmsService.updateCAPA(
+      req.params.id,
+      { status, effectiveness_review },
+      req.user.user_id,
+      signature_password
+    );
+    res.json(result);
+  } catch (err) {
+    console.error('❌ POST /api/mobile/approve/capa:', err.message);
+    const status = err.message.includes('Invalid digital signature') ? 401
+      : err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ message: err.message });
+  }
+});
+
+router.post('/approve/document/:versionId', authorize(APPROVERS), async (req, res) => {
+  try {
+    const { signature_password } = req.body;
+    if (!signature_password) {
+      return res.status(400).json({ message: 'signature_password is required' });
+    }
+    const result = await qmsService.releaseDocument(
+      req.params.versionId,
+      req.user.user_id,
+      signature_password,
+      req.ip
+    );
+    res.json(result);
+  } catch (err) {
+    console.error('❌ POST /api/mobile/approve/document:', err.message);
+    const status = err.message.includes('Invalid digital signature') ? 401
+      : err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ message: err.message });
   }
 });
 

@@ -216,7 +216,7 @@ const mobileService = {
   // getQualitySummary
   // --------------------------------------------------------------------------
   async getQualitySummary() {
-    const [sectionsRes, ncrRes, capaRes, auditRes, trainingRes] = await Promise.allSettled([
+    const [sectionsRes, ncrRes, capaRes, auditRes, trainingRes, docsRes] = await Promise.allSettled([
 
       qmsService.getCompletionStats(),
 
@@ -260,6 +260,20 @@ const mobileService = {
       `),
 
       pool.query(`
+        SELECT
+          d.doc_id, d.doc_code, d.doc_name, d.doc_type, d.status,
+          d.current_version_id,
+          v.version_number,
+          u.full_name AS author_name
+        FROM qms_documents d
+        LEFT JOIN qms_document_versions v ON d.current_version_id = v.version_id
+        LEFT JOIN users u ON v.authored_by::uuid = u.user_id
+        WHERE d.status IN ('REVIEW', 'PENDING_APPROVAL')
+        ORDER BY d.doc_code ASC
+        LIMIT 15
+      `),
+
+      pool.query(`
         WITH total_required AS (
           SELECT COUNT(*) AS cnt
           FROM qms_documents d
@@ -294,7 +308,8 @@ const mobileService = {
       training_compliance_pct:
         trainingRes.status === 'fulfilled'
           ? parseFloat(trainingRes.value?.rows?.[0]?.compliance_pct || 0)
-          : 0
+          : 0,
+      docs_in_review: docsRes.status === 'fulfilled' ? docsRes.value.rows : [],
     };
   },
 

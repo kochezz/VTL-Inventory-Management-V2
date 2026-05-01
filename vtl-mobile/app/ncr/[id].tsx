@@ -1,12 +1,17 @@
+import { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api, { NCRDetail } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import { useAuthStore } from '../../stores/authStore';
+import SignatureBottomSheet, { SheetField } from '../../components/SignatureBottomSheet';
+import { Toast } from '../../components/Toast';
+import { useToast } from '../../hooks/useToast';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +35,24 @@ const STATUS_COLOR: Record<string, string> = {
   CAPA_REQUIRED: COLORS.amber,
   CLOSED:        COLORS.green,
 };
+
+const APPROVER_ROLES = ['admin', 'qa', 'manager', 'ceo', 'cfo'];
+
+const NCR_STATUS_FIELDS: SheetField[] = [
+  {
+    key: 'status',
+    label: 'New Status',
+    type: 'select',
+    options: [
+      { label: 'Open', value: 'OPEN' },
+      { label: 'In Progress', value: 'IN_PROGRESS' },
+      { label: 'CAPA Required', value: 'CAPA_REQUIRED' },
+      { label: 'Closed', value: 'CLOSED' },
+    ],
+  },
+  { key: 'root_cause', label: 'Root Cause', type: 'textarea', placeholder: 'Describe root cause…', optional: true },
+  { key: 'resolution', label: 'Resolution', type: 'textarea', placeholder: 'Describe resolution taken…', optional: true },
+];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -56,6 +79,13 @@ function InfoRow({ label, value, color }: { label: string; value: string | null;
 export default function NCRDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const toast = useToast();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const userRole = (user?.role as string) ?? '';
+  const canApprove = APPROVER_ROLES.includes(userRole);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['ncr', id],
@@ -87,9 +117,21 @@ export default function NCRDetailScreen() {
     );
   }
 
-  const sevColor    = SEV_COLOR[data.severity?.toUpperCase()] ?? COLORS.muted;
-  const statusColor = STATUS_COLOR[data.status?.toUpperCase()] ?? COLORS.muted;
-  const isClosed    = data.status?.toUpperCase() === 'CLOSED';
+  const sevColor    = SEV_COLOR[(data.severity ?? '').toUpperCase()] ?? COLORS.muted;
+  const statusColor = STATUS_COLOR[(data.status ?? '').toUpperCase()] ?? COLORS.muted;
+  const isClosed    = (data.status ?? '').toUpperCase() === 'CLOSED';
+
+  const handleUpdateNCR = async (values: Record<string, string>) => {
+    await api.approveNCR(id, {
+      status:             values.status,
+      root_cause:         values.root_cause || undefined,
+      resolution:         values.resolution || undefined,
+      signature_password: values.signature_password,
+    });
+    await queryClient.invalidateQueries({ queryKey: ['ncr', id] });
+    await queryClient.invalidateQueries({ queryKey: ['quality'] });
+    toast.show('NCR updated successfully');
+  };
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
@@ -153,8 +195,32 @@ export default function NCRDetailScreen() {
           )}
         </View>
 
+        {/* Update action — authorized roles only */}
+        {canApprove && !isClosed && (
+          <TouchableOpacity
+            style={s.actionBtn}
+            onPress={() => setSheetOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={s.actionBtnText}>Update Status</Text>
+          </TouchableOpacity>
+        )}
+
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* Bottom sheet */}
+      <SignatureBottomSheet
+        visible={sheetOpen}
+        title={`Update ${data.ncr_code}`}
+        fields={NCR_STATUS_FIELDS}
+        submitLabel="Update NCR"
+        onSubmit={handleUpdateNCR}
+        onClose={() => setSheetOpen(false)}
+      />
+
+      {/* Toast */}
+      <Toast visible={toast.visible} message={toast.message} type={toast.type} />
     </SafeAreaView>
   );
 }
@@ -192,6 +258,9 @@ const s = StyleSheet.create({
   block:       { padding: 14 },
   blockLabel:  { color: COLORS.muted, fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: 8 },
   blockValue:  { color: COLORS.text, fontSize: 14, lineHeight: 20 },
+
+  actionBtn:     { backgroundColor: COLORS.sky, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8, marginBottom: 8 },
+  actionBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
   errorText:   { color: COLORS.red, fontSize: 14, textAlign: 'center', marginBottom: 16 },
   retryBtn:    { backgroundColor: COLORS.sky, borderRadius: 10, paddingHorizontal: 24, paddingVertical: 10 },

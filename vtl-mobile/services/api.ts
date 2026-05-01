@@ -163,12 +163,24 @@ export interface Audit {
   lead_auditor_name: string | null;
 }
 
+export interface DocInReview {
+  doc_id: string;
+  doc_code: string;
+  doc_name: string;
+  doc_type: string;
+  status: string;
+  current_version_id: string;
+  version_number: string | null;
+  author_name: string | null;
+}
+
 export interface QualitySummary {
   qms_sections: QmsSection[];
   open_ncrs: Ncr[];
   overdue_capas: Capa[];
   upcoming_audits: Audit[];
   training_compliance_pct: number;
+  docs_in_review: DocInReview[];
 }
 
 export interface TrainingUser {
@@ -317,6 +329,24 @@ export const api = {
 
   getCommercial: (): Promise<CommercialSummary> =>
     apiClient.get('/mobile/commercial').then((r) => r.data),
+
+  approveNCR: (
+    id: string,
+    body: { status: string; root_cause?: string; resolution?: string; signature_password: string },
+  ): Promise<NCRDetail> =>
+    apiClient.post(`/mobile/approve/ncr/${id}`, body).then((r) => r.data),
+
+  approveCAPA: (
+    id: string,
+    body: { status: string; effectiveness_review?: string; signature_password: string },
+  ): Promise<Capa> =>
+    apiClient.post(`/mobile/approve/capa/${id}`, body).then((r) => r.data),
+
+  releaseDocument: (
+    versionId: string,
+    body: { signature_password: string },
+  ): Promise<{ success: boolean; message: string }> =>
+    apiClient.post(`/mobile/approve/document/${versionId}`, body).then((r) => r.data),
 };
 
 export default api;

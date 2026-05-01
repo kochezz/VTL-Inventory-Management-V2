@@ -1,12 +1,17 @@
+import { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import api, { Ncr, Capa, Audit, QmsSection } from '../../services/api';
+import api, { Ncr, Capa, Audit, QmsSection, DocInReview } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import { useAuthStore } from '../../stores/authStore';
+import SignatureBottomSheet, { SheetField } from '../../components/SignatureBottomSheet';
+import { Toast } from '../../components/Toast';
+import { useToast } from '../../hooks/useToast';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +41,36 @@ const AUDIT_TYPE_COLOR: Record<string, string> = {
   SUPPLIER:   COLORS.teal,
 };
 
+const DOC_TYPE_COLOR: Record<string, string> = {
+  SOP: COLORS.sky,
+  POL: COLORS.teal,
+  MAN: COLORS.amber,
+  FRM: COLORS.muted,
+  CHK: COLORS.muted,
+};
+
+const APPROVER_ROLES = ['admin', 'qa', 'manager', 'ceo', 'cfo'];
+
+const CAPA_STATUS_FIELDS: SheetField[] = [
+  {
+    key: 'status',
+    label: 'New Status',
+    type: 'select',
+    options: [
+      { label: 'In Progress', value: 'IN_PROGRESS' },
+      { label: 'Verified', value: 'VERIFIED' },
+      { label: 'Closed', value: 'CLOSED' },
+    ],
+  },
+  {
+    key: 'effectiveness_review',
+    label: 'Effectiveness Review',
+    type: 'textarea',
+    placeholder: 'Was the corrective action effective? Evidence…',
+    optional: true,
+  },
+];
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function SectionHeader({ title, count }: { title: string; count?: number }) {
@@ -52,7 +87,7 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const color = SEV_COLOR[severity?.toUpperCase()] ?? COLORS.muted;
+  const color = SEV_COLOR[(severity ?? '').toUpperCase()] ?? COLORS.muted;
   return (
     <View style={[s.badge, { borderColor: color }]}>
       <Text style={[s.badgeText, { color }]}>{severity}</Text>
@@ -95,7 +130,15 @@ function NcrRow({ ncr, onPress }: { ncr: Ncr; onPress: () => void }) {
   );
 }
 
-function CapaRow({ capa }: { capa: Capa }) {
+function CapaRow({
+  capa,
+  canApprove,
+  onClose,
+}: {
+  capa: Capa;
+  canApprove: boolean;
+  onClose: () => void;
+}) {
   const overdue = daysUntil(capa.due_date);
   const isOverdue = overdue < 0;
   return (
@@ -107,7 +150,49 @@ function CapaRow({ capa }: { capa: Capa }) {
         </Text>
       </View>
       <Text style={s.descText} numberOfLines={2}>{capa.action_description}</Text>
-      <Text style={s.metaText}>{capa.owner_name ?? 'Unassigned'}</Text>
+      <View style={s.listRowBottom}>
+        <Text style={s.metaText}>{capa.owner_name ?? 'Unassigned'}</Text>
+        {canApprove && (
+          <TouchableOpacity style={s.inlineBtn} onPress={onClose} activeOpacity={0.8}>
+            <Text style={s.inlineBtnText}>Close CAPA</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function DocRow({
+  doc,
+  canApprove,
+  onRelease,
+}: {
+  doc: DocInReview;
+  canApprove: boolean;
+  onRelease: () => void;
+}) {
+  const typeColor = DOC_TYPE_COLOR[doc.doc_type] ?? COLORS.muted;
+  const isPendingApproval = doc.status === 'PENDING_APPROVAL';
+  return (
+    <View style={s.docRow}>
+      <View style={[s.docTypePill, { backgroundColor: typeColor + '22', borderColor: typeColor }]}>
+        <Text style={[s.docTypeText, { color: typeColor }]}>{doc.doc_type}</Text>
+      </View>
+      <View style={s.docMid}>
+        <Text style={s.docCode}>{doc.doc_code}</Text>
+        <Text style={s.docName} numberOfLines={1}>{doc.doc_name}</Text>
+        <Text style={s.docMeta}>
+          {doc.author_name ?? 'Unknown'} · v{doc.version_number ?? '?'} ·{' '}
+          <Text style={{ color: isPendingApproval ? COLORS.amber : COLORS.sky }}>
+            {isPendingApproval ? 'Pending Approval' : 'In Review'}
+          </Text>
+        </Text>
+      </View>
+      {canApprove && isPendingApproval && (
+        <TouchableOpacity style={s.releaseBtn} onPress={onRelease} activeOpacity={0.8}>
+          <Text style={s.releaseBtnText}>Release</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -154,6 +239,17 @@ function ComplianceBar({ pct }: { pct: number }) {
 
 export default function QualityScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const toast = useToast();
+
+  const userRole = (user?.role as string) ?? '';
+  const canApprove = APPROVER_ROLES.includes(userRole);
+
+  // Sheet state — which CAPA or doc is being actioned
+  const [capaSheet, setCapaSheet] = useState<Capa | null>(null);
+  const [docSheet, setDocSheet] = useState<DocInReview | null>(null);
+
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['quality'],
     queryFn: api.getQuality,
@@ -184,6 +280,27 @@ export default function QualityScreen() {
   }
 
   const auditsToShow = data.upcoming_audits.slice(0, 3);
+  const docsInReview = data.docs_in_review ?? [];
+
+  const handleCloseCAPA = async (values: Record<string, string>) => {
+    if (!capaSheet) return;
+    await api.approveCAPA(capaSheet.capa_id, {
+      status:               values.status,
+      effectiveness_review: values.effectiveness_review || undefined,
+      signature_password:   values.signature_password,
+    });
+    await queryClient.invalidateQueries({ queryKey: ['quality'] });
+    toast.show(`CAPA ${capaSheet.capa_code} closed`);
+  };
+
+  const handleReleaseDoc = async (values: Record<string, string>) => {
+    if (!docSheet?.current_version_id) return;
+    const result = await api.releaseDocument(docSheet.current_version_id, {
+      signature_password: values.signature_password,
+    });
+    await queryClient.invalidateQueries({ queryKey: ['quality'] });
+    toast.show(result.message ?? `${docSheet.doc_code} released`);
+  };
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -232,13 +349,36 @@ export default function QualityScreen() {
             {data.overdue_capas.map((capa, i) => (
               <View key={capa.capa_id}>
                 {i > 0 && <View style={s.divider} />}
-                <CapaRow capa={capa} />
+                <CapaRow
+                  capa={capa}
+                  canApprove={canApprove}
+                  onClose={() => setCapaSheet(capa)}
+                />
               </View>
             ))}
           </View>
         )}
 
-        {/* 4 — Upcoming Audits */}
+        {/* 4 — Documents In Review */}
+        {docsInReview.length > 0 && (
+          <>
+            <SectionHeader title="Documents In Review" count={docsInReview.length} />
+            <View style={s.card}>
+              {docsInReview.map((doc, i) => (
+                <View key={doc.doc_id}>
+                  {i > 0 && <View style={s.divider} />}
+                  <DocRow
+                    doc={doc}
+                    canApprove={canApprove}
+                    onRelease={() => setDocSheet(doc)}
+                  />
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* 5 — Upcoming Audits */}
         <SectionHeader title="Upcoming Audits" count={auditsToShow.length} />
         {auditsToShow.length === 0 ? (
           <Text style={s.emptyText}>No upcoming audits scheduled.</Text>
@@ -248,12 +388,39 @@ export default function QualityScreen() {
           ))
         )}
 
-        {/* 5 — Training Compliance */}
+        {/* 6 — Training Compliance */}
         <SectionHeader title="Training Compliance" />
         <ComplianceBar pct={data.training_compliance_pct ?? 0} />
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* CAPA bottom sheet */}
+      {capaSheet && (
+        <SignatureBottomSheet
+          visible={!!capaSheet}
+          title={`Close ${capaSheet.capa_code}`}
+          fields={CAPA_STATUS_FIELDS}
+          submitLabel="Close CAPA"
+          onSubmit={handleCloseCAPA}
+          onClose={() => setCapaSheet(null)}
+        />
+      )}
+
+      {/* Document release bottom sheet */}
+      {docSheet && (
+        <SignatureBottomSheet
+          visible={!!docSheet}
+          title={`Release ${docSheet.doc_code}`}
+          fields={[]}
+          submitLabel="Release Document"
+          onSubmit={handleReleaseDoc}
+          onClose={() => setDocSheet(null)}
+        />
+      )}
+
+      {/* Toast */}
+      <Toast visible={toast.visible} message={toast.message} type={toast.type} />
     </SafeAreaView>
   );
 }
@@ -290,12 +457,26 @@ const s = StyleSheet.create({
   // NCR / CAPA rows
   listRow:       { padding: 14 },
   listRowTop:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  listRowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 },
+  listRowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   codeText:      { color: COLORS.sky, fontFamily: 'monospace', fontSize: 13, fontWeight: '700' },
   descText:      { color: COLORS.text, fontSize: 13, lineHeight: 18 },
   overdueBadge:  { fontSize: 12, fontWeight: '700' },
   metaText:      { color: COLORS.muted, fontSize: 12 },
   chevron:       { color: COLORS.muted, fontSize: 20 },
+
+  inlineBtn:     { backgroundColor: COLORS.amber + '22', borderWidth: 1, borderColor: COLORS.amber, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 },
+  inlineBtnText: { color: COLORS.amber, fontSize: 12, fontWeight: '700' },
+
+  // Doc rows
+  docRow:      { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
+  docTypePill: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, alignSelf: 'flex-start' },
+  docTypeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  docMid:      { flex: 1 },
+  docCode:     { color: COLORS.sky, fontFamily: 'monospace', fontSize: 13, fontWeight: '700', marginBottom: 2 },
+  docName:     { color: COLORS.text, fontSize: 13, fontWeight: '500', marginBottom: 3 },
+  docMeta:     { color: COLORS.muted, fontSize: 11 },
+  releaseBtn:  { backgroundColor: COLORS.green + '22', borderWidth: 1, borderColor: COLORS.green, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  releaseBtnText: { color: COLORS.green, fontSize: 11, fontWeight: '700' },
 
   // Audit cards
   auditCard:     { backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4, padding: 14, marginBottom: 10 },
@@ -308,13 +489,13 @@ const s = StyleSheet.create({
   daysLeft:      { fontSize: 12, fontWeight: '600' },
 
   // Training compliance
-  complianceCard:  { backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, padding: 16 },
-  complianceTop:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  complianceLabel: { color: COLORS.text, fontSize: 14, fontWeight: '600' },
-  compliancePct:   { fontSize: 28, fontWeight: '800' },
-  complianceBarBg: { height: 8, backgroundColor: COLORS.border, borderRadius: 4, overflow: 'hidden', marginBottom: 10 },
+  complianceCard:   { backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, padding: 16 },
+  complianceTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  complianceLabel:  { color: COLORS.text, fontSize: 14, fontWeight: '600' },
+  compliancePct:    { fontSize: 28, fontWeight: '800' },
+  complianceBarBg:  { height: 8, backgroundColor: COLORS.border, borderRadius: 4, overflow: 'hidden', marginBottom: 10 },
   complianceBarFill:{ height: 8, borderRadius: 4 },
-  complianceHint:  { color: COLORS.muted, fontSize: 12 },
+  complianceHint:   { color: COLORS.muted, fontSize: 12 },
 
   errorText:   { color: COLORS.red, fontSize: 14, textAlign: 'center', marginBottom: 16 },
   retryBtn:    { backgroundColor: COLORS.sky, borderRadius: 10, paddingHorizontal: 24, paddingVertical: 10 },
