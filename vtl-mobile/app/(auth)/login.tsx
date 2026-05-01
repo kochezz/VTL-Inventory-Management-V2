@@ -6,8 +6,8 @@ import {
 import { useAuthStore } from '../../stores/authStore';
 import { useRouter } from 'expo-router';
 
-// Hardcoded to bypass .env caching issues — matches BASE_URL in api.ts exactly
-const API_URL = 'https://vilagio-erp-backend.onrender.com/api';
+// EXPO_PUBLIC_API_URL already includes /api — do NOT append /api in fetch calls below
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 
 export default function LoginScreen() {
   const router = useRouter();

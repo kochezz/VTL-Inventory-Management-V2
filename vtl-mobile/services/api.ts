@@ -2,8 +2,9 @@ import axios, { InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 
-// BASE_URL already includes /api — do NOT add /api again in any endpoint below
-const BASE_URL = 'https://vilagio-erp-backend.onrender.com/api';
+// EXPO_PUBLIC_API_URL already includes /api (e.g. https://host/api)
+// Do NOT add /api again in any endpoint path below
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 
 export const apiClient = axios.create({
   baseURL: BASE_URL,
@@ -31,8 +32,19 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error) => {
-    console.log('API ERROR:', error.response?.status, error.config?.url);
-    console.log('API ERROR DATA:', JSON.stringify(error.response?.data));
+    const status = error.response?.status;
+    const url = error.config?.url;
+    console.log('API ERROR:', status, url);
+
+    // When the server returns HTML/plain-text, axios puts it in error.response.data
+    // as a string. Wrap it so callers always get a meaningful message.
+    if (error.response && typeof error.response.data === 'string') {
+      const preview = error.response.data.substring(0, 120).replace(/\n/g, ' ');
+      error.message = `Server returned ${status} (non-JSON): ${preview}`;
+      console.log('API NON-JSON BODY:', preview);
+    } else {
+      console.log('API ERROR DATA:', JSON.stringify(error.response?.data));
+    }
 
     const original = error.config;
     if (error.response?.status === 401 && !original._retry) {

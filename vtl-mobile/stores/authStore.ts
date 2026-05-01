@@ -2,7 +2,9 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
+// EXPO_PUBLIC_API_URL already includes /api (e.g. https://host/api)
+// Do NOT append /api again in any fetch call below
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 
 export interface AuthState {
   user: Record<string, unknown> | null;
@@ -39,16 +41,23 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (email: string, password: string) => {
     set({ isLoading: true });
     try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
+      const response = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      // Read as text first — avoids JSON parse crash when server returns HTML/plain-text
+      const rawText = await response.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        throw new Error(`Server returned ${response.status} — not JSON: ${rawText.substring(0, 120)}`);
+      }
 
       if (!response.ok) {
-        throw new Error(data.message ?? 'Invalid email or password');
+        throw new Error((data.message as string) ?? 'Invalid email or password');
       }
 
       const { token, refreshToken, user } = data;
