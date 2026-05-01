@@ -142,7 +142,7 @@ export default function BatchDetailScreen() {
     );
   }
 
-  const statusCfg = DISPLAY_STATUS[data.display_status ?? data.status] ?? { label: data.status.toUpperCase(), color: COLORS.muted };
+  const statusCfg = DISPLAY_STATUS[data.display_status ?? data.status] ?? { label: (data.status ?? '').toUpperCase(), color: COLORS.muted };
   const yieldColor = (data.yield_percentage ?? 0) >= 95 ? COLORS.green
     : (data.yield_percentage ?? 0) >= 85 ? COLORS.amber
     : COLORS.red;
