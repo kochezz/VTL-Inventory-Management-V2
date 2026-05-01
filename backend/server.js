@@ -163,7 +163,7 @@ app.use((err, req, res, next) => {
 // ============================================================================
 // START SERVER
 // ============================================================================
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Vilagio API Server running on port ${PORT}`);
   console.log(`💚 Health check: http://localhost:${PORT}/health`);
   console.log(`🧪 QC Lab API:   http://localhost:${PORT}/api/lab`);
