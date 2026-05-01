@@ -4,10 +4,7 @@ import { COLORS, RADIUS } from '../constants/theme';
 interface SectionHeaderProps {
   title: string;
   subtitle?: string;
-  action?: {
-    label: string;
-    onPress: () => void;
-  };
+  action?: { label: string; onPress: () => void };
 }
 
 export function SectionHeader({ title, subtitle, action }: SectionHeaderProps) {
@@ -31,36 +28,31 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingBottom: 10,
+    marginBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    marginBottom: 12,
   },
-  left: {
-    flex: 1,
-  },
+  left: { flex: 1 },
   title: {
     fontSize: 16,
     fontWeight: '700',
     color: COLORS.textPrimary,
-    letterSpacing: 0.2,
   },
   subtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: COLORS.textMuted,
     marginTop: 2,
   },
   pill: {
-    backgroundColor: COLORS.surfaceAlt,
-    borderWidth: 1,
-    borderColor: COLORS.borderBright,
-    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.skyGlow,
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
   pillText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
     color: COLORS.sky,
   },
 });

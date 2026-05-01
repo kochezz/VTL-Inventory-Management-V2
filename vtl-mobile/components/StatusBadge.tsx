@@ -1,47 +1,55 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { COLORS, RADIUS } from '../constants/theme';
 
-const STATUS_MAP: Record<string, { border: string; text: string }> = {
-  // Green — success/complete
-  RELEASED:          { border: COLORS.green,  text: COLORS.green },
-  COMPLETED:         { border: COLORS.green,  text: COLORS.green },
-  CLOSED:            { border: COLORS.green,  text: COLORS.green },
-  VERIFIED:          { border: COLORS.green,  text: COLORS.green },
-  APPROVED:          { border: COLORS.green,  text: COLORS.green },
-  EFFECTIVE:         { border: COLORS.green,  text: COLORS.green },
+type ColorSet = { color: string; glow: string };
 
-  // Sky — active/in-progress
-  REVIEW:            { border: COLORS.sky,    text: COLORS.sky },
-  PLANNED:           { border: COLORS.sky,    text: COLORS.sky },
-  IN_PROGRESS:       { border: COLORS.sky,    text: COLORS.sky },
-  in_progress:       { border: COLORS.sky,    text: COLORS.sky },
-  ready_for_setup:   { border: COLORS.sky,    text: COLORS.sky },
-  RUNNING:           { border: COLORS.sky,    text: COLORS.sky },
-  SCHEDULED:         { border: COLORS.sky,    text: COLORS.sky },
+const MAP: Record<string, ColorSet> = {
+  // Green
+  RELEASED:   { color: COLORS.green,  glow: COLORS.greenGlow },
+  COMPLETED:  { color: COLORS.green,  glow: COLORS.greenGlow },
+  CLOSED:     { color: COLORS.green,  glow: COLORS.greenGlow },
+  VERIFIED:   { color: COLORS.green,  glow: COLORS.greenGlow },
+  PAID:       { color: COLORS.green,  glow: COLORS.greenGlow },
+  DELIVERED:  { color: COLORS.green,  glow: COLORS.greenGlow },
+  APPROVED:   { color: COLORS.green,  glow: COLORS.greenGlow },
+  EFFECTIVE:  { color: COLORS.green,  glow: COLORS.greenGlow },
 
-  // Amber — pending/draft/warning
-  DRAFT:             { border: COLORS.amber,  text: COLORS.amber },
-  OPEN:              { border: COLORS.amber,  text: COLORS.amber },
-  CAPA_REQUIRED:     { border: COLORS.amber,  text: COLORS.amber },
-  PENDING_APPROVAL:  { border: COLORS.amber,  text: COLORS.amber },
-  OVERDUE:           { border: COLORS.amber,  text: COLORS.amber },
+  // Sky
+  REVIEW:         { color: COLORS.sky, glow: COLORS.skyGlow },
+  PLANNED:        { color: COLORS.sky, glow: COLORS.skyGlow },
+  IN_PROGRESS:    { color: COLORS.sky, glow: COLORS.skyGlow },
+  PENDING:        { color: COLORS.sky, glow: COLORS.skyGlow },
+  PROCESSING:     { color: COLORS.sky, glow: COLORS.skyGlow },
+  RUNNING:        { color: COLORS.sky, glow: COLORS.skyGlow },
+  SCHEDULED:      { color: COLORS.sky, glow: COLORS.skyGlow },
+  READY_FOR_SETUP:{ color: COLORS.sky, glow: COLORS.skyGlow },
 
-  // Red — critical/error
-  CRITICAL:          { border: COLORS.red,    text: COLORS.red },
-  ZERO_STOCK:        { border: COLORS.red,    text: COLORS.red },
-  rejected:          { border: COLORS.red,    text: COLORS.red },
-  REJECTED:          { border: COLORS.red,    text: COLORS.red },
-  FAILED:            { border: COLORS.red,    text: COLORS.red },
+  // Amber
+  DRAFT:            { color: COLORS.amber, glow: COLORS.amberGlow },
+  OPEN:             { color: COLORS.amber, glow: COLORS.amberGlow },
+  AWAITING_QA:      { color: COLORS.amber, glow: COLORS.amberGlow },
+  SUBMITTED:        { color: COLORS.amber, glow: COLORS.amberGlow },
+  CAPA_REQUIRED:    { color: COLORS.amber, glow: COLORS.amberGlow },
+  PENDING_APPROVAL: { color: COLORS.amber, glow: COLORS.amberGlow },
+  OVERDUE:          { color: COLORS.amber, glow: COLORS.amberGlow },
 
-  // Purple — misc
-  ON_HOLD:           { border: COLORS.purple, text: COLORS.purple },
-  SUSPENDED:         { border: COLORS.purple, text: COLORS.purple },
+  // Red
+  CRITICAL:   { color: COLORS.red, glow: COLORS.redGlow },
+  ZERO_STOCK: { color: COLORS.red, glow: COLORS.redGlow },
+  REJECTED:   { color: COLORS.red, glow: COLORS.redGlow },
+  CANCELLED:  { color: COLORS.red, glow: COLORS.redGlow },
+  VOID:       { color: COLORS.red, glow: COLORS.redGlow },
+  FAILED:     { color: COLORS.red, glow: COLORS.redGlow },
+
+  // Muted
+  SUPERSEDED: { color: COLORS.textMuted, glow: COLORS.border },
+  ARCHIVED:   { color: COLORS.textMuted, glow: COLORS.border },
+  INACTIVE:   { color: COLORS.textMuted, glow: COLORS.border },
+  ON_HOLD:    { color: COLORS.textMuted, glow: COLORS.border },
+  SUSPENDED:  { color: COLORS.textMuted, glow: COLORS.border },
 };
 
-const DEFAULT: { border: string; text: string } = {
-  border: COLORS.borderBright,
-  text:   COLORS.textSecondary,
-};
+const DEFAULT: ColorSet = { color: COLORS.sky, glow: COLORS.skyGlow };
 
 interface StatusBadgeProps {
   status: string;
@@ -49,23 +57,25 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, small }: StatusBadgeProps) {
-  const style = STATUS_MAP[status] ?? DEFAULT;
+  const normalised = (status ?? '').toUpperCase();
+  const { color, glow } = MAP[normalised] ?? DEFAULT;
+
   return (
     <View
       style={[
         s.pill,
-        { borderColor: style.border },
+        { backgroundColor: glow, borderColor: color },
         small && s.small,
       ]}
     >
       <Text
         style={[
           s.label,
-          { color: style.text },
+          { color },
           small && s.labelSmall,
         ]}
       >
-        {status.replace(/_/g, ' ')}
+        {normalised.replace(/_/g, ' ')}
       </Text>
     </View>
   );
@@ -73,7 +83,7 @@ export function StatusBadge({ status, small }: StatusBadgeProps) {
 
 const s = StyleSheet.create({
   pill: {
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.sm,
     borderWidth: 1,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -82,16 +92,14 @@ const s = StyleSheet.create({
   small: {
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: RADIUS.sm,
   },
   label: {
     fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
   labelSmall: {
     fontSize: 9,
-    letterSpacing: 0.4,
   },
 });

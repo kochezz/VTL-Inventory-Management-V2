@@ -2,14 +2,19 @@ import { View, Text, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { COLORS, RADIUS, SHADOW } from '../constants/theme';
 import { StatusBadge } from './StatusBadge';
 
-interface ProfileHeaderProps {
-  name: string;
+interface ProfileUser {
+  full_name: string;
   role: string;
+  email: string;
+}
+
+interface ProfileHeaderProps {
+  user: ProfileUser;
   onLogout: () => void;
 }
 
 function getInitials(name: string): string {
-  return name
+  return (name ?? '')
     .split(' ')
     .filter(Boolean)
     .slice(0, 2)
@@ -17,36 +22,32 @@ function getInitials(name: string): string {
     .join('');
 }
 
-export function ProfileHeader({ name, role, onLogout }: ProfileHeaderProps) {
-  const initials = getInitials(name);
+export function ProfileHeader({ user, onLogout }: ProfileHeaderProps) {
+  const initials = getInitials(user.full_name);
 
   const confirmLogout = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign Out', style: 'destructive', onPress: onLogout },
-      ],
-    );
+    Alert.alert('Sign Out', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: onLogout },
+    ]);
   };
 
   return (
     <View style={[s.container, SHADOW.card]}>
-      {/* Avatar */}
+      {/* Initials avatar */}
       <View style={s.avatar}>
         <Text style={s.initials}>{initials}</Text>
       </View>
 
-      {/* Name + role */}
+      {/* Name + role badge */}
       <View style={s.info}>
-        <Text style={s.name} numberOfLines={1}>{name}</Text>
-        <StatusBadge status={role.toUpperCase()} small />
+        <Text style={s.name} numberOfLines={1}>{user.full_name}</Text>
+        <StatusBadge status={user.role} small />
       </View>
 
-      {/* Logout */}
-      <TouchableOpacity style={s.logoutBtn} onPress={confirmLogout} activeOpacity={0.75}>
-        <Text style={s.logoutText}>Sign Out</Text>
+      {/* Logout button */}
+      <TouchableOpacity onPress={confirmLogout} activeOpacity={0.7} hitSlop={8}>
+        <Text style={s.logoutIcon}>⏻</Text>
       </TouchableOpacity>
     </View>
   );
@@ -57,26 +58,26 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.xl,
+    borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 16,
+    padding: 14,
     gap: 12,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.skyDim,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
-    ...SHADOW.glow(COLORS.sky),
   },
   initials: {
-    color: COLORS.textPrimary,
+    color: COLORS.sky,
     fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+    fontWeight: '700',
   },
   info: {
     flex: 1,
@@ -84,20 +85,11 @@ const s = StyleSheet.create({
   },
   name: {
     color: COLORS.textPrimary,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
-  logoutBtn: {
-    backgroundColor: COLORS.surfaceAlt,
-    borderWidth: 1,
-    borderColor: COLORS.borderBright,
-    borderRadius: RADIUS.md,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  logoutText: {
+  logoutIcon: {
     color: COLORS.red,
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 20,
   },
 });

@@ -1,20 +1,27 @@
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
-import { COLORS, RADIUS } from '../constants/theme';
+import { COLORS } from '../constants/theme';
 
 interface BarItem {
   label: string;
   value: number;
-  color?: string;
 }
 
 interface MiniBarChartProps {
   data: BarItem[];
-  maxValue?: number;
+  color?: string;
   height?: number;
+  showLabels?: boolean;
+  currencyPrefix?: string;
 }
 
-export function MiniBarChart({ data, maxValue, height = 80 }: MiniBarChartProps) {
-  const computed = maxValue ?? Math.max(...data.map((d) => d.value), 1);
+export function MiniBarChart({
+  data,
+  color = COLORS.sky,
+  height: chartHeight = 64,
+  showLabels = true,
+  currencyPrefix,
+}: MiniBarChartProps) {
+  const maxValue = Math.max(...data.map((d) => d.value), 1);
 
   return (
     <ScrollView
@@ -23,31 +30,33 @@ export function MiniBarChart({ data, maxValue, height = 80 }: MiniBarChartProps)
       contentContainerStyle={s.scrollContent}
     >
       {data.map((item, i) => {
-        const ratio = Math.max(item.value / computed, 0.03);
-        const barH = Math.round(ratio * height);
-        const color = item.color ?? COLORS.sky;
+        const barH = Math.max(Math.round((item.value / maxValue) * chartHeight), 2);
+        const displayValue = currencyPrefix
+          ? `${currencyPrefix}${item.value}`
+          : String(item.value);
 
         return (
           <View key={i} style={s.column}>
-            {/* Value label */}
-            <Text style={[s.valueLabel, { color }]}>{item.value}</Text>
+            {/* Value label above */}
+            {showLabels ? (
+              <Text style={s.valueLabel}>{displayValue}</Text>
+            ) : null}
 
             {/* Bar track */}
-            <View style={[s.track, { height }]}>
+            <View style={[s.track, { height: chartHeight }]}>
               <View
                 style={[
                   s.bar,
                   {
                     height: barH,
                     backgroundColor: color,
-                    borderRadius: RADIUS.sm,
                   },
                 ]}
               />
             </View>
 
-            {/* X-axis label */}
-            <Text style={s.axisLabel} numberOfLines={1}>{item.label}</Text>
+            {/* Axis label below (truncated to 6 chars) */}
+            <Text style={s.axisLabel}>{item.label.substring(0, 6)}</Text>
           </View>
         );
       })}
@@ -60,32 +69,33 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 4,
-    gap: 8,
+    gap: 4,
   },
   column: {
     alignItems: 'center',
-    minWidth: 36,
+    marginHorizontal: 4,
   },
   valueLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 4,
+    fontSize: 9,
+    color: COLORS.textSecondary,
+    marginBottom: 2,
   },
   track: {
     width: 24,
     backgroundColor: COLORS.surfaceAlt,
-    borderRadius: RADIUS.sm,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
   bar: {
-    width: '100%',
+    width: 24,
+    opacity: 0.85,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
   },
   axisLabel: {
     fontSize: 9,
-    color: COLORS.textSecondary,
+    color: COLORS.textMuted,
     marginTop: 4,
-    maxWidth: 40,
     textAlign: 'center',
   },
 });
