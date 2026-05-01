@@ -40,7 +40,7 @@ async function runReviewCheck() {
         u.email      AS owner_email
       FROM qms_documents d
       JOIN qms_document_versions v ON d.current_version_id = v.version_id
-      LEFT JOIN users u ON d.doc_owner = u.user_id
+      LEFT JOIN users u ON d.doc_owner = u.user_id::text
       WHERE d.status = 'RELEASED'
         AND v.review_due_date IS NOT NULL
         AND v.review_due_date <= NOW() + INTERVAL '${WARN_DAYS} days'
@@ -102,7 +102,7 @@ async function runReviewCheck() {
              u.email AS owner_email, u.full_name AS owner_name
       FROM qms_review_tasks rt
       JOIN qms_documents d ON rt.doc_id = d.doc_id
-      LEFT JOIN users u ON rt.assigned_to = u.user_id
+      LEFT JOIN users u ON rt.assigned_to = u.user_id::text
       WHERE rt.status = 'OPEN'
         AND rt.due_date < NOW()
         AND (rt.notified_at IS NULL OR rt.notified_at < NOW() - INTERVAL '7 days')
