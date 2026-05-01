@@ -299,6 +299,80 @@ const mobileService = {
   },
 
   // --------------------------------------------------------------------------
+  // getCommercialSummary
+  // --------------------------------------------------------------------------
+  async getCommercialSummary() {
+    const [vendorRes, zeroStockRes] = await Promise.allSettled([
+
+      // Vendor watch: active suppliers with open NCR count and last GRN date
+      pool.query(`
+        SELECT
+          s.supplier_id,
+          s.supplier_name,
+          COALESCE(s.supplier_code, '') AS supplier_code,
+          COUNT(DISTINCT n.ncr_id)::int AS open_ncr_count,
+          MAX(gr.received_date)         AS last_delivery_date
+        FROM suppliers s
+        LEFT JOIN grn_headers gr ON gr.supplier_id = s.supplier_id
+        LEFT JOIN grn_items gi  ON gi.grn_id = gr.grn_id
+        LEFT JOIN qms_ncr n
+          ON n.status IN ('OPEN','CAPA_REQUIRED')
+          AND n.source_id = gi.product_id::text
+        WHERE s.is_active = true
+        GROUP BY s.supplier_id, s.supplier_name, s.supplier_code
+        ORDER BY open_ncr_count DESC, s.supplier_name
+        LIMIT 20
+      `),
+
+      // Zero-stock products with last movement date
+      pool.query(`
+        SELECT
+          p.product_id,
+          p.product_name,
+          COALESCE(p.sku, '') AS sku,
+          MAX(it.created_at)  AS last_transaction_date
+        FROM inventory i
+        JOIN products p ON i.product_id = p.product_id
+        LEFT JOIN inventory_transactions it ON it.product_id = p.product_id
+        WHERE i.quantity_on_hand = 0 AND p.is_active = true
+        GROUP BY p.product_id, p.product_name, p.sku
+        ORDER BY last_transaction_date DESC NULLS LAST
+        LIMIT 20
+      `)
+    ]);
+
+    return {
+      vendor_watch:        vendorRes.status    === 'fulfilled' ? vendorRes.value.rows    : [],
+      zero_stock_products: zeroStockRes.status === 'fulfilled' ? zeroStockRes.value.rows : [],
+    };
+  },
+
+  // --------------------------------------------------------------------------
+  // registerDevice — upsert an Expo push token for a user
+  // Creates the table on first call (safe on Neon)
+  // --------------------------------------------------------------------------
+  async registerDevice(userId, pushToken) {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mobile_device_tokens (
+        token_id   SERIAL PRIMARY KEY,
+        user_id    TEXT        NOT NULL,
+        push_token TEXT        NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, push_token)
+      )
+    `);
+
+    await pool.query(`
+      INSERT INTO mobile_device_tokens (user_id, push_token, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (user_id, push_token) DO UPDATE SET updated_at = NOW()
+    `, [userId, pushToken]);
+
+    return { registered: true };
+  },
+
+  // --------------------------------------------------------------------------
   // getPeopleSummary
   // --------------------------------------------------------------------------
   async getPeopleSummary() {
@@ -387,4 +461,49 @@ const mobileService = {
   }
 };
 
-module.exports = mobileService;
+};
+
+// ── Push notification helper ──────────────────────────────────────────────────
+// Uses the Expo push API directly — no server-side SDK needed.
+// Call this from any service that needs to notify mobile users.
+async function sendPushNotification(tokens, title, body, data = {}) {
+  if (!tokens || tokens.length === 0) return;
+
+  const messages = tokens.map((to) => ({ to, sound: 'default', title, body, data }));
+  try {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(messages),
+    });
+    const result = await res.json();
+    if (result.errors) console.error('📱 Push errors:', JSON.stringify(result.errors));
+    else console.log(`📱 Push sent to ${tokens.length} device(s)`);
+  } catch (err) {
+    console.error('📱 Push notification failed:', err.message);
+  }
+}
+
+// Retrieve all push tokens for a given set of roles (used by qms-service)
+async function getPushTokensForRoles(roles = ['admin', 'qa_manager', 'manager']) {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS mobile_device_tokens (
+      token_id SERIAL PRIMARY KEY, user_id TEXT NOT NULL,
+      push_token TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(user_id, push_token)
+    )`);
+    const placeholders = roles.map((_, i) => `$${i + 1}`).join(',');
+    const result = await pool.query(`
+      SELECT DISTINCT mdt.push_token
+      FROM mobile_device_tokens mdt
+      JOIN users u ON u.user_id::text = mdt.user_id
+      WHERE u.role IN (${placeholders}) AND u.is_active = true
+    `, roles);
+    return result.rows.map((r) => r.push_token);
+  } catch (err) {
+    console.error('📱 getPushTokensForRoles failed:', err.message);
+    return [];
+  }
+}
+
+module.exports = { ...mobileService, sendPushNotification, getPushTokensForRoles };

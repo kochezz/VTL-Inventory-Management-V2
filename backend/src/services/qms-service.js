@@ -883,6 +883,21 @@ const QmsService = {
         if (userRes.rows.length > 0) ns.notifyNCRAssigned(ncrCode, description, userRes.rows[0].email);
       } catch (e) { console.error('NCR email failed', e); }
     }
+
+    // Fire-and-forget push notification to admin/qa/manager devices
+    setImmediate(async () => {
+      try {
+        const { sendPushNotification, getPushTokensForRoles } = require('./mobile-service');
+        const tokens = await getPushTokensForRoles(['admin', 'qa_manager', 'manager']);
+        await sendPushNotification(
+          tokens,
+          `New NCR: ${ncrCode}`,
+          `${severity} — ${description.substring(0, 100)}`,
+          { type: 'NCR', ncr_id: result.rows[0].ncr_id }
+        );
+      } catch (e) { console.error('NCR push notification failed:', e.message); }
+    });
+
     return result.rows[0];
   },
 

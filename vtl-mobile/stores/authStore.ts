@@ -60,7 +60,9 @@ export const useAuthStore = create<AuthState>((set) => ({
         throw new Error((data.message as string) ?? 'Invalid email or password');
       }
 
-      const { token, refreshToken, user } = data;
+      const token = data.token as string;
+      const refreshToken = data.refreshToken as string;
+      const user = data.user as Record<string, unknown>;
 
       await SecureStore.setItemAsync('vtl_token', token);
       await SecureStore.setItemAsync('vtl_refresh', refreshToken);

@@ -60,4 +60,26 @@ router.get('/people', async (req, res) => {
   }
 });
 
+router.get('/commercial', async (req, res) => {
+  try {
+    const data = await mobileService.getCommercialSummary();
+    res.json(data);
+  } catch (err) {
+    console.error('❌ GET /api/mobile/commercial:', err.message);
+    res.status(500).json({ message: 'Failed to load commercial summary' });
+  }
+});
+
+router.post('/register-device', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'token is required' });
+    const result = await mobileService.registerDevice(req.user.user_id, token);
+    res.json(result);
+  } catch (err) {
+    console.error('❌ POST /api/mobile/register-device:', err.message);
+    res.status(500).json({ message: 'Failed to register device' });
+  }
+});
+
 module.exports = router;

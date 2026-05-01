@@ -266,6 +266,28 @@ export interface NCRDetail {
   closed_at: string | null;
 }
 
+// ── Commercial summary ────────────────────────────────────────────────────────
+
+export interface VendorWatchItem {
+  supplier_id: string;
+  supplier_name: string;
+  supplier_code: string;
+  open_ncr_count: number;
+  last_delivery_date: string | null;
+}
+
+export interface ZeroStockProduct {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  last_transaction_date: string | null;
+}
+
+export interface CommercialSummary {
+  vendor_watch: VendorWatchItem[];
+  zero_stock_products: ZeroStockProduct[];
+}
+
 // ── API methods ──────────────────────────────────────────────────────────────
 // NOTE: paths here are RELATIVE to BASE_URL which already ends in /api
 // So '/mobile/dashboard' becomes 'https://.../api/mobile/dashboard' ✓
@@ -292,6 +314,9 @@ export const api = {
 
   getNCR: (id: string): Promise<NCRDetail> =>
     apiClient.get(`/qms/ncrs/${id}`).then((r) => r.data),
+
+  getCommercial: (): Promise<CommercialSummary> =>
+    apiClient.get('/mobile/commercial').then((r) => r.data),
 };
 
 export default api;
