@@ -188,3 +188,16 @@ process.on('uncaughtException', (error) => {
   console.error('🚨 Uncaught Exception thrown:', error);
   process.exit(1);
 });
+
+// Log termination signals so we can tell whether Render is sending them
+// unexpectedly (which would explain mystery crashes in the Render logs).
+// We do NOT call pool.end() here — the pool handles its own cleanup on exit.
+process.on('SIGTERM', () => {
+  console.log('⚠️  SIGTERM received — Render is shutting down this instance. Exiting cleanly.');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('⚠️  SIGINT received (Ctrl+C or container stop). Exiting cleanly.');
+  process.exit(0);
+});

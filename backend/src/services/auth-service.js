@@ -5,22 +5,25 @@ const { Pool } = require('pg');
 // Database connection pool — Neon serverless resilience settings
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 10,
-  min: 0,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 30000,
-  allowExitOnIdle: false,
+  ssl: {
+    require: true,
+    rejectUnauthorized: false, // Required for Neon
+  },
+  max: 15,                  // Limit max connections to avoid exhausting the Neon pooler
+  idleTimeoutMillis: 10000, // Close idle clients after 10s (before Neon forces them closed)
+  connectionTimeoutMillis: 5000, // Return error after 5s if connection cannot be established
+  maxUses: 7500,            // Retire connections after 7500 uses to prevent memory leaks
 });
 
 pool.on('connect', () => {
   console.log('✅ Database connected successfully');
 });
 
-// Non-fatal error handler — prevents Node.js from crashing on
-// "Connection terminated unexpectedly" (Neon idle drop)
-pool.on('error', (err) => {
-  console.error('PG pool error (non-fatal):', err.message);
+// MUST have this listener — without it Node.js crashes when an idle client
+// is disconnected by Neon ("Connection terminated unexpectedly")
+pool.on('error', (err, client) => {
+  console.error('❌ Unexpected error on idle PostgreSQL client', err);
+  // Do NOT call process.exit(-1) here. Let the pool handle reconnecting.
 });
 
 // Generate access token (short-lived)

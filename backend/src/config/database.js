@@ -16,10 +16,10 @@ const config = {
   },
 
   pool: {
-    min: parseInt(process.env.DB_POOL_MIN) || 0,
-    max: parseInt(process.env.DB_POOL_MAX) || 10,
+    max: parseInt(process.env.DB_POOL_MAX) || 15,
     idleTimeoutMillis: 10000,
-    connectionTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+    maxUses: 7500,
   },
 
   query: {
@@ -63,9 +63,6 @@ function validateConfig() {
     errors.push("Missing PGPASSWORD in environment variables");
   }
 
-  if (config.pool.min > config.pool.max) {
-    errors.push("DB_POOL_MIN cannot be greater than DB_POOL_MAX");
-  }
 
   if (process.env.NODE_ENV === "production") {
     if (!process.env.JWT_SECRET || process.env.JWT_SECRET.includes("change_this")) {
@@ -113,17 +110,21 @@ if (validation.warnings.length) {
 // ✅ REAL PG POOL EXPORT (this is what production-service needs)
 const pool = new Pool({
   connectionString: getConnectionString(),
-  ssl: { rejectUnauthorized: false },
+  ssl: {
+    require: true,
+    rejectUnauthorized: false, // Required for Neon
+  },
   max: config.pool.max,
-  min: config.pool.min,
   idleTimeoutMillis: config.pool.idleTimeoutMillis,
   connectionTimeoutMillis: config.pool.connectionTimeoutMillis,
+  maxUses: config.pool.maxUses,
 });
 
-// Non-fatal error handler — prevents Node.js from crashing on
-// "Connection terminated unexpectedly" (Neon idle drop)
-pool.on("error", (err) => {
-  console.error("PG pool error (non-fatal):", err.message);
+// MUST have this listener — without it Node.js crashes when an idle client
+// is disconnected by Neon ("Connection terminated unexpectedly")
+pool.on("error", (err, client) => {
+  console.error("❌ Unexpected error on idle PostgreSQL client", err);
+  // Do NOT call process.exit(-1) here. Let the pool handle reconnecting.
 });
 
 module.exports = {
