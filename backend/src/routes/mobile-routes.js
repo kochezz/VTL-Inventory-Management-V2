@@ -5,12 +5,50 @@
 const express = require('express');
 const router  = express.Router();
 const { authenticate, authorize } = require('../middleware/auth-middleware');
+const { pool }      = require('../services/auth-service');
 const mobileService = require('../services/mobile-service');
 const qmsService    = require('../services/qms-service');
 
 // ── Ping (no auth — routing diagnostic) ──────────────────────────────────────
 router.get('/ping', (req, res) => {
   res.json({ ok: true, message: 'mobile routes working' });
+});
+
+// ── Sales diagnostic (no auth — temporary) ───────────────────────────────────
+router.get('/debug-sales', async (req, res) => {
+  try {
+    const cols = await pool.query(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'sales_transactions'
+      ORDER BY ordinal_position
+    `);
+
+    const sample = await pool.query(`
+      SELECT * FROM sales_transactions
+      ORDER BY transaction_date DESC
+      LIMIT 3
+    `);
+
+    const statuses = await pool.query(`
+      SELECT DISTINCT status, COUNT(*) as count
+      FROM sales_transactions
+      GROUP BY status
+    `);
+
+    const total = await pool.query(`
+      SELECT COUNT(*) as total FROM sales_transactions
+    `);
+
+    res.json({
+      columns: cols.rows,
+      sample_rows: sample.rows,
+      status_values: statuses.rows,
+      total_rows: total.rows[0],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.use(authenticate);
