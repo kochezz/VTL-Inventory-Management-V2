@@ -326,48 +326,106 @@ const mobileService = {
   // getCommercialSummary
   // --------------------------------------------------------------------------
   async getCommercialSummary() {
-    const [vendorRes, zeroStockRes] = await Promise.allSettled([
+    let today_stats = { today_revenue: 0, today_transactions: 0, avg_order_value: 0, walkin_count: 0 };
+    try {
+      const r = await pool.query(`
+        SELECT COALESCE(SUM(total_amount),0) as today_revenue,
+               COUNT(*) as today_transactions,
+               COALESCE(AVG(total_amount),0) as avg_order_value,
+               COUNT(*) FILTER (WHERE customer_type='WALK_IN') as walkin_count
+        FROM sales_orders
+        WHERE DATE(created_at)=CURRENT_DATE
+        AND status NOT IN ('VOID','CANCELLED')
+      `);
+      today_stats = r.rows[0];
+    } catch (_) {}
 
-      // Vendor watch: active suppliers with open NCR count and last GRN date
-      pool.query(`
-        SELECT
-          s.supplier_id,
-          s.supplier_name,
-          COALESCE(s.supplier_code, '') AS supplier_code,
-          COUNT(DISTINCT n.ncr_id)::int AS open_ncr_count,
-          MAX(gr.received_date)         AS last_delivery_date
-        FROM suppliers s
-        LEFT JOIN grn_headers gr ON gr.supplier_id = s.supplier_id
-        LEFT JOIN grn_items gi  ON gi.grn_id = gr.grn_id
-        LEFT JOIN qms_ncr n
-          ON n.status IN ('OPEN','CAPA_REQUIRED')
-          AND n.source_id = gi.product_id::text
-        WHERE s.is_active = true
-        GROUP BY s.supplier_id, s.supplier_name, s.supplier_code
-        ORDER BY open_ncr_count DESC, s.supplier_name
-        LIMIT 20
-      `),
+    let weekly_revenue = [];
+    try {
+      const r = await pool.query(`
+        SELECT DATE(created_at) as sale_date,
+               COALESCE(SUM(total_amount),0) as revenue,
+               COUNT(*) as transactions
+        FROM sales_orders
+        WHERE created_at >= NOW()-INTERVAL '7 days'
+        AND status NOT IN ('VOID','CANCELLED')
+        GROUP BY DATE(created_at) ORDER BY sale_date ASC
+      `);
+      weekly_revenue = r.rows;
+    } catch (_) {}
 
-      // Zero-stock products with last movement date
-      pool.query(`
+    let monthly_stats = { month_revenue: 0, month_transactions: 0 };
+    try {
+      const r = await pool.query(`
+        SELECT COALESCE(SUM(total_amount),0) as month_revenue,
+               COUNT(*) as month_transactions
+        FROM sales_orders
+        WHERE DATE_TRUNC('month',created_at)=DATE_TRUNC('month',NOW())
+        AND status NOT IN ('VOID','CANCELLED')
+      `);
+      monthly_stats = r.rows[0];
+    } catch (_) {}
+
+    let top_products = [];
+    try {
+      const r = await pool.query(`
+        SELECT p.product_name, p.sku,
+               SUM(soi.quantity) as units_sold,
+               SUM(soi.line_total) as revenue
+        FROM sales_order_items soi
+        JOIN products p ON soi.product_id=p.product_id
+        JOIN sales_orders so ON soi.order_id=so.order_id
+        WHERE DATE_TRUNC('month',so.created_at)=DATE_TRUNC('month',NOW())
+        AND so.status NOT IN ('VOID','CANCELLED')
+        GROUP BY p.product_id,p.product_name,p.sku
+        ORDER BY revenue DESC LIMIT 6
+      `);
+      top_products = r.rows;
+    } catch (_) {}
+
+    let void_stats = { voided: 0, total: 0, void_rate_pct: 0 };
+    try {
+      const r = await pool.query(`
         SELECT
-          p.product_id,
-          p.product_name,
-          COALESCE(p.sku, '') AS sku,
-          MAX(it.created_at)  AS last_transaction_date
-        FROM inventory i
-        JOIN products p ON i.product_id = p.product_id
-        LEFT JOIN inventory_transactions it ON it.product_id = p.product_id
-        WHERE i.quantity_on_hand = 0 AND p.is_active = true
-        GROUP BY p.product_id, p.product_name, p.sku
-        ORDER BY last_transaction_date DESC NULLS LAST
-        LIMIT 20
-      `)
-    ]);
+          COUNT(*) FILTER (WHERE status='VOID') as voided,
+          COUNT(*) as total,
+          ROUND(COUNT(*) FILTER (WHERE status='VOID')*100.0
+            /NULLIF(COUNT(*),0),1) as void_rate_pct
+        FROM sales_orders
+        WHERE DATE_TRUNC('month',created_at)=DATE_TRUNC('month',NOW())
+      `);
+      void_stats = r.rows[0];
+    } catch (_) {}
+
+    let zero_stock = [];
+    try {
+      const r = await pool.query(`
+        SELECT p.product_name,p.sku,i.quantity
+        FROM inventory i JOIN products p ON i.product_id=p.product_id
+        WHERE i.quantity=0 LIMIT 10
+      `);
+      zero_stock = r.rows;
+    } catch (_) {}
+
+    let open_pos = { open_pos: 0, po_value: 0 };
+    try {
+      const r = await pool.query(`
+        SELECT COUNT(*) as open_pos,
+               COALESCE(SUM(total_amount),0) as po_value
+        FROM purchase_orders
+        WHERE status NOT IN ('RECEIVED','CANCELLED')
+      `);
+      open_pos = r.rows[0];
+    } catch (_) {}
 
     return {
-      vendor_watch:        vendorRes.status    === 'fulfilled' ? vendorRes.value.rows    : [],
-      zero_stock_products: zeroStockRes.status === 'fulfilled' ? zeroStockRes.value.rows : [],
+      today_stats,
+      weekly_revenue,
+      monthly_stats,
+      top_products,
+      void_stats,
+      zero_stock,
+      open_pos,
     };
   },
 
