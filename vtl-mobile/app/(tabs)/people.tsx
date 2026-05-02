@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import api, { TrainingUser, PendingAck, ActivityItem } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -136,7 +137,8 @@ export default function PeopleScreen() {
   const bottom5 = data.training_leaderboard.bottom_5 ?? [];
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
+    <SafeAreaView style={s.safe} edges={[]}>
+      <VTLAppHeader title="People" subtitle="Team & Activity" />
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -145,8 +147,6 @@ export default function PeopleScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <Text style={s.screenTitle}>People</Text>
-
         {/* Team by Role */}
         <SectionHeader title="Team by Role" />
         <View style={s.chipRow}>

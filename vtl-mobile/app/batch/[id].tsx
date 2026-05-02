@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import api, { BatchDetail, BatchComponent, QAGate } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -142,23 +143,17 @@ export default function BatchDetailScreen() {
     );
   }
 
-  const statusCfg = DISPLAY_STATUS[data.display_status ?? data.status] ?? { label: (data.status ?? '').toUpperCase(), color: COLORS.muted };
   const yieldColor = (data.yield_percentage ?? 0) >= 95 ? COLORS.green
     : (data.yield_percentage ?? 0) >= 85 ? COLORS.amber
     : COLORS.red;
 
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
-          <Text style={s.backText}>‹ Back</Text>
-        </TouchableOpacity>
-        <View style={[s.statusPill, { borderColor: statusCfg.color }]}>
-          <Text style={[s.statusPillText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
-        </View>
-      </View>
-
+    <SafeAreaView style={s.safe} edges={['bottom']}>
+      <VTLAppHeader
+        title={data.batch_number ?? 'Batch Detail'}
+        subtitle={data.product_name ?? ''}
+        showBack
+      />
       <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
 
         {/* Batch identity */}
@@ -240,12 +235,6 @@ const s = StyleSheet.create({
   scroll:  { flex: 1 },
   content: { paddingHorizontal: 16, paddingBottom: 16 },
   center:  { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-
-  header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
-  backBtn:     { padding: 4 },
-  backText:    { color: COLORS.sky, fontSize: 17, fontWeight: '600' },
-  statusPill:  { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4 },
-  statusPillText:{ fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
 
   batchNumber:  { color: COLORS.sky, fontFamily: 'monospace', fontSize: 22, fontWeight: '800', marginBottom: 4 },
   productName:  { color: COLORS.text, fontSize: 18, fontWeight: '700', marginBottom: 2 },

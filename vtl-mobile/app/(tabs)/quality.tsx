@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import api, { Ncr, Capa, Audit, QmsSection, DocInReview } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import VTLAppHeader from '../../components/VTLAppHeader';
 import { useAuthStore } from '../../stores/authStore';
 import SignatureBottomSheet, { SheetField } from '../../components/SignatureBottomSheet';
 import { Toast } from '../../components/Toast';
@@ -303,7 +304,8 @@ export default function QualityScreen() {
   };
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
+    <SafeAreaView style={s.safe} edges={[]}>
+      <VTLAppHeader title="Quality" subtitle="QMS · NCR · CAPA · Audits" />
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -312,8 +314,6 @@ export default function QualityScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <Text style={s.screenTitle}>Quality</Text>
-
         {/* 1 — QMS Readiness */}
         <SectionHeader title="QMS Readiness" count={data.qms_sections.length} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.circleScroll}>

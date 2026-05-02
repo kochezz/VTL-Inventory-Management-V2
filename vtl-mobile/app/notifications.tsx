@@ -4,12 +4,12 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import api, { Alert } from '../services/api';
 import { COLORS, RADIUS, SHADOW, timeAgo } from '../constants/theme';
 import { StatusBadge } from '../components/StatusBadge';
 import { SkeletonCard } from '../components/SkeletonLoader';
+import VTLAppHeader from '../components/VTLAppHeader';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,7 +83,6 @@ const FILTER_PILLS: { key: Filter; label: string }[] = [
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function NotificationsScreen() {
-  const router = useRouter();
   const [filter, setFilter] = useState<Filter>('ALL');
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
@@ -103,26 +102,12 @@ export default function NotificationsScreen() {
   const sections = groupByDate(filtered);
 
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
-          <Text style={s.backText}>‹ Back</Text>
-        </TouchableOpacity>
-        <View style={s.headerCenter}>
-          <Text style={s.headerTitle}>Notifications</Text>
-          {monthLabel ? (
-            <Text style={s.headerSub}>{totalCount} alerts this month</Text>
-          ) : null}
-        </View>
-        {monthLabel ? (
-          <View style={s.monthPill}>
-            <Text style={s.monthPillText}>{monthLabel}</Text>
-          </View>
-        ) : (
-          <View style={{ width: 80 }} />
-        )}
-      </View>
+    <SafeAreaView style={s.safe} edges={['bottom']}>
+      <VTLAppHeader
+        title="Notifications"
+        subtitle={monthLabel || 'This Month'}
+        showBack
+      />
 
       {/* Filter pills */}
       <ScrollView
@@ -196,16 +181,6 @@ export default function NotificationsScreen() {
 const s = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: COLORS.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-
-  // Header
-  header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
-  backBtn:      { width: 60 },
-  backText:     { color: COLORS.sky, fontSize: 17, fontWeight: '600' },
-  headerCenter: { flex: 1 },
-  headerTitle:  { color: COLORS.textPrimary, fontSize: 20, fontWeight: '800' },
-  headerSub:    { color: COLORS.textMuted,   fontSize: 12, marginTop: 2 },
-  monthPill:    { backgroundColor: COLORS.surfaceAlt, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.sm, paddingHorizontal: 8, paddingVertical: 4 },
-  monthPillText:{ color: COLORS.textSecondary, fontSize: 10, fontWeight: '600' },
 
   // Filter pills
   filterScroll:  { maxHeight: 48, marginBottom: 4 },

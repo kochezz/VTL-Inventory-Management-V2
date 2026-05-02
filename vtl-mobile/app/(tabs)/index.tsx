@@ -1,6 +1,6 @@
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl,
-  TouchableOpacity, Image,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -11,15 +11,9 @@ import { useAuthStore } from '../../stores/authStore';
 import { KpiCard } from '../../components/KpiCard';
 import { SectionHeader } from '../../components/SectionHeader';
 import { SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
+import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getGreeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return 'Good morning,';
-  if (h < 17) return 'Good afternoon,';
-  return 'Good evening,';
-}
 
 const SEV_CHIP: Record<string, { bg: string; border: string; text: string; prefix: string }> = {
   HIGH:   { bg: COLORS.redGlow,   border: COLORS.red,   text: COLORS.red,   prefix: '🚨' },
@@ -73,12 +67,6 @@ export default function HomeScreen() {
   const router = useRouter();
   const user   = useAuthStore((s) => s.user);
 
-  const firstName = ((user?.full_name as string) ?? '').split(' ')[0] || 'Executive';
-  const greeting  = getGreeting();
-  const dateStr   = new Date().toLocaleDateString('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long',
-  });
-
   const {
     data: dashboard, isLoading: dashLoading,
     refetch: refetchDash, isFetching: fetchingDash,
@@ -106,7 +94,25 @@ export default function HomeScreen() {
   const onRefresh    = () => { refetchDash(); refetchAlerts(); };
 
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={s.safe} edges={['bottom']}>
+      <VTLAppHeader
+        rightElement={
+          <TouchableOpacity
+            style={{ position: 'relative', padding: 4 }}
+            onPress={() => router.push('/notifications')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 22 }}>🔔</Text>
+            {hasHighAlert && (
+              <View style={{
+                position: 'absolute', top: -2, right: -2,
+                width: 8, height: 8, borderRadius: 4,
+                backgroundColor: COLORS.red,
+              }} />
+            )}
+          </TouchableOpacity>
+        }
+      />
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -115,30 +121,6 @@ export default function HomeScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={COLORS.sky} />
         }
       >
-        {/* ── Header ── */}
-        <View style={s.header}>
-          <View style={s.headerLeft}>
-            <Text style={s.greeting}>{greeting}</Text>
-            <Text style={s.firstName}>{firstName}</Text>
-            <Text style={s.dateText}>{dateStr}</Text>
-          </View>
-          <View style={s.headerRight}>
-            <Image
-              source={require('../../assets/vtl-app-logo.png')}
-              style={s.logo}
-              resizeMode="contain"
-            />
-            <TouchableOpacity
-              style={s.bellWrap}
-              onPress={() => router.push('/notifications')}
-              activeOpacity={0.7}
-            >
-              <Text style={s.bellIcon}>🔔</Text>
-              {hasHighAlert && <View style={s.bellDot} />}
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* ── Alert Banner ── */}
         {bannerAlerts.length > 0 && (
           <ScrollView
@@ -297,18 +279,6 @@ const s = StyleSheet.create({
   scroll:  { flex: 1 },
   content: { paddingBottom: 16 },
   section: { paddingHorizontal: 16, marginBottom: 8 },
-
-  // Header
-  header:      { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', padding: 16 },
-  headerLeft:  { flex: 1 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  greeting:    { color: COLORS.textMuted,    fontSize: 13 },
-  firstName:   { color: COLORS.textPrimary,  fontSize: 20, fontWeight: '800', marginVertical: 2 },
-  dateText:    { color: COLORS.textMuted,    fontSize: 12 },
-  logo:        { width: 36, height: 36 },
-  bellWrap:    { position: 'relative', padding: 4 },
-  bellIcon:    { fontSize: 24 },
-  bellDot:     { position: 'absolute', top: 2, right: 2, width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.red },
 
   // Alert Banner
   bannerScroll:   { marginBottom: 8 },

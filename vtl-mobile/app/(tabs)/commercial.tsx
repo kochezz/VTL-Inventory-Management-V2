@@ -4,8 +4,6 @@ import {
   RefreshControl, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQueryClient } from '@tanstack/react-query';
-import { router } from 'expo-router';
 import {
   CommercialSummary, CommercialTodayStats,
   CommercialVoidStats, CommercialOpenPos, CommercialTopProduct,
@@ -15,9 +13,8 @@ import { COLORS, RADIUS, SHADOW, formatCurrency } from '../../constants/theme';
 import { SkeletonCard, SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
 import { MonthComparisonChart } from '../../components/MonthComparisonChart';
 import { MiniBarChart } from '../../components/MiniBarChart';
-import { ProfileHeader } from '../../components/ProfileHeader';
-import { useAuthStore } from '../../stores/authStore';
 import { useCommercial } from '../../hooks/useCommercial';
+import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -119,8 +116,6 @@ function ProductRankList({
 export default function CommercialScreen() {
   const [activeTab, setActiveTab] = useState<'revenue' | 'products' | 'procurement'>('revenue');
   const [currency, setCurrency] = useState<'USD' | 'ZMW'>('USD');
-  const { user, logout } = useAuthStore();
-  const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch, isFetching } = useCommercial();
 
@@ -219,7 +214,8 @@ export default function CommercialScreen() {
   ].slice(0, 6) as string[];
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
+    <SafeAreaView style={s.safe} edges={[]}>
+      <VTLAppHeader title="Commercial" subtitle="Sales & Revenue Intelligence" />
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -228,19 +224,6 @@ export default function CommercialScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <ProfileHeader
-          user={{
-            full_name: (user?.full_name as string) ?? 'User',
-            role: (user?.role as string) ?? '',
-            email: (user?.email as string) ?? '',
-          }}
-          onLogout={async () => {
-            queryClient.clear();
-            await logout();
-            router.replace('/(auth)/login');
-          }}
-        />
-
         <Text style={s.screenTitle}>Commercial</Text>
 
         {/* ── Currency toggle ──────────────────────────────────────────────── */}

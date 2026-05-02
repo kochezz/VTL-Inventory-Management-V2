@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import api, { Batch, LowStockItem, Transaction } from '../../services/api';
 import { COLORS } from '../../constants/theme';
+import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -159,7 +160,8 @@ export default function OperationsScreen() {
   }
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
+    <SafeAreaView style={s.safe} edges={[]}>
+      <VTLAppHeader title="Operations" subtitle="Production & Inventory" />
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -168,8 +170,6 @@ export default function OperationsScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <Text style={s.screenTitle}>Operations</Text>
-
         {/* Active Production Batches */}
         <SectionHeader title="Active Production Batches" count={data.batches.length} />
         {data.batches.length === 0 ? (
