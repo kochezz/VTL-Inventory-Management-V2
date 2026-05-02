@@ -18,12 +18,8 @@ interface Props {
   weeklyData?: WeeklyItem[];
   currentColor?: string;
   previousColor?: string;
-}
-
-function compact(revenue: number): string {
-  if (revenue >= 1_000_000) return '$' + (revenue / 1_000_000).toFixed(1) + 'M';
-  if (revenue >= 1000) return '$' + (revenue / 1000).toFixed(1) + 'k';
-  return '$' + revenue.toFixed(0);
+  currency?: 'USD' | 'ZMW';
+  exchangeRate?: number;
 }
 
 export function MonthComparisonChart({
@@ -32,7 +28,16 @@ export function MonthComparisonChart({
   weeklyData = [],
   currentColor = COLORS.sky,
   previousColor = COLORS.teal,
+  currency = 'USD',
+  exchangeRate = 27,
 }: Props) {
+  const fmtVal = (usdVal: number): string => {
+    const v = currency === 'ZMW' ? usdVal * exchangeRate : usdVal;
+    const prefix = currency === 'ZMW' ? 'K' : '$';
+    if (v >= 1_000_000) return prefix + (v / 1_000_000).toFixed(1) + 'M';
+    if (v >= 1000) return prefix + (v / 1000).toFixed(1) + 'k';
+    return prefix + v.toFixed(0);
+  };
   const maxRevenue = Math.max(currentMonth.revenue, previousMonth.revenue, 1);
 
   const prevBarH = previousMonth.revenue > 0
@@ -60,7 +65,7 @@ export function MonthComparisonChart({
         {/* Previous month */}
         <View style={s.monthColumn}>
           <Text style={[s.barValueLabel, { color: previousColor }]}>
-            {previousMonth.revenue === 0 ? '—' : compact(previousMonth.revenue)}
+            {previousMonth.revenue === 0 ? '—' : fmtVal(previousMonth.revenue)}
           </Text>
           <View style={s.barArea}>
             {previousMonth.revenue === 0 ? (
@@ -77,7 +82,7 @@ export function MonthComparisonChart({
         {/* Current month */}
         <View style={s.monthColumn}>
           <Text style={[s.barValueLabel, { color: currentColor }]}>
-            {compact(currentMonth.revenue)}
+            {fmtVal(currentMonth.revenue)}
           </Text>
           <View style={s.barArea}>
             <View style={[s.bar, { height: currBarH, backgroundColor: currentColor }]} />

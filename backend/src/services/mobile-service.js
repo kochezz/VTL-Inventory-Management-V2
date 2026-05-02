@@ -336,7 +336,9 @@ const mobileService = {
       const r = await pool.query(`
         SELECT
           COALESCE(SUM(total_amount::numeric), 0)                              AS today_revenue,
-          COALESCE(SUM(total_zmw::numeric), 0)                                 AS today_revenue_zmw,
+          COALESCE(SUM(
+            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
+          ), 0)                                 AS today_revenue_zmw,
           COUNT(*)                                                               AS today_transactions,
           COALESCE(AVG(total_amount::numeric), 0)                              AS avg_order_value,
           SUM(CASE WHEN customer_id IS NULL     THEN 1 ELSE 0 END)             AS walkin_count,
@@ -357,7 +359,9 @@ const mobileService = {
         SELECT
           DATE(transaction_date::timestamp)          AS sale_date,
           COALESCE(SUM(total_amount::numeric), 0)    AS revenue,
-          COALESCE(SUM(total_zmw::numeric), 0)       AS revenue_zmw,
+          COALESCE(SUM(
+            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
+          ), 0)       AS revenue_zmw,
           COUNT(*)                                    AS transactions
         FROM sales_transactions
         WHERE transaction_date::timestamp >= NOW() - INTERVAL '7 days'
@@ -379,7 +383,9 @@ const mobileService = {
       const r = await pool.query(`
         SELECT
           COALESCE(SUM(total_amount::numeric), 0)    AS month_revenue,
-          COALESCE(SUM(total_zmw::numeric), 0)       AS month_revenue_zmw,
+          COALESCE(SUM(
+            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
+          ), 0)       AS month_revenue_zmw,
           COUNT(*)                                    AS month_transactions,
           COALESCE(AVG(total_amount::numeric), 0)    AS month_avg_order
         FROM sales_transactions
@@ -443,10 +449,14 @@ const mobileService = {
     let zero_stock = [];
     try {
       const r = await pool.query(`
-        SELECT p.product_name, p.sku, i.quantity
+        SELECT
+          p.product_name,
+          p.sku,
+          COALESCE(SUM(i.quantity_on_hand::numeric), 0) AS quantity
         FROM inventory i
         JOIN products p ON i.product_id = p.product_id
-        WHERE i.quantity = 0
+        GROUP BY p.product_id, p.product_name, p.sku
+        HAVING COALESCE(SUM(i.quantity_on_hand::numeric), 0) = 0
         LIMIT 10
       `);
       zero_stock = r.rows;
@@ -477,7 +487,9 @@ const mobileService = {
       const r = await pool.query(`
         SELECT
           COALESCE(SUM(total_amount::numeric), 0)    AS month_revenue,
-          COALESCE(SUM(total_zmw::numeric), 0)       AS month_revenue_zmw,
+          COALESCE(SUM(
+            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
+          ), 0)       AS month_revenue_zmw,
           COUNT(*)                                    AS month_transactions
         FROM sales_transactions
         WHERE DATE_TRUNC('month', transaction_date::timestamp)
@@ -525,7 +537,9 @@ const mobileService = {
           DATE_TRUNC('month', transaction_date::timestamp)                       AS month_start,
           TO_CHAR(DATE_TRUNC('month', transaction_date::timestamp), 'Mon YYYY')  AS month_label,
           COALESCE(SUM(total_amount::numeric), 0)                                AS total_revenue,
-          COALESCE(SUM(total_zmw::numeric), 0)                                   AS total_revenue_zmw,
+          COALESCE(SUM(
+            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
+          ), 0)                                   AS total_revenue_zmw,
           COUNT(*)                                                                AS total_transactions,
           COALESCE(AVG(total_amount::numeric), 0)                                AS avg_order_value
         FROM sales_transactions
@@ -572,7 +586,9 @@ const mobileService = {
           payment_method,
           COUNT(*)                                AS transaction_count,
           COALESCE(SUM(total_amount::numeric), 0) AS revenue_usd,
-          COALESCE(SUM(total_zmw::numeric), 0)    AS revenue_zmw
+          COALESCE(SUM(
+            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
+          ), 0)    AS revenue_zmw
         FROM sales_transactions
         WHERE DATE_TRUNC('month', transaction_date::timestamp) = DATE_TRUNC('month', NOW())
           AND TRIM(status) = 'completed'
@@ -605,6 +621,36 @@ const mobileService = {
       console.error('Commercial Q13 (customer_split) failed:', e.message);
     }
 
+    // Exchange rate lookup (falls back to average from recent transactions)
+    let exchange_rate = 27.0;
+    try {
+      const r = await pool.query(`
+        SELECT rate_value
+        FROM exchange_rates
+        WHERE target_currency = 'ZMW'
+          AND is_active = true
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `);
+      if (r.rows[0]) exchange_rate = parseFloat(r.rows[0].rate_value);
+    } catch (e) {
+      console.error('Commercial exchange_rate lookup failed:', e.message);
+      try {
+        const r2 = await pool.query(`
+          SELECT AVG(exchange_rate::numeric) as avg_rate
+          FROM sales_transactions
+          WHERE transaction_date::timestamp >= NOW() - INTERVAL '7 days'
+            AND exchange_rate IS NOT NULL
+            AND exchange_rate::numeric > 0
+        `);
+        if (r2.rows[0]?.avg_rate) {
+          exchange_rate = parseFloat(r2.rows[0].avg_rate);
+        }
+      } catch (e2) {
+        console.error('Exchange rate fallback failed:', e2.message);
+      }
+    }
+
     // Month-over-month derived metrics
     const curr_rev = parseFloat(monthly_stats.month_revenue) || 0;
     const prev_rev = parseFloat(prev_monthly_stats.month_revenue) || 0;
@@ -617,6 +663,7 @@ const mobileService = {
       : Math.round(((curr_txn - prev_txn) / prev_txn) * 100);
 
     return {
+      exchange_rate,
       today_stats,
       weekly_revenue,
       monthly_stats,

@@ -64,11 +64,12 @@ function KpiCard({
 }
 
 function ProductRankList({
-  products, barColor, emptyText,
+  products, barColor, emptyText, formatRevenue = formatCurrency,
 }: {
   products: CommercialTopProduct[];
   barColor: string;
   emptyText: string;
+  formatRevenue?: (v: number) => string;
 }) {
   if ((products ?? []).length === 0) {
     return <Text style={s.emptyText}>{emptyText}</Text>;
@@ -101,7 +102,7 @@ function ProductRankList({
             </View>
           </View>
           <Text style={[s.productRev, { color: barColor }]}>
-            {formatCurrency(n(p.revenue))}
+            {formatRevenue(n(p.revenue))}
           </Text>
         </View>
       ))}
@@ -113,6 +114,7 @@ function ProductRankList({
 
 export default function CommercialScreen() {
   const [activeTab, setActiveTab] = useState<'revenue' | 'products'>('revenue');
+  const [currency, setCurrency] = useState<'USD' | 'ZMW'>('USD');
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['commercial'],
@@ -167,7 +169,22 @@ export default function CommercialScreen() {
     customer_split = {} as CommercialCustomerSplit,
     mom_revenue_change_pct = null,
     mom_txn_change_pct = null,
+    exchange_rate: rawExchangeRate = 27,
   } = (data ?? {}) as Partial<CommercialSummary>;
+
+  const exchangeRate = Number(rawExchangeRate) || 27;
+
+  const formatAmount = (usdValue: number): string => {
+    const val = Number(usdValue) || 0;
+    if (currency === 'ZMW') {
+      return 'K ' + (val * exchangeRate).toLocaleString('en-US', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+    }
+    return '$' + val.toLocaleString('en-US', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+  };
 
   // Month labels derived from comparison data (fallback to JS date)
   const currentMonthLabel =
@@ -211,6 +228,28 @@ export default function CommercialScreen() {
       >
         <Text style={s.screenTitle}>Commercial</Text>
 
+        {/* ── Currency toggle ──────────────────────────────────────────────── */}
+        <View style={s.currencyRow}>
+          <Text style={s.currencyLabel}>Currency:</Text>
+          {(['USD', 'ZMW'] as const).map(c => (
+            <TouchableOpacity
+              key={c}
+              onPress={() => setCurrency(c)}
+              style={[
+                s.currencyBtn,
+                currency === c && { backgroundColor: c === 'USD' ? COLORS.sky : COLORS.teal, borderColor: c === 'USD' ? COLORS.sky : COLORS.teal },
+              ]}
+            >
+              <Text style={[s.currencyBtnText, currency === c && s.currencyBtnTextActive]}>
+                {c === 'USD' ? '$ USD' : 'K ZMW'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          {currency === 'ZMW' && (
+            <Text style={s.exchangeRateText}>@{exchangeRate.toFixed(2)}</Text>
+          )}
+        </View>
+
         {/* ── Tab switcher ─────────────────────────────────────────────────── */}
         <View style={s.tabRow}>
           {(['revenue', 'products'] as const).map(tab => (
@@ -234,13 +273,8 @@ export default function CommercialScreen() {
             {/* ── Today hero card ─────────────────────────────────────────── */}
             <SectionHeader title="Today" />
             <View style={[s.heroCard, SHADOW.card]}>
-              {/* Primary USD revenue */}
               <Text style={s.heroRevenue}>
-                {formatCurrency(n(today_stats?.today_revenue))}
-              </Text>
-              {/* ZMW equivalent */}
-              <Text style={s.heroRevZmw}>
-                K {n(today_stats?.today_revenue_zmw).toLocaleString('en-US', { maximumFractionDigits: 0 })} ZMW
+                {formatAmount(n(today_stats?.today_revenue))}
               </Text>
               {/* MoM change */}
               {mom_revenue_change_pct !== null ? (
@@ -260,7 +294,7 @@ export default function CommercialScreen() {
               <View style={s.statPillsRow}>
                 {[
                   `Txns: ${n(today_stats?.today_transactions)}`,
-                  `Avg: ${formatCurrency(n(today_stats?.avg_order_value))}`,
+                  `Avg: ${formatAmount(n(today_stats?.avg_order_value))}`,
                   `Walk-in: ${n(today_stats?.walkin_count)}`,
                   `B2B: ${n(today_stats?.b2b_count)}`,
                 ].map(label => (
@@ -289,6 +323,8 @@ export default function CommercialScreen() {
                 weeklyData={weekly_comparison ?? []}
                 currentColor={COLORS.sky}
                 previousColor={COLORS.teal}
+                currency={currency}
+                exchangeRate={exchangeRate}
               />
             </View>
 
@@ -307,7 +343,7 @@ export default function CommercialScreen() {
             <View style={s.kpiGrid}>
               <KpiCard
                 label={`${currentMonthLabel} Revenue`}
-                value={formatCurrency(n((monthly_stats as any)?.month_revenue))}
+                value={formatAmount(n((monthly_stats as any)?.month_revenue))}
                 color={COLORS.sky}
                 width="48%"
                 trend={mom_revenue_change_pct}
@@ -321,7 +357,7 @@ export default function CommercialScreen() {
               />
               <KpiCard
                 label={`${prevMonthLabel} Revenue`}
-                value={formatCurrency(n((prev_monthly_stats as any)?.month_revenue))}
+                value={formatAmount(n((prev_monthly_stats as any)?.month_revenue))}
                 color={COLORS.teal}
                 width="48%"
               />
@@ -353,10 +389,7 @@ export default function CommercialScreen() {
                     >
                       <Text style={s.pmLabel}>{label}</Text>
                       <Text style={s.pmTxns}>{n(pm.transaction_count)} txns</Text>
-                      <View style={s.pmRight}>
-                        <Text style={s.pmRevUsd}>{formatCurrency(n(pm.revenue_usd))}</Text>
-                        <Text style={s.pmRevZmw}>K {n(pm.revenue_zmw).toLocaleString('en-US', { maximumFractionDigits: 0 })} ZMW</Text>
-                      </View>
+                      <Text style={s.pmRevUsd}>{formatAmount(n(pm.revenue_usd))}</Text>
                     </View>
                   );
                 })}
@@ -368,14 +401,14 @@ export default function CommercialScreen() {
             <View style={s.kpiRow}>
               <View style={[s.splitCard, SHADOW.card, { borderColor: COLORS.purple + '66' }]}>
                 <Text style={[s.splitValue, { color: COLORS.purple }]}>
-                  {formatCurrency(n(customer_split?.b2b_revenue))}
+                  {formatAmount(n(customer_split?.b2b_revenue))}
                 </Text>
                 <Text style={s.splitOrders}>{n(customer_split?.b2b_count)} orders</Text>
                 <Text style={s.splitLabel}>B2B Revenue</Text>
               </View>
               <View style={[s.splitCard, SHADOW.card, { borderColor: COLORS.sky + '66' }]}>
                 <Text style={[s.splitValue, { color: COLORS.sky }]}>
-                  {formatCurrency(n(customer_split?.walkin_revenue))}
+                  {formatAmount(n(customer_split?.walkin_revenue))}
                 </Text>
                 <Text style={s.splitOrders}>{n(customer_split?.walkin_count)} orders</Text>
                 <Text style={s.splitLabel}>Walk-in Revenue</Text>
@@ -430,7 +463,7 @@ export default function CommercialScreen() {
             <SectionHeader title="Open Purchase Orders" />
             <View style={s.kpiRow}>
               <KpiCard label="Open POs" value={String(n(open_pos?.open_pos))} color={COLORS.amber} />
-              <KpiCard label="PO Value" value={formatCurrency(n(open_pos?.po_value))} color={COLORS.amber} />
+              <KpiCard label="PO Value" value={formatAmount(n(open_pos?.po_value))} color={COLORS.amber} />
             </View>
           </>
         )}
@@ -446,6 +479,7 @@ export default function CommercialScreen() {
               products={top_products ?? []}
               barColor={COLORS.sky}
               emptyText="No product sales recorded this month."
+              formatRevenue={formatAmount}
             />
 
             {/* ── Previous month ───────────────────────────────────────────── */}
@@ -457,6 +491,7 @@ export default function CommercialScreen() {
               products={prev_top_products ?? []}
               barColor={COLORS.teal}
               emptyText={`📊 No product data for ${prevMonthLabel}`}
+              formatRevenue={formatAmount}
             />
 
             {/* ── SKU comparison ───────────────────────────────────────────── */}
@@ -477,9 +512,9 @@ export default function CommercialScreen() {
                   return (
                     <View key={sku} style={[s.skuRow, i < allSkus.length - 1 && s.rowDivider]}>
                       <Text style={s.skuName} numberOfLines={1}>{name}</Text>
-                      <Text style={s.skuCurr}>{formatCurrency(currRev)}</Text>
+                      <Text style={s.skuCurr}>{formatAmount(currRev)}</Text>
                       <Text style={s.skuVs}>vs</Text>
-                      <Text style={s.skuPrev}>{formatCurrency(prevRev)}</Text>
+                      <Text style={s.skuPrev}>{formatAmount(prevRev)}</Text>
                       <Text style={[s.skuArrow, { color: arrowColor }]}>{arrow}</Text>
                     </View>
                   );
@@ -504,6 +539,14 @@ const s = StyleSheet.create({
   loadContent: { padding: 16, gap: 12 },
   center:      { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   screenTitle: { color: COLORS.text, fontSize: 24, fontWeight: '800', marginBottom: 8 },
+
+  // Currency toggle
+  currencyRow:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', paddingVertical: 8, gap: 8, marginBottom: 4 },
+  currencyLabel:       { color: COLORS.muted, fontSize: 12 },
+  currencyBtn:         { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, backgroundColor: COLORS.surfaceAlt, borderColor: COLORS.border },
+  currencyBtnText:     { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
+  currencyBtnTextActive: { color: '#fff' },
+  exchangeRateText:    { color: COLORS.muted, fontSize: 10 },
 
   // Tabs
   tabRow:        { flexDirection: 'row', gap: 8, marginBottom: 4 },

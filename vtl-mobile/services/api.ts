@@ -360,6 +360,7 @@ export interface CommercialCustomerSplit {
 }
 
 export interface CommercialSummary {
+  exchange_rate: number;
   today_stats: CommercialTodayStats;
   weekly_revenue: CommercialWeeklyDay[];
   monthly_stats: CommercialMonthlyStats;
