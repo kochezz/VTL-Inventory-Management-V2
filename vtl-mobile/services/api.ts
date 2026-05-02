@@ -288,9 +288,11 @@ export interface NCRDetail {
 
 export interface CommercialTodayStats {
   today_revenue: number | string;
+  today_revenue_zmw: number | string;
   today_transactions: number | string;
   avg_order_value: number | string;
   walkin_count: number | string;
+  b2b_count: number | string;
 }
 
 export interface CommercialWeeklyDay {
@@ -343,6 +345,20 @@ export interface CommercialWeeklyComparison {
   revenue: number | string;
 }
 
+export interface CommercialPaymentMethod {
+  payment_method: string;
+  transaction_count: number | string;
+  revenue_usd: number | string;
+  revenue_zmw: number | string;
+}
+
+export interface CommercialCustomerSplit {
+  b2b_revenue: number | string;
+  walkin_revenue: number | string;
+  b2b_count: number | string;
+  walkin_count: number | string;
+}
+
 export interface CommercialSummary {
   today_stats: CommercialTodayStats;
   weekly_revenue: CommercialWeeklyDay[];
@@ -355,6 +371,8 @@ export interface CommercialSummary {
   void_stats: CommercialVoidStats;
   zero_stock: CommercialZeroStock[];
   open_pos: CommercialOpenPos;
+  payment_breakdown: CommercialPaymentMethod[];
+  customer_split: CommercialCustomerSplit;
   mom_revenue_change_pct: number | null;
   mom_txn_change_pct: number | null;
 }

@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import api, {
   CommercialSummary, CommercialTodayStats,
   CommercialVoidStats, CommercialOpenPos, CommercialTopProduct,
+  CommercialPaymentMethod, CommercialCustomerSplit,
 } from '../../services/api';
 import { COLORS, RADIUS, SHADOW, formatCurrency } from '../../constants/theme';
 import { SkeletonCard, SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
@@ -162,6 +163,8 @@ export default function CommercialScreen() {
     void_stats = {} as CommercialVoidStats,
     zero_stock = [],
     open_pos = {} as CommercialOpenPos,
+    payment_breakdown = [] as CommercialPaymentMethod[],
+    customer_split = {} as CommercialCustomerSplit,
     mom_revenue_change_pct = null,
     mom_txn_change_pct = null,
   } = (data ?? {}) as Partial<CommercialSummary>;
@@ -228,38 +231,44 @@ export default function CommercialScreen() {
             ════════════════════════════════════════════════════════════════════ */}
         {activeTab === 'revenue' && (
           <>
-            {/* ── Today KPIs with MoM hero indicator ─────────────────────── */}
+            {/* ── Today hero card ─────────────────────────────────────────── */}
             <SectionHeader title="Today" />
-            <View style={s.kpiRow}>
-              {/* Hero card — revenue + MoM indicator */}
-              <View style={[s.kpiCard, SHADOW.card, { flex: 1 }]}>
-                <Text style={[s.kpiValue, { color: COLORS.green }]}>
-                  {formatCurrency(n(today_stats?.today_revenue))}
-                </Text>
-                {mom_revenue_change_pct !== null ? (
-                  <View style={s.momRow}>
-                    <Text style={[s.momText, { color: momColor }]}>
-                      {mom_revenue_change_pct > 0 ? '↑' : mom_revenue_change_pct < 0 ? '↓' : '→'}{' '}
-                      {Math.abs(mom_revenue_change_pct)}% vs {prevMonthLabel}
-                    </Text>
-                    <View style={[s.momPill, { backgroundColor: momColor + '26', borderColor: momColor }]}>
-                      <Text style={[s.momPillText, { color: momColor }]}>MoM</Text>
-                    </View>
+            <View style={[s.heroCard, SHADOW.card]}>
+              {/* Primary USD revenue */}
+              <Text style={s.heroRevenue}>
+                {formatCurrency(n(today_stats?.today_revenue))}
+              </Text>
+              {/* ZMW equivalent */}
+              <Text style={s.heroRevZmw}>
+                K {n(today_stats?.today_revenue_zmw).toLocaleString('en-US', { maximumFractionDigits: 0 })} ZMW
+              </Text>
+              {/* MoM change */}
+              {mom_revenue_change_pct !== null ? (
+                <View style={s.momRow}>
+                  <Text style={[s.momText, { color: momColor }]}>
+                    {mom_revenue_change_pct > 0 ? '↑' : mom_revenue_change_pct < 0 ? '↓' : '→'}{' '}
+                    {Math.abs(mom_revenue_change_pct)}% vs {prevMonthLabel}
+                  </Text>
+                  <View style={[s.momPill, { backgroundColor: momColor + '26', borderColor: momColor }]}>
+                    <Text style={[s.momPillText, { color: momColor }]}>MoM</Text>
                   </View>
-                ) : (
-                  <Text style={s.momFirstData}>— First month of data</Text>
-                )}
-                <Text style={s.kpiLabel}>Revenue</Text>
+                </View>
+              ) : (
+                <Text style={s.momFirstData}>— First month of data</Text>
+              )}
+              {/* Stat pills row */}
+              <View style={s.statPillsRow}>
+                {[
+                  `Txns: ${n(today_stats?.today_transactions)}`,
+                  `Avg: ${formatCurrency(n(today_stats?.avg_order_value))}`,
+                  `Walk-in: ${n(today_stats?.walkin_count)}`,
+                  `B2B: ${n(today_stats?.b2b_count)}`,
+                ].map(label => (
+                  <View key={label} style={s.statPill}>
+                    <Text style={s.statPillText}>{label}</Text>
+                  </View>
+                ))}
               </View>
-              <KpiCard
-                label="Transactions"
-                value={String(n(today_stats?.today_transactions))}
-                color={COLORS.sky}
-              />
-            </View>
-            <View style={[s.kpiRow, { marginTop: 10 }]}>
-              <KpiCard label="Avg Order" value={formatCurrency(n(today_stats?.avg_order_value))} />
-              <KpiCard label="Walk-ins" value={String(n(today_stats?.walkin_count))} />
             </View>
 
             {/* ── Month vs Month comparison chart ─────────────────────────── */}
@@ -322,6 +331,55 @@ export default function CommercialScreen() {
                 color={COLORS.purple}
                 width="48%"
               />
+            </View>
+
+            {/* ── Payment Methods ──────────────────────────────────────────── */}
+            <SectionHeader title="Payment Methods" subtitle="this month" />
+            {(payment_breakdown ?? []).length === 0 ? (
+              <Text style={s.emptyText}>No payment data this month.</Text>
+            ) : (
+              <View style={[s.card, SHADOW.card]}>
+                {(payment_breakdown ?? []).map((pm, i) => {
+                  const label = {
+                    CASH_USD: '💵 Cash (USD)',
+                    CASH_ZMW: '💴 Cash (ZMW)',
+                    MOBILE_MONEY: '📱 Mobile Money',
+                    BANK_TRANSFER: '🏦 Bank Transfer',
+                  }[(pm.payment_method ?? '') as string] ?? pm.payment_method;
+                  return (
+                    <View
+                      key={pm.payment_method}
+                      style={[s.pmRow, i < (payment_breakdown ?? []).length - 1 && s.rowDivider]}
+                    >
+                      <Text style={s.pmLabel}>{label}</Text>
+                      <Text style={s.pmTxns}>{n(pm.transaction_count)} txns</Text>
+                      <View style={s.pmRight}>
+                        <Text style={s.pmRevUsd}>{formatCurrency(n(pm.revenue_usd))}</Text>
+                        <Text style={s.pmRevZmw}>K {n(pm.revenue_zmw).toLocaleString('en-US', { maximumFractionDigits: 0 })} ZMW</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* ── Customer Split ────────────────────────────────────────────── */}
+            <SectionHeader title="Customer Split" subtitle="B2B vs Walk-in this month" />
+            <View style={s.kpiRow}>
+              <View style={[s.splitCard, SHADOW.card, { borderColor: COLORS.purple + '66' }]}>
+                <Text style={[s.splitValue, { color: COLORS.purple }]}>
+                  {formatCurrency(n(customer_split?.b2b_revenue))}
+                </Text>
+                <Text style={s.splitOrders}>{n(customer_split?.b2b_count)} orders</Text>
+                <Text style={s.splitLabel}>B2B Revenue</Text>
+              </View>
+              <View style={[s.splitCard, SHADOW.card, { borderColor: COLORS.sky + '66' }]}>
+                <Text style={[s.splitValue, { color: COLORS.sky }]}>
+                  {formatCurrency(n(customer_split?.walkin_revenue))}
+                </Text>
+                <Text style={s.splitOrders}>{n(customer_split?.walkin_count)} orders</Text>
+                <Text style={s.splitLabel}>Walk-in Revenue</Text>
+              </View>
             </View>
 
             {/* ── Void Rate ────────────────────────────────────────────────── */}
@@ -484,6 +542,20 @@ const s = StyleSheet.create({
   kpiTrend: { fontSize: 11, fontWeight: '700', marginBottom: 4 },
   kpiLabel: { fontSize: 11, color: COLORS.muted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
 
+  // Hero card
+  heroCard:     {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+  },
+  heroRevenue:  { fontSize: 32, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 2 },
+  heroRevZmw:   { fontSize: 14, color: COLORS.muted, marginBottom: 8 },
+  statPillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  statPill:     { backgroundColor: COLORS.surfaceAlt, borderRadius: RADIUS.sm, paddingHorizontal: 8, paddingVertical: 4 },
+  statPillText: { color: COLORS.muted, fontSize: 12, fontWeight: '600' },
+
   // MoM hero indicator
   momRow:      { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   momText:     { fontSize: 13, fontWeight: '700', flexShrink: 1 },
@@ -521,6 +593,26 @@ const s = StyleSheet.create({
   skuVs:    { color: COLORS.muted, fontSize: 10, width: 20, textAlign: 'center' },
   skuPrev:  { color: COLORS.teal, fontSize: 12, fontWeight: '700', width: 70, textAlign: 'right' },
   skuArrow: { fontSize: 14, fontWeight: '700', width: 16, textAlign: 'center' },
+
+  // Payment methods
+  pmRow:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
+  pmLabel:   { flex: 1, color: COLORS.text, fontSize: 13, fontWeight: '600' },
+  pmTxns:    { color: COLORS.muted, fontSize: 12, marginRight: 10 },
+  pmRight:   { alignItems: 'flex-end' },
+  pmRevUsd:  { color: COLORS.sky, fontSize: 13, fontWeight: '700' },
+  pmRevZmw:  { color: COLORS.muted, fontSize: 11 },
+
+  // Customer split
+  splitCard:   {
+    flex: 1,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    padding: 14,
+  },
+  splitValue:  { fontSize: 18, fontWeight: '800', marginBottom: 2 },
+  splitOrders: { color: COLORS.muted, fontSize: 12, marginBottom: 6 },
+  splitLabel:  { color: COLORS.muted, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
 
   // Error / retry
   errorText:   { color: COLORS.red, fontSize: 14, textAlign: 'center', marginBottom: 16 },

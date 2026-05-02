@@ -326,44 +326,42 @@ const mobileService = {
   // getCommercialSummary
   // --------------------------------------------------------------------------
   async getCommercialSummary() {
+    // Q1 — today stats
     let today_stats = {
-      today_revenue: 0, today_transactions: 0,
-      avg_order_value: 0, walkin_count: 0
+      today_revenue: 0, today_revenue_zmw: 0,
+      today_transactions: 0, avg_order_value: 0,
+      walkin_count: 0, b2b_count: 0,
     };
-    let weekly_revenue = [];
-    let monthly_stats = { month_revenue: 0, month_transactions: 0 };
-    let top_products = [];
-    let void_stats = { voided: 0, total: 0, void_rate_pct: 0 };
-    let zero_stock = [];
-    let open_pos = { open_pos: 0, po_value: 0 };
-
-    // Query 1 — today stats
     try {
       const r = await pool.query(`
         SELECT
-          COALESCE(SUM(total_amount),0) as today_revenue,
-          COUNT(*) as today_transactions,
-          COALESCE(AVG(total_amount),0) as avg_order_value,
-          COUNT(*) FILTER (WHERE customer_type='WALK_IN') as walkin_count
+          COALESCE(SUM(total_amount), 0)                              AS today_revenue,
+          COALESCE(SUM(total_zmw), 0)                                 AS today_revenue_zmw,
+          COUNT(*)                                                     AS today_transactions,
+          COALESCE(AVG(total_amount), 0)                              AS avg_order_value,
+          COUNT(*) FILTER (WHERE customer_type = 'WALK_IN')           AS walkin_count,
+          COUNT(*) FILTER (WHERE customer_type = 'B2B')               AS b2b_count
         FROM sales_orders
         WHERE DATE(created_at) = CURRENT_DATE
-        AND status NOT IN ('VOID','CANCELLED')
+          AND status = 'COMPLETED'
       `);
       if (r.rows[0]) today_stats = r.rows[0];
     } catch (e) {
       console.error('Commercial Q1 (today_stats) failed:', e.message);
     }
 
-    // Query 2 — weekly revenue
+    // Q2 — weekly revenue last 7 days
+    let weekly_revenue = [];
     try {
       const r = await pool.query(`
         SELECT
-          DATE(created_at) as sale_date,
-          COALESCE(SUM(total_amount),0) as revenue,
-          COUNT(*) as transactions
+          DATE(created_at)               AS sale_date,
+          COALESCE(SUM(total_amount), 0) AS revenue,
+          COALESCE(SUM(total_zmw), 0)    AS revenue_zmw,
+          COUNT(*)                       AS transactions
         FROM sales_orders
         WHERE created_at >= NOW() - INTERVAL '7 days'
-        AND status NOT IN ('VOID','CANCELLED')
+          AND status = 'COMPLETED'
         GROUP BY DATE(created_at)
         ORDER BY sale_date ASC
       `);
@@ -372,34 +370,41 @@ const mobileService = {
       console.error('Commercial Q2 (weekly_revenue) failed:', e.message);
     }
 
-    // Query 3 — monthly stats
+    // Q3 — current month stats
+    let monthly_stats = {
+      month_revenue: 0, month_revenue_zmw: 0,
+      month_transactions: 0, month_avg_order: 0,
+    };
     try {
       const r = await pool.query(`
         SELECT
-          COALESCE(SUM(total_amount),0) as month_revenue,
-          COUNT(*) as month_transactions
+          COALESCE(SUM(total_amount), 0) AS month_revenue,
+          COALESCE(SUM(total_zmw), 0)    AS month_revenue_zmw,
+          COUNT(*)                       AS month_transactions,
+          COALESCE(AVG(total_amount), 0) AS month_avg_order
         FROM sales_orders
         WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
-        AND status NOT IN ('VOID','CANCELLED')
+          AND status = 'COMPLETED'
       `);
       if (r.rows[0]) monthly_stats = r.rows[0];
     } catch (e) {
       console.error('Commercial Q3 (monthly_stats) failed:', e.message);
     }
 
-    // Query 4 — top products
+    // Q4 — top products current month (uses soi.product_name — no products JOIN needed)
+    let top_products = [];
     try {
       const r = await pool.query(`
         SELECT
-          p.product_name, p.sku,
-          SUM(soi.quantity) as units_sold,
-          SUM(soi.line_total) as revenue
+          soi.product_name,
+          soi.sku,
+          SUM(soi.quantity)   AS units_sold,
+          SUM(soi.line_total) AS revenue
         FROM sales_order_items soi
-        JOIN products p ON soi.product_id = p.product_id
         JOIN sales_orders so ON soi.order_id = so.order_id
         WHERE DATE_TRUNC('month', so.created_at) = DATE_TRUNC('month', NOW())
-        AND so.status NOT IN ('VOID','CANCELLED')
-        GROUP BY p.product_id, p.product_name, p.sku
+          AND so.status = 'COMPLETED'
+        GROUP BY soi.product_name, soi.sku
         ORDER BY revenue DESC
         LIMIT 6
       `);
@@ -408,16 +413,18 @@ const mobileService = {
       console.error('Commercial Q4 (top_products) failed:', e.message);
     }
 
-    // Query 5 — void stats
+    // Q5 — void stats (includes voided revenue)
+    let void_stats = { voided: 0, total: 0, void_rate_pct: 0, voided_revenue: 0 };
     try {
       const r = await pool.query(`
         SELECT
-          COUNT(*) FILTER (WHERE status = 'VOID') as voided,
-          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status = 'VOID')                              AS voided,
+          COUNT(*)                                                               AS total,
+          COALESCE(SUM(total_amount) FILTER (WHERE status = 'VOID'), 0)        AS voided_revenue,
           ROUND(
             COUNT(*) FILTER (WHERE status = 'VOID') * 100.0
             / NULLIF(COUNT(*), 0), 1
-          ) as void_rate_pct
+          )                                                                      AS void_rate_pct
         FROM sales_orders
         WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
       `);
@@ -426,7 +433,8 @@ const mobileService = {
       console.error('Commercial Q5 (void_stats) failed:', e.message);
     }
 
-    // Query 6 — zero stock
+    // Q6 — zero stock (inventory table — unchanged)
+    let zero_stock = [];
     try {
       const r = await pool.query(`
         SELECT p.product_name, p.sku, i.quantity_on_hand AS quantity
@@ -440,12 +448,13 @@ const mobileService = {
       console.error('Commercial Q6 (zero_stock) failed:', e.message);
     }
 
-    // Query 7 — open POs
+    // Q7 — open POs (purchase_orders table — unchanged)
+    let open_pos = { open_pos: 0, po_value: 0 };
     try {
       const r = await pool.query(`
         SELECT
-          COUNT(*) as open_pos,
-          COALESCE(SUM(total_amount), 0) as po_value
+          COUNT(*)                        AS open_pos,
+          COALESCE(SUM(total_amount), 0)  AS po_value
         FROM purchase_orders
         WHERE status NOT IN ('RECEIVED','CANCELLED')
       `);
@@ -454,38 +463,41 @@ const mobileService = {
       console.error('Commercial Q7 (open_pos) failed:', e.message);
     }
 
-    // Query 8 — previous month stats
-    let prev_monthly_stats = { month_revenue: 0, month_transactions: 0 };
+    // Q8 — previous month stats
+    let prev_monthly_stats = {
+      month_revenue: 0, month_revenue_zmw: 0, month_transactions: 0,
+    };
     try {
       const r = await pool.query(`
         SELECT
-          COALESCE(SUM(total_amount), 0) as month_revenue,
-          COUNT(*) as month_transactions
+          COALESCE(SUM(total_amount), 0) AS month_revenue,
+          COALESCE(SUM(total_zmw), 0)    AS month_revenue_zmw,
+          COUNT(*)                       AS month_transactions
         FROM sales_orders
         WHERE DATE_TRUNC('month', created_at)
               = DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
-        AND status NOT IN ('VOID', 'CANCELLED')
+          AND status = 'COMPLETED'
       `);
       if (r.rows[0]) prev_monthly_stats = r.rows[0];
     } catch (e) {
       console.error('Commercial Q8 (prev_monthly_stats) failed:', e.message);
     }
 
-    // Query 9 — previous month top products
+    // Q9 — previous month top products
     let prev_top_products = [];
     try {
       const r = await pool.query(`
         SELECT
-          p.product_name, p.sku,
-          SUM(soi.quantity) as units_sold,
-          SUM(soi.line_total) as revenue
+          soi.product_name,
+          soi.sku,
+          SUM(soi.quantity)   AS units_sold,
+          SUM(soi.line_total) AS revenue
         FROM sales_order_items soi
-        JOIN products p ON soi.product_id = p.product_id
         JOIN sales_orders so ON soi.order_id = so.order_id
         WHERE DATE_TRUNC('month', so.created_at)
               = DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
-        AND so.status NOT IN ('VOID', 'CANCELLED')
-        GROUP BY p.product_id, p.product_name, p.sku
+          AND so.status = 'COMPLETED'
+        GROUP BY soi.product_name, soi.sku
         ORDER BY revenue DESC
         LIMIT 6
       `);
@@ -494,19 +506,21 @@ const mobileService = {
       console.error('Commercial Q9 (prev_top_products) failed:', e.message);
     }
 
-    // Query 10 — monthly comparison (current + previous month summaries)
+    // Q10 — monthly comparison (prev + current summarised)
     let monthly_comparison = [];
     try {
       const r = await pool.query(`
         SELECT
-          DATE_TRUNC('month', created_at) as month_start,
-          TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month_label,
-          COALESCE(SUM(total_amount), 0) as total_revenue,
-          COUNT(*) as total_transactions,
-          COALESCE(AVG(total_amount), 0) as avg_order_value
+          DATE_TRUNC('month', created_at)                       AS month_start,
+          TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY')  AS month_label,
+          COALESCE(SUM(total_amount), 0)                        AS total_revenue,
+          COALESCE(SUM(total_zmw), 0)                           AS total_revenue_zmw,
+          COUNT(*)                                              AS total_transactions,
+          COALESCE(AVG(total_amount), 0)                        AS avg_order_value
         FROM sales_orders
-        WHERE DATE_TRUNC('month', created_at) >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
-        AND status NOT IN ('VOID', 'CANCELLED')
+        WHERE DATE_TRUNC('month', created_at)
+                >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+          AND status = 'COMPLETED'
         GROUP BY DATE_TRUNC('month', created_at),
                  TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY')
         ORDER BY month_start ASC
@@ -516,18 +530,19 @@ const mobileService = {
       console.error('Commercial Q10 (monthly_comparison) failed:', e.message);
     }
 
-    // Query 11 — week-by-week breakdown for both months
+    // Q11 — week-by-week for both months
     let weekly_comparison = [];
     try {
       const r = await pool.query(`
         SELECT
-          TO_CHAR(DATE_TRUNC('week', created_at), 'DD Mon') as week_label,
-          DATE_TRUNC('month', created_at) as month_start,
-          TO_CHAR(DATE_TRUNC('month', created_at), 'Mon') as month_short,
-          COALESCE(SUM(total_amount), 0) as revenue
+          TO_CHAR(DATE_TRUNC('week', created_at), 'DD Mon')    AS week_label,
+          DATE_TRUNC('month', created_at)                       AS month_start,
+          TO_CHAR(DATE_TRUNC('month', created_at), 'Mon')       AS month_short,
+          COALESCE(SUM(total_amount), 0)                        AS revenue
         FROM sales_orders
-        WHERE DATE_TRUNC('month', created_at) >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
-        AND status NOT IN ('VOID', 'CANCELLED')
+        WHERE DATE_TRUNC('month', created_at)
+                >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+          AND status = 'COMPLETED'
         GROUP BY DATE_TRUNC('week', created_at),
                  DATE_TRUNC('month', created_at),
                  TO_CHAR(DATE_TRUNC('month', created_at), 'Mon')
@@ -536,6 +551,47 @@ const mobileService = {
       weekly_comparison = r.rows;
     } catch (e) {
       console.error('Commercial Q11 (weekly_comparison) failed:', e.message);
+    }
+
+    // Q12 — payment method breakdown this month
+    let payment_breakdown = [];
+    try {
+      const r = await pool.query(`
+        SELECT
+          payment_method,
+          COUNT(*)                        AS transaction_count,
+          COALESCE(SUM(total_amount), 0)  AS revenue_usd,
+          COALESCE(SUM(total_zmw), 0)     AS revenue_zmw
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+          AND status = 'COMPLETED'
+        GROUP BY payment_method
+        ORDER BY revenue_usd DESC
+      `);
+      payment_breakdown = r.rows;
+    } catch (e) {
+      console.error('Commercial Q12 (payment_breakdown) failed:', e.message);
+    }
+
+    // Q13 — B2B vs Walk-in customer split this month
+    let customer_split = {
+      b2b_revenue: 0, walkin_revenue: 0,
+      b2b_count: 0, walkin_count: 0,
+    };
+    try {
+      const r = await pool.query(`
+        SELECT
+          COALESCE(SUM(total_amount) FILTER (WHERE customer_type = 'B2B'), 0)     AS b2b_revenue,
+          COALESCE(SUM(total_amount) FILTER (WHERE customer_type = 'WALK_IN'), 0) AS walkin_revenue,
+          COUNT(*) FILTER (WHERE customer_type = 'B2B')                           AS b2b_count,
+          COUNT(*) FILTER (WHERE customer_type = 'WALK_IN')                       AS walkin_count
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+          AND status = 'COMPLETED'
+      `);
+      if (r.rows[0]) customer_split = r.rows[0];
+    } catch (e) {
+      console.error('Commercial Q13 (customer_split) failed:', e.message);
     }
 
     // Month-over-month derived metrics
@@ -561,6 +617,8 @@ const mobileService = {
       void_stats,
       zero_stock,
       open_pos,
+      payment_breakdown,
+      customer_split,
       mom_revenue_change_pct,
       mom_txn_change_pct,
     };
