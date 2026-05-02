@@ -454,14 +454,115 @@ const mobileService = {
       console.error('Commercial Q7 (open_pos) failed:', e.message);
     }
 
+    // Query 8 — previous month stats
+    let prev_monthly_stats = { month_revenue: 0, month_transactions: 0 };
+    try {
+      const r = await pool.query(`
+        SELECT
+          COALESCE(SUM(total_amount), 0) as month_revenue,
+          COUNT(*) as month_transactions
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at)
+              = DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+        AND status NOT IN ('VOID', 'CANCELLED')
+      `);
+      if (r.rows[0]) prev_monthly_stats = r.rows[0];
+    } catch (e) {
+      console.error('Commercial Q8 (prev_monthly_stats) failed:', e.message);
+    }
+
+    // Query 9 — previous month top products
+    let prev_top_products = [];
+    try {
+      const r = await pool.query(`
+        SELECT
+          p.product_name, p.sku,
+          SUM(soi.quantity) as units_sold,
+          SUM(soi.line_total) as revenue
+        FROM sales_order_items soi
+        JOIN products p ON soi.product_id = p.product_id
+        JOIN sales_orders so ON soi.order_id = so.order_id
+        WHERE DATE_TRUNC('month', so.created_at)
+              = DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+        AND so.status NOT IN ('VOID', 'CANCELLED')
+        GROUP BY p.product_id, p.product_name, p.sku
+        ORDER BY revenue DESC
+        LIMIT 6
+      `);
+      prev_top_products = r.rows;
+    } catch (e) {
+      console.error('Commercial Q9 (prev_top_products) failed:', e.message);
+    }
+
+    // Query 10 — monthly comparison (current + previous month summaries)
+    let monthly_comparison = [];
+    try {
+      const r = await pool.query(`
+        SELECT
+          DATE_TRUNC('month', created_at) as month_start,
+          TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month_label,
+          COALESCE(SUM(total_amount), 0) as total_revenue,
+          COUNT(*) as total_transactions,
+          COALESCE(AVG(total_amount), 0) as avg_order_value
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at) >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+        AND status NOT IN ('VOID', 'CANCELLED')
+        GROUP BY DATE_TRUNC('month', created_at),
+                 TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY')
+        ORDER BY month_start ASC
+      `);
+      monthly_comparison = r.rows;
+    } catch (e) {
+      console.error('Commercial Q10 (monthly_comparison) failed:', e.message);
+    }
+
+    // Query 11 — week-by-week breakdown for both months
+    let weekly_comparison = [];
+    try {
+      const r = await pool.query(`
+        SELECT
+          TO_CHAR(DATE_TRUNC('week', created_at), 'DD Mon') as week_label,
+          DATE_TRUNC('month', created_at) as month_start,
+          TO_CHAR(DATE_TRUNC('month', created_at), 'Mon') as month_short,
+          COALESCE(SUM(total_amount), 0) as revenue
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at) >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+        AND status NOT IN ('VOID', 'CANCELLED')
+        GROUP BY DATE_TRUNC('week', created_at),
+                 DATE_TRUNC('month', created_at),
+                 TO_CHAR(DATE_TRUNC('month', created_at), 'Mon')
+        ORDER BY DATE_TRUNC('week', created_at) ASC
+      `);
+      weekly_comparison = r.rows;
+    } catch (e) {
+      console.error('Commercial Q11 (weekly_comparison) failed:', e.message);
+    }
+
+    // Month-over-month derived metrics
+    const curr_rev = parseFloat(monthly_stats.month_revenue) || 0;
+    const prev_rev = parseFloat(prev_monthly_stats.month_revenue) || 0;
+    const mom_revenue_change_pct = prev_rev === 0 ? null
+      : Math.round(((curr_rev - prev_rev) / prev_rev) * 100);
+
+    const curr_txn = parseInt(monthly_stats.month_transactions) || 0;
+    const prev_txn = parseInt(prev_monthly_stats.month_transactions) || 0;
+    const mom_txn_change_pct = prev_txn === 0 ? null
+      : Math.round(((curr_txn - prev_txn) / prev_txn) * 100);
+
     return {
       today_stats,
       weekly_revenue,
       monthly_stats,
+      prev_monthly_stats,
+      monthly_comparison,
+      weekly_comparison,
       top_products,
+      prev_top_products,
       void_stats,
       zero_stock,
       open_pos,
+      mom_revenue_change_pct,
+      mom_txn_change_pct,
     };
   },
 

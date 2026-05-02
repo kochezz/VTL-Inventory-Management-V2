@@ -328,14 +328,35 @@ export interface CommercialOpenPos {
   po_value: number | string;
 }
 
+export interface CommercialMonthlyComparison {
+  month_start: string;
+  month_label: string;
+  total_revenue: number | string;
+  total_transactions: number | string;
+  avg_order_value: number | string;
+}
+
+export interface CommercialWeeklyComparison {
+  week_label: string;
+  month_start: string;
+  month_short: string;
+  revenue: number | string;
+}
+
 export interface CommercialSummary {
   today_stats: CommercialTodayStats;
   weekly_revenue: CommercialWeeklyDay[];
   monthly_stats: CommercialMonthlyStats;
+  prev_monthly_stats: CommercialMonthlyStats;
+  monthly_comparison: CommercialMonthlyComparison[];
+  weekly_comparison: CommercialWeeklyComparison[];
   top_products: CommercialTopProduct[];
+  prev_top_products: CommercialTopProduct[];
   void_stats: CommercialVoidStats;
   zero_stock: CommercialZeroStock[];
   open_pos: CommercialOpenPos;
+  mom_revenue_change_pct: number | null;
+  mom_txn_change_pct: number | null;
 }
 
 // ── API methods ──────────────────────────────────────────────────────────────
