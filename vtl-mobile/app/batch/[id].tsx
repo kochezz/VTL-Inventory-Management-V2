@@ -79,7 +79,7 @@ function ComponentRow({ item }: { item: BatchComponent }) {
 }
 
 function GateRow({ gate, index }: { gate: QAGate; index: number }) {
-  const cfg = GATE_STATUS[gate.status?.toUpperCase()] ?? { icon: '○', color: COLORS.muted };
+  const cfg = GATE_STATUS[(gate.status ?? '').toUpperCase()] ?? { icon: '○', color: COLORS.muted };
   const isLast = index === 2;
   return (
     <View style={s.gateRow}>

@@ -6,33 +6,46 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import api, { Ncr, Capa, Audit, QmsSection, DocInReview } from '../../services/api';
-import { COLORS, zebraRow } from '../../constants/theme';
+import { useQuality } from '../../hooks/useQuality';
+import api, { Ncr, Capa, Audit, DocInReview } from '../../services/api';
+import { COLORS, RADIUS, zebraRow } from '../../constants/theme';
 import VTLAppHeader from '../../components/VTLAppHeader';
 import { useAuthStore } from '../../stores/authStore';
 import SignatureBottomSheet, { SheetField } from '../../components/SignatureBottomSheet';
 import { Toast } from '../../components/Toast';
 import { useToast } from '../../hooks/useToast';
+import { SkeletonRow } from '../../components/SkeletonLoader';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Types & constants ─────────────────────────────────────────────────────────
 
-function daysAgo(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-}
+type QualityTab = 'ncrs' | 'capas' | 'audits' | 'training';
 
-function daysUntil(iso: string): number {
-  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
-}
+const APPROVER_ROLES = ['admin', 'qa', 'manager', 'ceo', 'cfo'];
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-}
+const CAPA_STATUS_FIELDS: SheetField[] = [
+  {
+    key: 'status',
+    label: 'New Status',
+    type: 'select',
+    options: [
+      { label: 'In Progress', value: 'IN_PROGRESS' },
+      { label: 'Verified',    value: 'VERIFIED'    },
+      { label: 'Closed',      value: 'CLOSED'      },
+    ],
+  },
+  {
+    key: 'effectiveness_review',
+    label: 'Effectiveness Review',
+    type: 'textarea',
+    placeholder: 'Was the corrective action effective? Evidence…',
+    optional: true,
+  },
+];
 
-const SEV_COLOR: Record<string, string> = {
+const SEV_LEFT_COLOR: Record<string, string> = {
   CRITICAL: COLORS.red,
-  HIGH:     COLORS.red,
-  MEDIUM:   COLORS.amber,
-  LOW:      COLORS.teal,
+  MAJOR:    COLORS.amber,
+  MINOR:    COLORS.sky,
 };
 
 const AUDIT_TYPE_COLOR: Record<string, string> = {
@@ -50,27 +63,15 @@ const DOC_TYPE_COLOR: Record<string, string> = {
   CHK: COLORS.muted,
 };
 
-const APPROVER_ROLES = ['admin', 'qa', 'manager', 'ceo', 'cfo'];
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-const CAPA_STATUS_FIELDS: SheetField[] = [
-  {
-    key: 'status',
-    label: 'New Status',
-    type: 'select',
-    options: [
-      { label: 'In Progress', value: 'IN_PROGRESS' },
-      { label: 'Verified', value: 'VERIFIED' },
-      { label: 'Closed', value: 'CLOSED' },
-    ],
-  },
-  {
-    key: 'effectiveness_review',
-    label: 'Effectiveness Review',
-    type: 'textarea',
-    placeholder: 'Was the corrective action effective? Evidence…',
-    optional: true,
-  },
-];
+function daysUntil(iso: string): number {
+  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -88,40 +89,40 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const color = SEV_COLOR[(severity ?? '').toUpperCase()] ?? COLORS.muted;
+  const MAP: Record<string, string> = {
+    CRITICAL: COLORS.red,   HIGH: COLORS.red,
+    MAJOR:    COLORS.amber, MEDIUM: COLORS.amber,
+    MINOR:    COLORS.sky,   LOW: COLORS.teal,
+  };
+  const color = MAP[(severity ?? '').toUpperCase()] ?? COLORS.muted;
   return (
     <View style={[s.badge, { borderColor: color }]}>
-      <Text style={[s.badgeText, { color }]}>{severity}</Text>
+      <Text style={[s.badgeText, { color }]}>{(severity ?? '').toUpperCase()}</Text>
     </View>
   );
 }
 
-function SectionCircle({ section }: { section: QmsSection }) {
-  const color = (section as any).color_code ?? COLORS.sky;
-  const pct = section.completion_percentage;
+function StatusBadge({ status }: { status: string }) {
+  const MAP: Record<string, string> = {
+    OPEN:        COLORS.red,   IN_PROGRESS: COLORS.sky,
+    CLOSED:      COLORS.green, VERIFIED:    COLORS.teal,
+    PENDING:     COLORS.amber, SCHEDULED:   COLORS.sky,
+    COMPLETED:   COLORS.green,
+  };
+  const color = MAP[(status ?? '').toUpperCase()] ?? COLORS.muted;
   return (
-    <View style={s.circleWrapper}>
-      <View style={[s.circle, { borderColor: color }]}>
-        <Text style={[s.circlePercent, { color }]}>{pct}%</Text>
-      </View>
-      <Text style={s.circleCode} numberOfLines={1}>{(section as any).section_code ?? '—'}</Text>
-      <Text style={s.circleCount}>{section.released_docs}/{section.total_docs}</Text>
+    <View style={[s.badge, { borderColor: color }]}>
+      <Text style={[s.badgeText, { color }]}>{(status ?? '').replace(/_/g, ' ')}</Text>
     </View>
   );
 }
 
-const NCR_LEFT_COLOR: Record<string, string> = {
-  CRITICAL: COLORS.red,
-  MAJOR:    COLORS.amber,
-  MINOR:    COLORS.sky,
-};
-
-function NcrRow({ ncr, onPress, index }: { ncr: Ncr; onPress: () => void; index: number }) {
-  const age = daysAgo(ncr.created_at);
-  const leftColor = NCR_LEFT_COLOR[(ncr.severity ?? '').toUpperCase()] ?? COLORS.border;
+function NcrRow({ ncr, onPress }: { ncr: Ncr; onPress: () => void }) {
+  const leftColor = SEV_LEFT_COLOR[(ncr.severity ?? '').toUpperCase()] ?? COLORS.border;
+  const age = Math.floor((Date.now() - new Date(ncr.created_at).getTime()) / 86_400_000);
   return (
     <TouchableOpacity
-      style={[s.listRow, zebraRow(index), { borderLeftWidth: 3, borderLeftColor: leftColor }]}
+      style={[s.listRow, { borderLeftWidth: 3, borderLeftColor: leftColor }]}
       onPress={onPress}
       activeOpacity={0.75}
     >
@@ -129,14 +130,10 @@ function NcrRow({ ncr, onPress, index }: { ncr: Ncr; onPress: () => void; index:
         <Text style={s.codeText}>{ncr.ncr_code}</Text>
         <SeverityBadge severity={ncr.severity} />
       </View>
-      <Text style={s.descText} numberOfLines={2}>
-        {ncr.description.substring(0, 80)}{ncr.description.length > 80 ? '…' : ''}
-      </Text>
-      <View style={s.listRowBottom}>
-        <Text style={s.metaText}>
-          {ncr.raised_by_name ?? 'Unknown'} · {age}d ago
-        </Text>
-        <Text style={s.chevron}>›</Text>
+      <Text style={s.descText} numberOfLines={2}>{ncr.description}</Text>
+      <Text style={s.metaText}>Raised by {ncr.raised_by_name ?? 'Unknown'} · {age}d ago</Text>
+      <View style={{ marginTop: 6 }}>
+        <StatusBadge status={ncr.status} />
       </View>
     </TouchableOpacity>
   );
@@ -146,32 +143,50 @@ function CapaRow({
   capa,
   canApprove,
   onClose,
-  index,
 }: {
   capa: Capa;
   canApprove: boolean;
   onClose: () => void;
-  index: number;
 }) {
-  const overdue = daysUntil(capa.due_date);
-  const isOverdue = overdue < 0;
-  const capaLeftColor = overdue < 0 ? COLORS.red : overdue < 7 ? COLORS.amber : COLORS.green;
+  const days = daysUntil(capa.due_date);
+  const isOverdue = days < 0;
+  const leftColor = isOverdue ? COLORS.red : days < 7 ? COLORS.amber : COLORS.green;
   return (
-    <View style={[s.listRow, zebraRow(index), { borderLeftWidth: 3, borderLeftColor: capaLeftColor }]}>
+    <View style={[s.listRow, { borderLeftWidth: 3, borderLeftColor: leftColor }]}>
       <View style={s.listRowTop}>
         <Text style={s.codeText}>{capa.capa_code}</Text>
-        <Text style={[s.overdueBadge, { color: isOverdue ? COLORS.red : COLORS.amber }]}>
-          {isOverdue ? `${Math.abs(overdue)}d overdue` : `due ${formatDate(capa.due_date)}`}
-        </Text>
+        <StatusBadge status={capa.status} />
       </View>
       <Text style={s.descText} numberOfLines={2}>{capa.action_description}</Text>
+      <Text style={s.metaText}>Owner: {capa.owner_name ?? 'Unassigned'}</Text>
       <View style={s.listRowBottom}>
-        <Text style={s.metaText}>{capa.owner_name ?? 'Unassigned'}</Text>
+        <Text style={[s.dueDateText, { color: isOverdue ? COLORS.red : COLORS.amber }]}>
+          {isOverdue ? `${Math.abs(days)}d overdue` : `${days}d remaining`}
+        </Text>
         {canApprove && (
           <TouchableOpacity style={s.inlineBtn} onPress={onClose} activeOpacity={0.8}>
             <Text style={s.inlineBtnText}>Close CAPA</Text>
           </TouchableOpacity>
         )}
+      </View>
+    </View>
+  );
+}
+
+function AuditCard({ audit }: { audit: Audit }) {
+  const color = AUDIT_TYPE_COLOR[(audit.audit_type ?? '').toUpperCase()] ?? COLORS.muted;
+  return (
+    <View style={[s.listRow, { borderLeftWidth: 3, borderLeftColor: COLORS.teal }]}>
+      <View style={s.listRowTop}>
+        <View style={[s.typePill, { backgroundColor: color + '22', borderColor: color }]}>
+          <Text style={[s.typePillText, { color }]}>{audit.audit_type}</Text>
+        </View>
+        <Text style={s.metaText}>{formatDate(audit.audit_date)}</Text>
+      </View>
+      <Text style={s.descText} numberOfLines={2}>{audit.scope}</Text>
+      <View style={s.listRowBottom}>
+        <Text style={s.metaText}>{audit.lead_auditor_name ?? 'TBA'}</Text>
+        <StatusBadge status={audit.status} />
       </View>
     </View>
   );
@@ -190,13 +205,13 @@ function DocRow({
   const isPendingApproval = doc.status === 'PENDING_APPROVAL';
   return (
     <View style={s.docRow}>
-      <View style={[s.docTypePill, { backgroundColor: typeColor + '22', borderColor: typeColor }]}>
-        <Text style={[s.docTypeText, { color: typeColor }]}>{doc.doc_type}</Text>
+      <View style={[s.typePill, { backgroundColor: typeColor + '22', borderColor: typeColor }]}>
+        <Text style={[s.typePillText, { color: typeColor }]}>{doc.doc_type}</Text>
       </View>
       <View style={s.docMid}>
-        <Text style={s.docCode}>{doc.doc_code}</Text>
-        <Text style={s.docName} numberOfLines={1}>{doc.doc_name}</Text>
-        <Text style={s.docMeta}>
+        <Text style={s.codeText}>{doc.doc_code}</Text>
+        <Text style={s.descText} numberOfLines={1}>{doc.doc_name}</Text>
+        <Text style={s.metaText}>
           {doc.author_name ?? 'Unknown'} · v{doc.version_number ?? '?'} ·{' '}
           <Text style={{ color: isPendingApproval ? COLORS.amber : COLORS.sky }}>
             {isPendingApproval ? 'Pending Approval' : 'In Review'}
@@ -212,44 +227,6 @@ function DocRow({
   );
 }
 
-function AuditCard({ audit, index }: { audit: Audit; index: number }) {
-  const color = AUDIT_TYPE_COLOR[audit.audit_type] ?? COLORS.muted;
-  const daysLeft = daysUntil(audit.audit_date);
-  return (
-    <View style={[s.auditCard, { borderLeftColor: color }, zebraRow(index)]}>
-      <View style={s.auditRow}>
-        <View style={[s.auditTypePill, { backgroundColor: color + '22', borderColor: color }]}>
-          <Text style={[s.auditTypeText, { color }]}>{audit.audit_type}</Text>
-        </View>
-        <Text style={s.auditDate}>{formatDate(audit.audit_date)}</Text>
-      </View>
-      <Text style={s.auditScope} numberOfLines={1}>{audit.scope}</Text>
-      <View style={s.auditFooter}>
-        <Text style={s.metaText}>{audit.lead_auditor_name ?? 'TBA'}</Text>
-        <Text style={[s.daysLeft, { color: daysLeft <= 7 ? COLORS.amber : COLORS.muted }]}>
-          {daysLeft > 0 ? `in ${daysLeft}d` : 'today'}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-function ComplianceBar({ pct }: { pct: number }) {
-  const color = pct >= 80 ? COLORS.green : pct >= 50 ? COLORS.amber : COLORS.red;
-  return (
-    <View style={s.complianceCard}>
-      <View style={s.complianceTop}>
-        <Text style={s.complianceLabel}>Overall Training Compliance</Text>
-        <Text style={[s.compliancePct, { color }]}>{pct}%</Text>
-      </View>
-      <View style={s.complianceBarBg}>
-        <View style={[s.complianceBarFill, { width: `${pct}%` as any, backgroundColor: color }]} />
-      </View>
-      <Text style={s.complianceHint}>Full per-user breakdown on the People tab.</Text>
-    </View>
-  );
-}
-
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function QualityScreen() {
@@ -261,41 +238,18 @@ export default function QualityScreen() {
   const userRole = (user?.role as string) ?? '';
   const canApprove = APPROVER_ROLES.includes(userRole);
 
-  // Sheet state — which CAPA or doc is being actioned
+  const [activeTab, setActiveTab] = useState<QualityTab>('ncrs');
   const [capaSheet, setCapaSheet] = useState<Capa | null>(null);
   const [docSheet, setDocSheet] = useState<DocInReview | null>(null);
 
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ['quality'],
-    queryFn: api.getQuality,
-    staleTime: 30_000,
+  const { data, isLoading, isError, refetch, isFetching } = useQuality();
+
+  // Secondary people query for Training tab leaderboard (shares cache with People tab)
+  const { data: peopleData } = useQuery({
+    queryKey: ['people'],
+    queryFn: api.getPeople,
+    staleTime: 300_000,
   });
-
-  if (isLoading) {
-    return (
-      <SafeAreaView style={s.safe} edges={['top']}>
-        <View style={s.center}>
-          <ActivityIndicator color={COLORS.sky} size="large" />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (isError || !data) {
-    return (
-      <SafeAreaView style={s.safe} edges={['top']}>
-        <View style={s.center}>
-          <Text style={s.errorText}>Failed to load quality data.</Text>
-          <TouchableOpacity style={s.retryBtn} onPress={() => refetch()}>
-            <Text style={s.retryBtnText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const auditsToShow = data.upcoming_audits.slice(0, 3);
-  const docsInReview = data.docs_in_review ?? [];
 
   const handleCloseCAPA = async (values: Record<string, string>) => {
     if (!capaSheet) return;
@@ -317,9 +271,69 @@ export default function QualityScreen() {
     toast.show(result.message ?? `${docSheet.doc_code} released`);
   };
 
+  if (isLoading) {
+    return (
+      <SafeAreaView style={s.safe} edges={[]}>
+        <VTLAppHeader title="Quality Management" subtitle="QMS · NCR · CAPA · Audits" />
+        <View style={{ padding: 16 }}>
+          {[...Array(5)].map((_, i) => (
+            <SkeletonRow key={i} style={{ marginBottom: 12 }} />
+          ))}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <SafeAreaView style={s.safe} edges={[]}>
+        <VTLAppHeader title="Quality Management" subtitle="QMS · NCR · CAPA · Audits" />
+        <View style={s.center}>
+          <Text style={s.errorText}>Failed to load quality data.</Text>
+          <TouchableOpacity style={s.retryBtn} onPress={() => refetch()}>
+            <Text style={s.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // QMS metrics computed from sections
+  const qmsPct = data.qms_sections.length > 0
+    ? Math.round(
+        data.qms_sections.reduce((sum, s) => sum + s.completion_percentage, 0) /
+        data.qms_sections.length,
+      )
+    : 0;
+  const totalDocs    = data.qms_sections.reduce((sum, s) => sum + s.total_docs, 0);
+  const releasedDocs = data.qms_sections.reduce((sum, s) => sum + s.released_docs, 0);
+  const heroColor    = qmsPct >= 80 ? COLORS.green : qmsPct >= 50 ? COLORS.amber : COLORS.red;
+
+  // Training leaderboard from cached people data
+  const top10    = peopleData?.training_leaderboard.top_10 ?? [];
+  const maxCount = top10.length > 0 ? Math.max(...top10.map((u) => u.acknowledged_count), 1) : 1;
+
+  const docsInReview = data.docs_in_review ?? [];
+
+  // Sort CAPAs overdue-first (most overdue first)
+  const sortedCapas = [...data.overdue_capas].sort(
+    (a, b) => daysUntil(a.due_date) - daysUntil(b.due_date),
+  );
+
+  const TABS: { key: QualityTab; label: string }[] = [
+    { key: 'ncrs',     label: 'NCRs'     },
+    { key: 'capas',    label: 'CAPAs'    },
+    { key: 'audits',   label: 'Audits'   },
+    { key: 'training', label: 'Training' },
+  ];
+
+  const compPct = data.training_compliance_pct ?? 0;
+  const compColor = compPct >= 80 ? COLORS.green : compPct >= 60 ? COLORS.amber : COLORS.red;
+
   return (
     <SafeAreaView style={s.safe} edges={[]}>
-      <VTLAppHeader title="Quality" subtitle="QMS · NCR · CAPA · Audits" />
+      <VTLAppHeader title="Quality Management" subtitle="QMS · NCR · CAPA · Audits" />
+
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -328,90 +342,198 @@ export default function QualityScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* 1 — QMS Readiness */}
-        <SectionHeader title="QMS Readiness" count={data.qms_sections.length} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.circleScroll}>
-          {data.qms_sections.map((sec) => (
-            <SectionCircle key={sec.section_id} section={sec} />
+        {/* ── QMS Readiness Hero ── */}
+        <View style={[s.hero, { borderTopColor: heroColor }]}>
+          <View style={s.heroLeft}>
+            <Text style={[s.heroPercent, { color: heroColor }]}>{qmsPct}%</Text>
+            <Text style={s.heroLabel}>QMS Readiness</Text>
+            <Text style={s.heroSub}>{releasedDocs} of {totalDocs} documents released</Text>
+          </View>
+          <View style={[s.heroRing, { borderColor: heroColor }]}>
+            <Text style={[s.heroRingNum, { color: heroColor }]}>{qmsPct}</Text>
+          </View>
+        </View>
+
+        {/* ── Section Progress List ── */}
+        <SectionHeader title="By Department" />
+        {data.qms_sections.map((sec) => {
+          const pct = sec.completion_percentage;
+          return (
+            <View key={sec.section_id} style={s.secRow}>
+              <View style={s.secCodeChip}>
+                <Text style={s.secCode} numberOfLines={1}>
+                  {sec.section_name.slice(0, 3).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={s.secName} numberOfLines={1}>{sec.section_name}</Text>
+              <View style={s.secBarBg}>
+                <View style={[s.secBarFill, { width: `${pct}%` as any }]} />
+              </View>
+              <Text style={s.secPct}>{pct}%</Text>
+            </View>
+          );
+        })}
+
+        {/* ── Sub-tab Pills ── */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.tabScroll}
+          style={s.tabScrollOuter}
+        >
+          {TABS.map((t) => (
+            <TouchableOpacity
+              key={t.key}
+              style={[s.tabPill, activeTab === t.key && s.tabPillActive]}
+              onPress={() => setActiveTab(t.key)}
+              activeOpacity={0.8}
+            >
+              <Text style={[s.tabLabel, activeTab === t.key && s.tabLabelActive]}>
+                {t.label}
+              </Text>
+            </TouchableOpacity>
           ))}
         </ScrollView>
 
-        {/* 2 — Open NCRs */}
-        <SectionHeader title="Open NCRs" count={data.open_ncrs.length} />
-        {data.open_ncrs.length === 0 ? (
-          <Text style={s.emptyText}>No open NCRs.</Text>
-        ) : (
-          <View style={s.card}>
-            {data.open_ncrs.map((ncr, i) => (
-              <View key={ncr.ncr_id}>
-                {i > 0 && <View style={s.divider} />}
-                <NcrRow
-                  ncr={ncr}
-                  onPress={() => router.push(`/ncr/${ncr.ncr_id}` as any)}
-                  index={i}
-                />
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* 3 — Overdue CAPAs */}
-        <SectionHeader title="Overdue CAPAs" count={data.overdue_capas.length} />
-        {data.overdue_capas.length === 0 ? (
-          <Text style={s.emptyText}>No overdue CAPAs.</Text>
-        ) : (
-          <View style={s.card}>
-            {data.overdue_capas.map((capa, i) => (
-              <View key={capa.capa_id}>
-                {i > 0 && <View style={s.divider} />}
-                <CapaRow
-                  capa={capa}
-                  canApprove={canApprove}
-                  onClose={() => setCapaSheet(capa)}
-                  index={i}
-                />
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* 4 — Documents In Review */}
-        {docsInReview.length > 0 && (
+        {/* ── NCRs Tab ── */}
+        {activeTab === 'ncrs' && (
           <>
-            <SectionHeader title="Documents In Review" count={docsInReview.length} />
-            <View style={s.card}>
-              {docsInReview.map((doc, i) => (
-                <View key={doc.doc_id}>
-                  {i > 0 && <View style={s.divider} />}
-                  <DocRow
-                    doc={doc}
-                    canApprove={canApprove}
-                    onRelease={() => setDocSheet(doc)}
-                  />
+            {docsInReview.length > 0 && (
+              <>
+                <SectionHeader title="Documents in Review" count={docsInReview.length} />
+                <View style={s.card}>
+                  {docsInReview.map((doc, i) => (
+                    <View key={doc.doc_id}>
+                      {i > 0 && <View style={s.divider} />}
+                      <DocRow doc={doc} canApprove={canApprove} onRelease={() => setDocSheet(doc)} />
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
+              </>
+            )}
+
+            <SectionHeader title="Open NCRs" count={data.open_ncrs.length} />
+            {data.open_ncrs.length === 0 ? (
+              <Text style={s.emptyText}>No open NCRs.</Text>
+            ) : (
+              <View style={s.card}>
+                {data.open_ncrs.map((ncr, i) => (
+                  <View key={ncr.ncr_id}>
+                    {i > 0 && <View style={s.divider} />}
+                    <NcrRow ncr={ncr} onPress={() => router.push(`/ncr/${ncr.ncr_id}` as any)} />
+                  </View>
+                ))}
+              </View>
+            )}
           </>
         )}
 
-        {/* 5 — Upcoming Audits */}
-        <SectionHeader title="Upcoming Audits" count={auditsToShow.length} />
-        {auditsToShow.length === 0 ? (
-          <Text style={s.emptyText}>No upcoming audits scheduled.</Text>
-        ) : (
-          auditsToShow.map((audit, i) => (
-            <AuditCard key={audit.audit_id} audit={audit} index={i} />
-          ))
+        {/* ── CAPAs Tab ── */}
+        {activeTab === 'capas' && (
+          <>
+            <SectionHeader title="Overdue CAPAs" count={sortedCapas.length} />
+            {sortedCapas.length === 0 ? (
+              <Text style={s.emptyText}>No overdue CAPAs.</Text>
+            ) : (
+              <View style={s.card}>
+                {sortedCapas.map((capa, i) => (
+                  <View key={capa.capa_id}>
+                    {i > 0 && <View style={s.divider} />}
+                    <CapaRow
+                      capa={capa}
+                      canApprove={canApprove}
+                      onClose={() => setCapaSheet(capa)}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
         )}
 
-        {/* 6 — Training Compliance */}
-        <SectionHeader title="Training Compliance" />
-        <ComplianceBar pct={data.training_compliance_pct ?? 0} />
+        {/* ── Audits Tab ── */}
+        {activeTab === 'audits' && (
+          <>
+            <SectionHeader title="Upcoming Audits" count={data.upcoming_audits.length} />
+            {data.upcoming_audits.length === 0 ? (
+              <Text style={s.emptyText}>No upcoming audits scheduled.</Text>
+            ) : (
+              <View style={s.card}>
+                {data.upcoming_audits.map((audit, i) => (
+                  <View key={audit.audit_id}>
+                    {i > 0 && <View style={s.divider} />}
+                    <AuditCard audit={audit} />
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ── Training Tab ── */}
+        {activeTab === 'training' && (
+          <>
+            {/* Compliance bar */}
+            <View style={s.complianceCard}>
+              <View style={s.complianceTop}>
+                <Text style={s.complianceLabel}>Training Compliance: {compPct}%</Text>
+              </View>
+              <View style={s.complianceBarBg}>
+                <View
+                  style={[s.complianceBarFill, {
+                    width: `${compPct}%` as any,
+                    backgroundColor: compColor,
+                    height: 16,
+                  }]}
+                />
+              </View>
+            </View>
+
+            {/* Leaderboard */}
+            {top10.length > 0 && (
+              <>
+                <SectionHeader title="Training Leaderboard" count={top10.length} />
+                <View style={s.card}>
+                  {top10.map((u, i) => {
+                    const relPct = Math.round((u.acknowledged_count / maxCount) * 100);
+                    const isStrong = relPct >= 80;
+                    const isWeak   = relPct < 50;
+                    const barColor = isStrong ? COLORS.green : isWeak ? COLORS.red : COLORS.amber;
+                    return (
+                      <View key={u.user_id}>
+                        {i > 0 && <View style={s.divider} />}
+                        <View style={s.leaderRow}>
+                          <Text style={[s.leaderRank, { color: isStrong ? COLORS.green : isWeak ? COLORS.red : COLORS.muted }]}>
+                            {isStrong ? '✓' : isWeak ? '!' : `#${i + 1}`}
+                          </Text>
+                          <View style={s.leaderMid}>
+                            <Text style={s.leaderName}>{u.full_name}</Text>
+                            <View style={s.roleChip}>
+                              <Text style={s.roleChipText}>{u.role}</Text>
+                            </View>
+                          </View>
+                          <View style={s.leaderRight}>
+                            <View style={s.leaderBarBg}>
+                              <View style={[s.leaderBarFill, { width: `${relPct}%` as any, backgroundColor: barColor }]} />
+                            </View>
+                            <Text style={[s.leaderPct, { color: barColor }]}>
+                              {u.acknowledged_count}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+          </>
+        )}
 
         <View style={{ height: 32 }} />
       </ScrollView>
 
-      {/* CAPA bottom sheet */}
+      {/* CAPA close sheet */}
       {capaSheet && (
         <SignatureBottomSheet
           visible={!!capaSheet}
@@ -423,7 +545,7 @@ export default function QualityScreen() {
         />
       )}
 
-      {/* Document release bottom sheet */}
+      {/* Document release sheet */}
       {docSheet && (
         <SignatureBottomSheet
           visible={!!docSheet}
@@ -435,7 +557,6 @@ export default function QualityScreen() {
         />
       )}
 
-      {/* Toast */}
       <Toast visible={toast.visible} message={toast.message} type={toast.type} />
     </SafeAreaView>
   );
@@ -444,74 +565,88 @@ export default function QualityScreen() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  safe:        { flex: 1, backgroundColor: COLORS.bg },
-  scroll:      { flex: 1 },
-  content:     { paddingHorizontal: 16, paddingTop: 16 },
-  center:      { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  screenTitle: { color: COLORS.text, fontSize: 24, fontWeight: '800', marginBottom: 4 },
+  safe:    { flex: 1, backgroundColor: COLORS.bg },
+  scroll:  { flex: 1 },
+  content: { paddingHorizontal: 16, paddingTop: 12 },
+  center:  { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
 
-  sectionHeader:    { flexDirection: 'row', alignItems: 'center', marginTop: 24, marginBottom: 12 },
-  sectionTitle:     { color: COLORS.text, fontSize: 15, fontWeight: '700', flex: 1 },
+  // Hero
+  hero:        { backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.border, borderTopWidth: 3, padding: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  heroLeft:    { flex: 1 },
+  heroPercent: { fontSize: 48, fontWeight: '800', lineHeight: 52 },
+  heroLabel:   { color: COLORS.muted, fontSize: 12, marginTop: 2 },
+  heroSub:     { color: COLORS.muted, fontSize: 11, marginTop: 4 },
+  heroRing:    { width: 60, height: 60, borderRadius: 30, borderWidth: 6, borderColor: COLORS.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
+  heroRingNum: { fontSize: 14, fontWeight: '800' },
+
+  // Section progress
+  secRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  secCodeChip:{ width: 40, backgroundColor: COLORS.surfaceAlt, borderRadius: 6, paddingVertical: 4, alignItems: 'center' },
+  secCode:    { color: COLORS.text, fontSize: 11, fontWeight: '700' },
+  secName:    { flex: 1, color: COLORS.text, fontSize: 13, paddingHorizontal: 10 },
+  secBarBg:   { width: 80, height: 6, backgroundColor: COLORS.surfaceAlt, borderRadius: 3, overflow: 'hidden' },
+  secBarFill: { height: 6, backgroundColor: COLORS.sky, borderRadius: 3 },
+  secPct:     { color: COLORS.sky, fontSize: 12, fontWeight: '700', width: 36, textAlign: 'right' },
+
+  // Sub-tabs
+  tabScrollOuter: { marginTop: 20, marginBottom: 4 },
+  tabScroll:      { gap: 8, paddingVertical: 4 },
+  tabPill:        { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  tabPillActive:  { backgroundColor: COLORS.sky + '22', borderColor: COLORS.sky },
+  tabLabel:       { color: COLORS.muted, fontSize: 13, fontWeight: '600' },
+  tabLabelActive: { color: COLORS.sky },
+
+  // Shared list
+  sectionHeader:    { flexDirection: 'row', alignItems: 'center', marginTop: 20, marginBottom: 10 },
+  sectionTitle:     { color: COLORS.text, fontSize: 14, fontWeight: '700', flex: 1 },
   sectionBadge:     { backgroundColor: COLORS.surface, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   sectionBadgeText: { color: COLORS.muted, fontSize: 12, fontWeight: '600' },
 
-  card:      { backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
-  divider:   { height: 1, backgroundColor: COLORS.border },
-  emptyText: { color: COLORS.muted, fontSize: 13, fontStyle: 'italic', marginBottom: 8 },
+  card:     { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  divider:  { height: 1, backgroundColor: COLORS.border },
+  emptyText:{ color: COLORS.muted, fontSize: 13, fontStyle: 'italic', marginBottom: 8 },
 
-  badge:     { borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
-  badgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  badge:    { borderWidth: 1, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, alignSelf: 'flex-start' },
+  badgeText:{ fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
 
-  // QMS section circles
-  circleScroll:   { marginBottom: 4 },
-  circleWrapper:  { alignItems: 'center', marginRight: 16, width: 72 },
-  circle:         { width: 64, height: 64, borderRadius: 32, borderWidth: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surface, marginBottom: 6 },
-  circlePercent:  { fontSize: 14, fontWeight: '800' },
-  circleCode:     { color: COLORS.text, fontSize: 11, fontWeight: '600', textAlign: 'center' },
-  circleCount:    { color: COLORS.muted, fontSize: 10, textAlign: 'center' },
+  listRow:    { padding: 14 },
+  listRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  listRowBottom:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  codeText:   { color: COLORS.sky, fontFamily: 'monospace', fontSize: 13, fontWeight: '700' },
+  descText:   { color: COLORS.text, fontSize: 13, lineHeight: 18, marginBottom: 4 },
+  metaText:   { color: COLORS.muted, fontSize: 11 },
+  dueDateText:{ fontSize: 12, fontWeight: '700' },
 
-  // NCR / CAPA rows
-  listRow:       { padding: 14 },
-  listRowTop:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  listRowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-  codeText:      { color: COLORS.sky, fontFamily: 'monospace', fontSize: 13, fontWeight: '700' },
-  descText:      { color: COLORS.text, fontSize: 13, lineHeight: 18 },
-  overdueBadge:  { fontSize: 12, fontWeight: '700' },
-  metaText:      { color: COLORS.muted, fontSize: 12 },
-  chevron:       { color: COLORS.muted, fontSize: 20 },
+  typePill:     { borderWidth: 1, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, alignSelf: 'flex-start' },
+  typePillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
 
-  inlineBtn:     { backgroundColor: COLORS.amber + '22', borderWidth: 1, borderColor: COLORS.amber, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 },
-  inlineBtnText: { color: COLORS.amber, fontSize: 12, fontWeight: '700' },
+  inlineBtn:    { backgroundColor: COLORS.amber + '22', borderWidth: 1, borderColor: COLORS.amber, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 },
+  inlineBtnText:{ color: COLORS.amber, fontSize: 12, fontWeight: '700' },
 
-  // Doc rows
   docRow:      { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
-  docTypePill: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, alignSelf: 'flex-start' },
-  docTypeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   docMid:      { flex: 1 },
-  docCode:     { color: COLORS.sky, fontFamily: 'monospace', fontSize: 13, fontWeight: '700', marginBottom: 2 },
-  docName:     { color: COLORS.text, fontSize: 13, fontWeight: '500', marginBottom: 3 },
-  docMeta:     { color: COLORS.muted, fontSize: 11 },
   releaseBtn:  { backgroundColor: COLORS.green + '22', borderWidth: 1, borderColor: COLORS.green, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
-  releaseBtnText: { color: COLORS.green, fontSize: 11, fontWeight: '700' },
-
-  // Audit cards
-  auditCard:     { backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, borderLeftWidth: 4, padding: 14, marginBottom: 10 },
-  auditRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  auditTypePill: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  auditTypeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
-  auditDate:     { color: COLORS.muted, fontSize: 13 },
-  auditScope:    { color: COLORS.text, fontSize: 14, fontWeight: '500', marginBottom: 8 },
-  auditFooter:   { flexDirection: 'row', justifyContent: 'space-between' },
-  daysLeft:      { fontSize: 12, fontWeight: '600' },
+  releaseBtnText:{ color: COLORS.green, fontSize: 11, fontWeight: '700' },
 
   // Training compliance
-  complianceCard:   { backgroundColor: COLORS.surface, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, padding: 16 },
-  complianceTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  complianceCard:   { backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: 16, marginBottom: 4 },
+  complianceTop:    { marginBottom: 10 },
   complianceLabel:  { color: COLORS.text, fontSize: 14, fontWeight: '600' },
-  compliancePct:    { fontSize: 28, fontWeight: '800' },
-  complianceBarBg:  { height: 8, backgroundColor: COLORS.border, borderRadius: 4, overflow: 'hidden', marginBottom: 10 },
-  complianceBarFill:{ height: 8, borderRadius: 4 },
-  complianceHint:   { color: COLORS.muted, fontSize: 12 },
+  complianceBarBg:  { height: 16, backgroundColor: COLORS.surfaceAlt, borderRadius: 4, overflow: 'hidden' },
+
+  // Leaderboard
+  leaderRow:    { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
+  leaderRank:   { fontSize: 14, fontWeight: '800', minWidth: 28, textAlign: 'center' },
+  leaderMid:    { flex: 1, gap: 4 },
+  leaderName:   { color: COLORS.text, fontSize: 13, fontWeight: '600' },
+  roleChip:     { backgroundColor: COLORS.surfaceAlt, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start' },
+  roleChipText: { color: COLORS.muted, fontSize: 10, fontWeight: '600' },
+  leaderRight:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  leaderBarBg:  { width: 80, height: 6, backgroundColor: COLORS.surfaceAlt, borderRadius: 3, overflow: 'hidden' },
+  leaderBarFill:{ height: 6, borderRadius: 3 },
+  leaderPct:    { fontSize: 13, fontWeight: '700', minWidth: 28, textAlign: 'right' },
+
+  complianceBarFill: { borderRadius: 4 },
 
   errorText:   { color: COLORS.red, fontSize: 14, textAlign: 'center', marginBottom: 16 },
   retryBtn:    { backgroundColor: COLORS.sky, borderRadius: 10, paddingHorizontal: 24, paddingVertical: 10 },
