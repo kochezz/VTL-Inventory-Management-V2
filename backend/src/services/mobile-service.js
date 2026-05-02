@@ -326,7 +326,24 @@ const mobileService = {
   // getCommercialSummary
   // --------------------------------------------------------------------------
   async getCommercialSummary() {
-    // Q1 — today stats (sales_transactions, transaction_date, customer_id IS NULL/NOT NULL)
+    // Fetch exchange rate FIRST — used in JS after each query (no column in sales_transactions)
+    let exchange_rate = 27.0;
+    try {
+      const rateRes = await pool.query(`
+        SELECT rate_value
+        FROM exchange_rates
+        WHERE target_currency = 'ZMW'
+          AND is_active = true
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `);
+      if (rateRes.rows[0]) exchange_rate = parseFloat(rateRes.rows[0].rate_value);
+      console.log('Exchange rate loaded:', exchange_rate);
+    } catch (e) {
+      console.error('Exchange rate fetch failed, using default 27:', e.message);
+    }
+
+    // Q1 — today stats
     let today_stats = {
       today_revenue: 0, today_revenue_zmw: 0,
       today_transactions: 0, avg_order_value: 0,
@@ -335,19 +352,18 @@ const mobileService = {
     try {
       const r = await pool.query(`
         SELECT
-          COALESCE(SUM(total_amount::numeric), 0)                              AS today_revenue,
-          COALESCE(SUM(
-            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
-          ), 0)                                 AS today_revenue_zmw,
-          COUNT(*)                                                               AS today_transactions,
-          COALESCE(AVG(total_amount::numeric), 0)                              AS avg_order_value,
-          SUM(CASE WHEN customer_id IS NULL     THEN 1 ELSE 0 END)             AS walkin_count,
-          SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END)             AS b2b_count
+          COALESCE(SUM(total_amount::numeric), 0)  AS today_revenue,
+          COUNT(*)                                  AS today_transactions,
+          COALESCE(AVG(total_amount::numeric), 0)  AS avg_order_value,
+          SUM(CASE WHEN customer_id IS NULL     THEN 1 ELSE 0 END) AS walkin_count,
+          SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) AS b2b_count
         FROM sales_transactions
         WHERE DATE(transaction_date::timestamp) = CURRENT_DATE
           AND TRIM(status) = 'completed'
       `);
       if (r.rows[0]) today_stats = r.rows[0];
+      today_stats.today_revenue_zmw =
+        parseFloat(today_stats.today_revenue || 0) * exchange_rate;
     } catch (e) {
       console.error('Commercial Q1 (today_stats) failed:', e.message);
     }
@@ -359,9 +375,6 @@ const mobileService = {
         SELECT
           DATE(transaction_date::timestamp)          AS sale_date,
           COALESCE(SUM(total_amount::numeric), 0)    AS revenue,
-          COALESCE(SUM(
-            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
-          ), 0)       AS revenue_zmw,
           COUNT(*)                                    AS transactions
         FROM sales_transactions
         WHERE transaction_date::timestamp >= NOW() - INTERVAL '7 days'
@@ -369,7 +382,10 @@ const mobileService = {
         GROUP BY DATE(transaction_date::timestamp)
         ORDER BY sale_date ASC
       `);
-      weekly_revenue = r.rows;
+      weekly_revenue = r.rows.map(row => ({
+        ...row,
+        revenue_zmw: parseFloat(row.revenue || 0) * exchange_rate,
+      }));
     } catch (e) {
       console.error('Commercial Q2 (weekly_revenue) failed:', e.message);
     }
@@ -383,9 +399,6 @@ const mobileService = {
       const r = await pool.query(`
         SELECT
           COALESCE(SUM(total_amount::numeric), 0)    AS month_revenue,
-          COALESCE(SUM(
-            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
-          ), 0)       AS month_revenue_zmw,
           COUNT(*)                                    AS month_transactions,
           COALESCE(AVG(total_amount::numeric), 0)    AS month_avg_order
         FROM sales_transactions
@@ -393,6 +406,8 @@ const mobileService = {
           AND TRIM(status) = 'completed'
       `);
       if (r.rows[0]) monthly_stats = r.rows[0];
+      monthly_stats.month_revenue_zmw =
+        parseFloat(monthly_stats.month_revenue || 0) * exchange_rate;
     } catch (e) {
       console.error('Commercial Q3 (monthly_stats) failed:', e.message);
     }
@@ -487,9 +502,6 @@ const mobileService = {
       const r = await pool.query(`
         SELECT
           COALESCE(SUM(total_amount::numeric), 0)    AS month_revenue,
-          COALESCE(SUM(
-            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
-          ), 0)       AS month_revenue_zmw,
           COUNT(*)                                    AS month_transactions
         FROM sales_transactions
         WHERE DATE_TRUNC('month', transaction_date::timestamp)
@@ -497,6 +509,8 @@ const mobileService = {
           AND TRIM(status) = 'completed'
       `);
       if (r.rows[0]) prev_monthly_stats = r.rows[0];
+      prev_monthly_stats.month_revenue_zmw =
+        parseFloat(prev_monthly_stats.month_revenue || 0) * exchange_rate;
     } catch (e) {
       console.error('Commercial Q8 (prev_monthly_stats) failed:', e.message);
     }
@@ -537,9 +551,6 @@ const mobileService = {
           DATE_TRUNC('month', transaction_date::timestamp)                       AS month_start,
           TO_CHAR(DATE_TRUNC('month', transaction_date::timestamp), 'Mon YYYY')  AS month_label,
           COALESCE(SUM(total_amount::numeric), 0)                                AS total_revenue,
-          COALESCE(SUM(
-            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
-          ), 0)                                   AS total_revenue_zmw,
           COUNT(*)                                                                AS total_transactions,
           COALESCE(AVG(total_amount::numeric), 0)                                AS avg_order_value
         FROM sales_transactions
@@ -550,7 +561,10 @@ const mobileService = {
                  TO_CHAR(DATE_TRUNC('month', transaction_date::timestamp), 'Mon YYYY')
         ORDER BY month_start ASC
       `);
-      monthly_comparison = r.rows;
+      monthly_comparison = r.rows.map(row => ({
+        ...row,
+        total_revenue_zmw: parseFloat(row.total_revenue || 0) * exchange_rate,
+      }));
     } catch (e) {
       console.error('Commercial Q10 (monthly_comparison) failed:', e.message);
     }
@@ -585,17 +599,17 @@ const mobileService = {
         SELECT
           payment_method,
           COUNT(*)                                AS transaction_count,
-          COALESCE(SUM(total_amount::numeric), 0) AS revenue_usd,
-          COALESCE(SUM(
-            total_amount::numeric * COALESCE(exchange_rate::numeric, 27.0)
-          ), 0)    AS revenue_zmw
+          COALESCE(SUM(total_amount::numeric), 0) AS revenue_usd
         FROM sales_transactions
         WHERE DATE_TRUNC('month', transaction_date::timestamp) = DATE_TRUNC('month', NOW())
           AND TRIM(status) = 'completed'
         GROUP BY payment_method
         ORDER BY revenue_usd DESC
       `);
-      payment_breakdown = r.rows;
+      payment_breakdown = r.rows.map(row => ({
+        ...row,
+        revenue_zmw: parseFloat(row.revenue_usd || 0) * exchange_rate,
+      }));
     } catch (e) {
       console.error('Commercial Q12 (payment_breakdown) failed:', e.message);
     }
@@ -617,38 +631,12 @@ const mobileService = {
           AND TRIM(status) = 'completed'
       `);
       if (r.rows[0]) customer_split = r.rows[0];
+      customer_split.b2b_revenue_zmw =
+        parseFloat(customer_split.b2b_revenue || 0) * exchange_rate;
+      customer_split.walkin_revenue_zmw =
+        parseFloat(customer_split.walkin_revenue || 0) * exchange_rate;
     } catch (e) {
       console.error('Commercial Q13 (customer_split) failed:', e.message);
-    }
-
-    // Exchange rate lookup (falls back to average from recent transactions)
-    let exchange_rate = 27.0;
-    try {
-      const r = await pool.query(`
-        SELECT rate_value
-        FROM exchange_rates
-        WHERE target_currency = 'ZMW'
-          AND is_active = true
-        ORDER BY updated_at DESC
-        LIMIT 1
-      `);
-      if (r.rows[0]) exchange_rate = parseFloat(r.rows[0].rate_value);
-    } catch (e) {
-      console.error('Commercial exchange_rate lookup failed:', e.message);
-      try {
-        const r2 = await pool.query(`
-          SELECT AVG(exchange_rate::numeric) as avg_rate
-          FROM sales_transactions
-          WHERE transaction_date::timestamp >= NOW() - INTERVAL '7 days'
-            AND exchange_rate IS NOT NULL
-            AND exchange_rate::numeric > 0
-        `);
-        if (r2.rows[0]?.avg_rate) {
-          exchange_rate = parseFloat(r2.rows[0].avg_rate);
-        }
-      } catch (e2) {
-        console.error('Exchange rate fallback failed:', e2.message);
-      }
     }
 
     // Month-over-month derived metrics

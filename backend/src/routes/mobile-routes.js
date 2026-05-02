@@ -5,12 +5,31 @@
 const express = require('express');
 const router  = express.Router();
 const { authenticate, authorize } = require('../middleware/auth-middleware');
+const { pool }      = require('../services/auth-service');
 const mobileService = require('../services/mobile-service');
 const qmsService    = require('../services/qms-service');
 
 // ── Ping (no auth — routing diagnostic) ──────────────────────────────────────
 router.get('/ping', (req, res) => {
   res.json({ ok: true, message: 'mobile routes working' });
+});
+
+// ── Inventory transactions column diagnostic (no auth — temporary) ───────────
+router.get('/debug-inv', async (req, res) => {
+  try {
+    const invCols = await pool.query(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'inventory_transactions'
+      ORDER BY ordinal_position
+    `);
+    const sample = await pool.query(`
+      SELECT * FROM inventory_transactions LIMIT 2
+    `);
+    res.json({ columns: invCols.rows, sample_rows: sample.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.use(authenticate);
