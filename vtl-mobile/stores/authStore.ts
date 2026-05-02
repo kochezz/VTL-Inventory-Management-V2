@@ -79,6 +79,6 @@ export const useAuthStore = create<AuthState>((set) => ({
     await SecureStore.deleteItemAsync('vtl_token');
     await SecureStore.deleteItemAsync('vtl_refresh');
     await AsyncStorage.removeItem('vtl_user');
-    set({ user: null, token: null, isAuthenticated: false });
+    set({ user: null, token: null, isAuthenticated: false, isLoading: false });
   },
 }));

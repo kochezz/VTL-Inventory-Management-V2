@@ -4,8 +4,9 @@ import {
   RefreshControl, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
-import api, {
+import { useQueryClient } from '@tanstack/react-query';
+import { router } from 'expo-router';
+import {
   CommercialSummary, CommercialTodayStats,
   CommercialVoidStats, CommercialOpenPos, CommercialTopProduct,
   CommercialPaymentMethod, CommercialCustomerSplit,
@@ -14,6 +15,9 @@ import { COLORS, RADIUS, SHADOW, formatCurrency } from '../../constants/theme';
 import { SkeletonCard, SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
 import { MonthComparisonChart } from '../../components/MonthComparisonChart';
 import { MiniBarChart } from '../../components/MiniBarChart';
+import { ProfileHeader } from '../../components/ProfileHeader';
+import { useAuthStore } from '../../stores/authStore';
+import { useCommercial } from '../../hooks/useCommercial';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -113,14 +117,12 @@ function ProductRankList({
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function CommercialScreen() {
-  const [activeTab, setActiveTab] = useState<'revenue' | 'products'>('revenue');
+  const [activeTab, setActiveTab] = useState<'revenue' | 'products' | 'procurement'>('revenue');
   const [currency, setCurrency] = useState<'USD' | 'ZMW'>('USD');
+  const { user, logout } = useAuthStore();
+  const queryClient = useQueryClient();
 
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({
-    queryKey: ['commercial'],
-    queryFn: api.getCommercial,
-    staleTime: 60_000,
-  });
+  const { data, isLoading, isError, refetch, isFetching } = useCommercial();
 
   if (isLoading) {
     return (
@@ -226,6 +228,19 @@ export default function CommercialScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
+        <ProfileHeader
+          user={{
+            full_name: (user?.full_name as string) ?? 'User',
+            role: (user?.role as string) ?? '',
+            email: (user?.email as string) ?? '',
+          }}
+          onLogout={async () => {
+            queryClient.clear();
+            await logout();
+            router.replace('/(auth)/login');
+          }}
+        />
+
         <Text style={s.screenTitle}>Commercial</Text>
 
         {/* ── Currency toggle ──────────────────────────────────────────────── */}
@@ -252,14 +267,14 @@ export default function CommercialScreen() {
 
         {/* ── Tab switcher ─────────────────────────────────────────────────── */}
         <View style={s.tabRow}>
-          {(['revenue', 'products'] as const).map(tab => (
+          {(['revenue', 'products', 'procurement'] as const).map(tab => (
             <TouchableOpacity
               key={tab}
               style={[s.tab, activeTab === tab && s.tabActive]}
               onPress={() => setActiveTab(tab)}
             >
               <Text style={[s.tabText, activeTab === tab && s.tabTextActive]}>
-                {tab === 'revenue' ? 'Revenue' : 'Products'}
+                {tab === 'revenue' ? 'Revenue' : tab === 'products' ? 'Products' : 'Procurement'}
               </Text>
             </TouchableOpacity>
           ))}
@@ -524,6 +539,33 @@ export default function CommercialScreen() {
           </>
         )}
 
+        {/* ════════════════════════════════════════════════════════════════════
+            PROCUREMENT TAB
+            ════════════════════════════════════════════════════════════════════ */}
+        {activeTab === 'procurement' && (
+          <>
+            <SectionHeader title="Purchase Orders" subtitle="open orders" />
+            <View style={s.kpiRow}>
+              <KpiCard
+                label="Open POs"
+                value={String(n(open_pos?.open_pos))}
+                color={COLORS.amber}
+              />
+              <KpiCard
+                label="PO Value"
+                value={formatAmount(n(open_pos?.po_value))}
+                color={COLORS.sky}
+              />
+            </View>
+
+            <View style={[s.dashedCard, SHADOW.card]}>
+              <Text style={s.dashedText}>
+                📈 Full pipeline detail available in web ERP
+              </Text>
+            </View>
+          </>
+        )}
+
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
@@ -656,6 +698,23 @@ const s = StyleSheet.create({
   splitValue:  { fontSize: 18, fontWeight: '800', marginBottom: 2 },
   splitOrders: { color: COLORS.muted, fontSize: 12, marginBottom: 6 },
   splitLabel:  { color: COLORS.muted, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+
+  // Procurement
+  dashedCard: {
+    marginTop: 20,
+    borderWidth: 1,
+    borderStyle: 'dashed' as const,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    padding: 24,
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+  },
+  dashedText: {
+    color: COLORS.textMuted,
+    fontSize: 13,
+    textAlign: 'center',
+  },
 
   // Error / retry
   errorText:   { color: COLORS.red, fontSize: 14, textAlign: 'center', marginBottom: 16 },
