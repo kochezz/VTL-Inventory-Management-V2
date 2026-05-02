@@ -8,6 +8,11 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 const mobileService = require('../services/mobile-service');
 const qmsService    = require('../services/qms-service');
 
+// ── Ping (no auth — routing diagnostic) ──────────────────────────────────────
+router.get('/ping', (req, res) => {
+  res.json({ ok: true, message: 'mobile routes working' });
+});
+
 router.use(authenticate);
 
 const APPROVERS = ['admin', 'qa', 'manager', 'ceo', 'cfo'];

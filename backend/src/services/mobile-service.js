@@ -326,97 +326,133 @@ const mobileService = {
   // getCommercialSummary
   // --------------------------------------------------------------------------
   async getCommercialSummary() {
-    let today_stats = { today_revenue: 0, today_transactions: 0, avg_order_value: 0, walkin_count: 0 };
-    try {
-      const r = await pool.query(`
-        SELECT COALESCE(SUM(total_amount),0) as today_revenue,
-               COUNT(*) as today_transactions,
-               COALESCE(AVG(total_amount),0) as avg_order_value,
-               COUNT(*) FILTER (WHERE customer_type='WALK_IN') as walkin_count
-        FROM sales_orders
-        WHERE DATE(created_at)=CURRENT_DATE
-        AND status NOT IN ('VOID','CANCELLED')
-      `);
-      today_stats = r.rows[0];
-    } catch (_) {}
-
+    let today_stats = {
+      today_revenue: 0, today_transactions: 0,
+      avg_order_value: 0, walkin_count: 0
+    };
     let weekly_revenue = [];
-    try {
-      const r = await pool.query(`
-        SELECT DATE(created_at) as sale_date,
-               COALESCE(SUM(total_amount),0) as revenue,
-               COUNT(*) as transactions
-        FROM sales_orders
-        WHERE created_at >= NOW()-INTERVAL '7 days'
-        AND status NOT IN ('VOID','CANCELLED')
-        GROUP BY DATE(created_at) ORDER BY sale_date ASC
-      `);
-      weekly_revenue = r.rows;
-    } catch (_) {}
-
     let monthly_stats = { month_revenue: 0, month_transactions: 0 };
-    try {
-      const r = await pool.query(`
-        SELECT COALESCE(SUM(total_amount),0) as month_revenue,
-               COUNT(*) as month_transactions
-        FROM sales_orders
-        WHERE DATE_TRUNC('month',created_at)=DATE_TRUNC('month',NOW())
-        AND status NOT IN ('VOID','CANCELLED')
-      `);
-      monthly_stats = r.rows[0];
-    } catch (_) {}
-
     let top_products = [];
-    try {
-      const r = await pool.query(`
-        SELECT p.product_name, p.sku,
-               SUM(soi.quantity) as units_sold,
-               SUM(soi.line_total) as revenue
-        FROM sales_order_items soi
-        JOIN products p ON soi.product_id=p.product_id
-        JOIN sales_orders so ON soi.order_id=so.order_id
-        WHERE DATE_TRUNC('month',so.created_at)=DATE_TRUNC('month',NOW())
-        AND so.status NOT IN ('VOID','CANCELLED')
-        GROUP BY p.product_id,p.product_name,p.sku
-        ORDER BY revenue DESC LIMIT 6
-      `);
-      top_products = r.rows;
-    } catch (_) {}
-
     let void_stats = { voided: 0, total: 0, void_rate_pct: 0 };
+    let zero_stock = [];
+    let open_pos = { open_pos: 0, po_value: 0 };
+
+    // Query 1 — today stats
     try {
       const r = await pool.query(`
         SELECT
-          COUNT(*) FILTER (WHERE status='VOID') as voided,
-          COUNT(*) as total,
-          ROUND(COUNT(*) FILTER (WHERE status='VOID')*100.0
-            /NULLIF(COUNT(*),0),1) as void_rate_pct
+          COALESCE(SUM(total_amount),0) as today_revenue,
+          COUNT(*) as today_transactions,
+          COALESCE(AVG(total_amount),0) as avg_order_value,
+          COUNT(*) FILTER (WHERE customer_type='WALK_IN') as walkin_count
         FROM sales_orders
-        WHERE DATE_TRUNC('month',created_at)=DATE_TRUNC('month',NOW())
+        WHERE DATE(created_at) = CURRENT_DATE
+        AND status NOT IN ('VOID','CANCELLED')
       `);
-      void_stats = r.rows[0];
-    } catch (_) {}
+      if (r.rows[0]) today_stats = r.rows[0];
+    } catch (e) {
+      console.error('Commercial Q1 (today_stats) failed:', e.message);
+    }
 
-    let zero_stock = [];
+    // Query 2 — weekly revenue
     try {
       const r = await pool.query(`
-        SELECT p.product_name,p.sku,i.quantity
-        FROM inventory i JOIN products p ON i.product_id=p.product_id
-        WHERE i.quantity=0 LIMIT 10
+        SELECT
+          DATE(created_at) as sale_date,
+          COALESCE(SUM(total_amount),0) as revenue,
+          COUNT(*) as transactions
+        FROM sales_orders
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+        AND status NOT IN ('VOID','CANCELLED')
+        GROUP BY DATE(created_at)
+        ORDER BY sale_date ASC
+      `);
+      weekly_revenue = r.rows;
+    } catch (e) {
+      console.error('Commercial Q2 (weekly_revenue) failed:', e.message);
+    }
+
+    // Query 3 — monthly stats
+    try {
+      const r = await pool.query(`
+        SELECT
+          COALESCE(SUM(total_amount),0) as month_revenue,
+          COUNT(*) as month_transactions
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+        AND status NOT IN ('VOID','CANCELLED')
+      `);
+      if (r.rows[0]) monthly_stats = r.rows[0];
+    } catch (e) {
+      console.error('Commercial Q3 (monthly_stats) failed:', e.message);
+    }
+
+    // Query 4 — top products
+    try {
+      const r = await pool.query(`
+        SELECT
+          p.product_name, p.sku,
+          SUM(soi.quantity) as units_sold,
+          SUM(soi.line_total) as revenue
+        FROM sales_order_items soi
+        JOIN products p ON soi.product_id = p.product_id
+        JOIN sales_orders so ON soi.order_id = so.order_id
+        WHERE DATE_TRUNC('month', so.created_at) = DATE_TRUNC('month', NOW())
+        AND so.status NOT IN ('VOID','CANCELLED')
+        GROUP BY p.product_id, p.product_name, p.sku
+        ORDER BY revenue DESC
+        LIMIT 6
+      `);
+      top_products = r.rows;
+    } catch (e) {
+      console.error('Commercial Q4 (top_products) failed:', e.message);
+    }
+
+    // Query 5 — void stats
+    try {
+      const r = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'VOID') as voided,
+          COUNT(*) as total,
+          ROUND(
+            COUNT(*) FILTER (WHERE status = 'VOID') * 100.0
+            / NULLIF(COUNT(*), 0), 1
+          ) as void_rate_pct
+        FROM sales_orders
+        WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+      `);
+      if (r.rows[0]) void_stats = r.rows[0];
+    } catch (e) {
+      console.error('Commercial Q5 (void_stats) failed:', e.message);
+    }
+
+    // Query 6 — zero stock
+    try {
+      const r = await pool.query(`
+        SELECT p.product_name, p.sku, i.quantity_on_hand AS quantity
+        FROM inventory i
+        JOIN products p ON i.product_id = p.product_id
+        WHERE i.quantity_on_hand = 0
+        LIMIT 10
       `);
       zero_stock = r.rows;
-    } catch (_) {}
+    } catch (e) {
+      console.error('Commercial Q6 (zero_stock) failed:', e.message);
+    }
 
-    let open_pos = { open_pos: 0, po_value: 0 };
+    // Query 7 — open POs
     try {
       const r = await pool.query(`
-        SELECT COUNT(*) as open_pos,
-               COALESCE(SUM(total_amount),0) as po_value
+        SELECT
+          COUNT(*) as open_pos,
+          COALESCE(SUM(total_amount), 0) as po_value
         FROM purchase_orders
         WHERE status NOT IN ('RECEIVED','CANCELLED')
       `);
-      open_pos = r.rows[0];
-    } catch (_) {}
+      if (r.rows[0]) open_pos = r.rows[0];
+    } catch (e) {
+      console.error('Commercial Q7 (open_pos) failed:', e.message);
+    }
 
     return {
       today_stats,

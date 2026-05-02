@@ -286,24 +286,56 @@ export interface NCRDetail {
 
 // ── Commercial summary ────────────────────────────────────────────────────────
 
-export interface VendorWatchItem {
-  supplier_id: string;
-  supplier_name: string;
-  supplier_code: string;
-  open_ncr_count: number;
-  last_delivery_date: string | null;
+export interface CommercialTodayStats {
+  today_revenue: number | string;
+  today_transactions: number | string;
+  avg_order_value: number | string;
+  walkin_count: number | string;
 }
 
-export interface ZeroStockProduct {
-  product_id: string;
+export interface CommercialWeeklyDay {
+  sale_date: string;
+  revenue: number | string;
+  transactions: number | string;
+}
+
+export interface CommercialMonthlyStats {
+  month_revenue: number | string;
+  month_transactions: number | string;
+}
+
+export interface CommercialTopProduct {
   product_name: string;
   sku: string;
-  last_transaction_date: string | null;
+  units_sold: number | string;
+  revenue: number | string;
+}
+
+export interface CommercialVoidStats {
+  voided: number | string;
+  total: number | string;
+  void_rate_pct: number | string;
+}
+
+export interface CommercialZeroStock {
+  product_name: string;
+  sku: string;
+  quantity: number | string;
+}
+
+export interface CommercialOpenPos {
+  open_pos: number | string;
+  po_value: number | string;
 }
 
 export interface CommercialSummary {
-  vendor_watch: VendorWatchItem[];
-  zero_stock_products: ZeroStockProduct[];
+  today_stats: CommercialTodayStats;
+  weekly_revenue: CommercialWeeklyDay[];
+  monthly_stats: CommercialMonthlyStats;
+  top_products: CommercialTopProduct[];
+  void_stats: CommercialVoidStats;
+  zero_stock: CommercialZeroStock[];
+  open_pos: CommercialOpenPos;
 }
 
 // ── API methods ──────────────────────────────────────────────────────────────
