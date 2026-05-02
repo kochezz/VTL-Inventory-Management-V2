@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import api, { Alert } from '../../services/api';
-import { COLORS, RADIUS, SHADOW, timeAgo } from '../../constants/theme';
+import { COLORS, RADIUS, SHADOW, timeAgo, zebraRow } from '../../constants/theme';
 import { useAuthStore } from '../../stores/authStore';
 import { KpiCard } from '../../components/KpiCard';
 import { SectionHeader } from '../../components/SectionHeader';
@@ -40,10 +40,10 @@ function AlertChip({ alert }: { alert: Alert }) {
   );
 }
 
-function TimelineItem({ alert, isLast }: { alert: Alert; isLast: boolean }) {
+function TimelineItem({ alert, isLast, index }: { alert: Alert; isLast: boolean; index: number }) {
   const dotColor = DOT_COLOR[alert.severity] ?? COLORS.sky;
   return (
-    <View style={s.timelineRow}>
+    <View style={[s.timelineRow, zebraRow(index), { borderRadius: 8, paddingHorizontal: 6 }]}>
       <View style={s.timelineLeft}>
         <View style={[s.timelineDot, { backgroundColor: dotColor }]} />
         {!isLast && <View style={s.timelineLine} />}
@@ -215,29 +215,44 @@ export default function HomeScreen() {
         </View>
 
         {/* ── Quick Actions ── */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.actionsContent}
-          style={s.actionsScroll}
-        >
-          {[
-            { emoji: '📋', label: 'Documents', bg: COLORS.skyGlow,   route: '/(tabs)/quality'     },
-            { emoji: '⚠️', label: 'NCRs',       bg: COLORS.amberGlow, route: '/(tabs)/quality'     },
-            { emoji: '🏭', label: 'Batches',    bg: COLORS.tealGlow,  route: '/(tabs)/operations'  },
-            { emoji: '📊', label: 'Sales',      bg: COLORS.greenGlow, route: '/(tabs)/commercial'  },
-          ].map(({ emoji, label, bg, route }) => (
-            <TouchableOpacity
-              key={label}
-              style={[s.actionTile, { backgroundColor: bg }]}
-              onPress={() => router.push(route as any)}
-              activeOpacity={0.75}
-            >
-              <Text style={s.actionEmoji}>{emoji}</Text>
-              <Text style={s.actionLabel}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <View style={{
+          marginHorizontal: -16,
+          paddingHorizontal: 16,
+          paddingVertical: 16,
+          backgroundColor: COLORS.surfaceAlt,
+          borderTopWidth: 1, borderBottomWidth: 1,
+          borderColor: COLORS.border,
+          marginBottom: 20,
+        }}>
+          <Text style={{
+            color: COLORS.textMuted, fontSize: 10,
+            fontWeight: '700', letterSpacing: 2,
+            textTransform: 'uppercase', marginBottom: 12,
+          }}>Quick Actions</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.actionsContent}
+            style={s.actionsScroll}
+          >
+            {[
+              { emoji: '📋', label: 'Documents', bg: COLORS.skyGlow,   route: '/(tabs)/quality'     },
+              { emoji: '⚠️', label: 'NCRs',       bg: COLORS.amberGlow, route: '/(tabs)/quality'     },
+              { emoji: '🏭', label: 'Batches',    bg: COLORS.tealGlow,  route: '/(tabs)/operations'  },
+              { emoji: '📊', label: 'Sales',      bg: COLORS.greenGlow, route: '/(tabs)/commercial'  },
+            ].map(({ emoji, label, bg, route }) => (
+              <TouchableOpacity
+                key={label}
+                style={[s.actionTile, { backgroundColor: bg }]}
+                onPress={() => router.push(route as any)}
+                activeOpacity={0.75}
+              >
+                <Text style={s.actionEmoji}>{emoji}</Text>
+                <Text style={s.actionLabel}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
 
         {/* ── Recent Activity ── */}
         <View style={s.section}>
@@ -261,6 +276,7 @@ export default function HomeScreen() {
                 key={alert.id}
                 alert={alert}
                 isLast={i === Math.min(alerts.length, 8) - 1}
+                index={i}
               />
             ))
           )}

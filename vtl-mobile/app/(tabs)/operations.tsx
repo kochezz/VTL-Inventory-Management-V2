@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import api, { Batch, LowStockItem, Transaction } from '../../services/api';
-import { COLORS } from '../../constants/theme';
+import { COLORS, zebraRow } from '../../constants/theme';
 import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,9 +61,21 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function BatchCard({ batch, onPress }: { batch: Batch; onPress: () => void }) {
+const BATCH_LEFT_COLOR: Record<string, string> = {
+  in_progress: COLORS.sky,
+  awaiting_qa: COLORS.amber,
+  completed:   COLORS.green,
+  released:    COLORS.teal,
+};
+
+function BatchCard({ batch, onPress, index }: { batch: Batch; onPress: () => void; index: number }) {
+  const leftColor = BATCH_LEFT_COLOR[batch.status] ?? COLORS.border;
   return (
-    <TouchableOpacity style={s.batchCard} onPress={onPress} activeOpacity={0.75}>
+    <TouchableOpacity
+      style={[s.batchCard, zebraRow(index), { borderLeftWidth: 3, borderLeftColor: leftColor }]}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
       <View style={s.batchRow}>
         <Text style={s.batchNumber}>{batch.batch_number}</Text>
         <StatusBadge status={batch.status} />
@@ -79,13 +91,13 @@ function BatchCard({ batch, onPress }: { batch: Batch; onPress: () => void }) {
   );
 }
 
-function StockRow({ item }: { item: LowStockItem }) {
+function StockRow({ item, index }: { item: LowStockItem; index: number }) {
   const pct = item.reorder_level > 0
     ? Math.min((item.quantity / item.reorder_level) * 100, 100)
     : 100;
   const isZero = item.quantity === 0;
   return (
-    <View style={s.stockRow}>
+    <View style={[s.stockRow, zebraRow(index)]}>
       <View style={s.stockLeft}>
         <Text style={s.stockName}>{item.product_name}</Text>
         <Text style={s.stockSku}>{item.sku} · {item.warehouse_location ?? 'No location'}</Text>
@@ -106,10 +118,18 @@ function StockRow({ item }: { item: LowStockItem }) {
   );
 }
 
-function TxRow({ tx }: { tx: Transaction }) {
+const TX_LEFT_COLOR: Record<string, string> = {
+  RECEIVE:    COLORS.green,
+  ISSUE:      COLORS.amber,
+  TRANSFER:   COLORS.sky,
+  ADJUSTMENT: COLORS.purple,
+};
+
+function TxRow({ tx, index }: { tx: Transaction; index: number }) {
   const cfg = TX_TYPE[tx.transaction_type] ?? { color: COLORS.muted, sign: '' };
+  const leftColor = TX_LEFT_COLOR[tx.transaction_type] ?? COLORS.border;
   return (
-    <View style={s.txRow}>
+    <View style={[s.txRow, zebraRow(index), { borderLeftWidth: 3, borderLeftColor: leftColor }]}>
       <View style={[s.txPill, { backgroundColor: cfg.color + '22', borderColor: cfg.color }]}>
         <Text style={[s.txPillText, { color: cfg.color }]}>{tx.transaction_type}</Text>
       </View>
@@ -178,10 +198,11 @@ export default function OperationsScreen() {
           <FlatList
             data={data.batches}
             keyExtractor={(b) => b.batch_id}
-            renderItem={({ item }) => (
+            renderItem={({ item, index }) => (
               <BatchCard
                 batch={item}
                 onPress={() => router.push(`/batch/${item.batch_id}` as any)}
+                index={index}
               />
             )}
             scrollEnabled={false}
@@ -197,7 +218,7 @@ export default function OperationsScreen() {
             {data.low_stock.map((item, i) => (
               <View key={item.product_id}>
                 {i > 0 && <View style={s.divider} />}
-                <StockRow item={item} />
+                <StockRow item={item} index={i} />
               </View>
             ))}
           </View>
@@ -212,7 +233,7 @@ export default function OperationsScreen() {
             {data.recent_transactions.map((tx, i) => (
               <View key={i}>
                 {i > 0 && <View style={s.divider} />}
-                <TxRow tx={tx} />
+                <TxRow tx={tx} index={i} />
               </View>
             ))}
           </View>

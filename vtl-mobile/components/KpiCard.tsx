@@ -36,7 +36,15 @@ export function KpiCard({
   const trendArrow = trend?.direction === 'up' ? '↑' : '↓';
 
   const Inner = (
-    <View style={[s.card, { borderLeftColor: color }, SHADOW.card]}>
+    <View style={[s.card, { borderLeftColor: color, borderTopWidth: 2, borderTopColor: color }, SHADOW.card]}>
+      {/* Top-left secondary glow */}
+      <View style={{
+        position: 'absolute', top: 0, left: 0,
+        width: 40, height: 40,
+        borderRadius: RADIUS.xxl,
+        backgroundColor: colorGlow,
+        opacity: 0.2,
+      }} pointerEvents="none" />
       {/* Glow orb */}
       <View style={[s.glow, { backgroundColor: colorGlow }]} pointerEvents="none" />
 
@@ -90,10 +98,10 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: -10,
     right: -10,
-    width: 60,
-    height: 60,
+    width: 80,
+    height: 80,
     borderRadius: RADIUS.xxl,
-    opacity: 0.4,
+    opacity: 0.5,
   },
   icon: {
     fontSize: 20,

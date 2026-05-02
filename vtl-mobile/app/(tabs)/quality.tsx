@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import api, { Ncr, Capa, Audit, QmsSection, DocInReview } from '../../services/api';
-import { COLORS } from '../../constants/theme';
+import { COLORS, zebraRow } from '../../constants/theme';
 import VTLAppHeader from '../../components/VTLAppHeader';
 import { useAuthStore } from '../../stores/authStore';
 import SignatureBottomSheet, { SheetField } from '../../components/SignatureBottomSheet';
@@ -110,10 +110,21 @@ function SectionCircle({ section }: { section: QmsSection }) {
   );
 }
 
-function NcrRow({ ncr, onPress }: { ncr: Ncr; onPress: () => void }) {
+const NCR_LEFT_COLOR: Record<string, string> = {
+  CRITICAL: COLORS.red,
+  MAJOR:    COLORS.amber,
+  MINOR:    COLORS.sky,
+};
+
+function NcrRow({ ncr, onPress, index }: { ncr: Ncr; onPress: () => void; index: number }) {
   const age = daysAgo(ncr.created_at);
+  const leftColor = NCR_LEFT_COLOR[(ncr.severity ?? '').toUpperCase()] ?? COLORS.border;
   return (
-    <TouchableOpacity style={s.listRow} onPress={onPress} activeOpacity={0.75}>
+    <TouchableOpacity
+      style={[s.listRow, zebraRow(index), { borderLeftWidth: 3, borderLeftColor: leftColor }]}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
       <View style={s.listRowTop}>
         <Text style={s.codeText}>{ncr.ncr_code}</Text>
         <SeverityBadge severity={ncr.severity} />
@@ -135,15 +146,18 @@ function CapaRow({
   capa,
   canApprove,
   onClose,
+  index,
 }: {
   capa: Capa;
   canApprove: boolean;
   onClose: () => void;
+  index: number;
 }) {
   const overdue = daysUntil(capa.due_date);
   const isOverdue = overdue < 0;
+  const capaLeftColor = overdue < 0 ? COLORS.red : overdue < 7 ? COLORS.amber : COLORS.green;
   return (
-    <View style={s.listRow}>
+    <View style={[s.listRow, zebraRow(index), { borderLeftWidth: 3, borderLeftColor: capaLeftColor }]}>
       <View style={s.listRowTop}>
         <Text style={s.codeText}>{capa.capa_code}</Text>
         <Text style={[s.overdueBadge, { color: isOverdue ? COLORS.red : COLORS.amber }]}>
@@ -198,11 +212,11 @@ function DocRow({
   );
 }
 
-function AuditCard({ audit }: { audit: Audit }) {
+function AuditCard({ audit, index }: { audit: Audit; index: number }) {
   const color = AUDIT_TYPE_COLOR[audit.audit_type] ?? COLORS.muted;
   const daysLeft = daysUntil(audit.audit_date);
   return (
-    <View style={[s.auditCard, { borderLeftColor: color }]}>
+    <View style={[s.auditCard, { borderLeftColor: color }, zebraRow(index)]}>
       <View style={s.auditRow}>
         <View style={[s.auditTypePill, { backgroundColor: color + '22', borderColor: color }]}>
           <Text style={[s.auditTypeText, { color }]}>{audit.audit_type}</Text>
@@ -334,6 +348,7 @@ export default function QualityScreen() {
                 <NcrRow
                   ncr={ncr}
                   onPress={() => router.push(`/ncr/${ncr.ncr_id}` as any)}
+                  index={i}
                 />
               </View>
             ))}
@@ -353,6 +368,7 @@ export default function QualityScreen() {
                   capa={capa}
                   canApprove={canApprove}
                   onClose={() => setCapaSheet(capa)}
+                  index={i}
                 />
               </View>
             ))}
@@ -383,8 +399,8 @@ export default function QualityScreen() {
         {auditsToShow.length === 0 ? (
           <Text style={s.emptyText}>No upcoming audits scheduled.</Text>
         ) : (
-          auditsToShow.map((audit) => (
-            <AuditCard key={audit.audit_id} audit={audit} />
+          auditsToShow.map((audit, i) => (
+            <AuditCard key={audit.audit_id} audit={audit} index={i} />
           ))
         )}
 

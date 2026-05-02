@@ -5,7 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import api, { TrainingUser, PendingAck, ActivityItem } from '../../services/api';
-import { COLORS } from '../../constants/theme';
+import { COLORS, zebraRow } from '../../constants/theme';
 import VTLAppHeader from '../../components/VTLAppHeader';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -72,9 +72,9 @@ function LeaderRow({
   );
 }
 
-function AckRow({ item, last }: { item: PendingAck; last: boolean }) {
+function AckRow({ item, last, index }: { item: PendingAck; last: boolean; index: number }) {
   return (
-    <View style={[s.ackRow, !last && s.rowDivider]}>
+    <View style={[s.ackRow, !last && s.rowDivider, zebraRow(index)]}>
       <View style={s.ackLeft}>
         <Text style={s.ackName}>{item.full_name}</Text>
         <Text style={s.ackMeta}>{item.role} · {item.email}</Text>
@@ -86,11 +86,11 @@ function AckRow({ item, last }: { item: PendingAck; last: boolean }) {
   );
 }
 
-function ActivityRow({ item, last }: { item: ActivityItem; last: boolean }) {
+function ActivityRow({ item, last, index }: { item: ActivityItem; last: boolean; index: number }) {
   const dotColor = ACTIVITY_COLOR[item.activity_type] ?? COLORS.muted;
   const label = item.activity_type.replace(/_/g, ' ');
   return (
-    <View style={[s.actRow, !last && s.rowDivider]}>
+    <View style={[s.actRow, !last && s.rowDivider, zebraRow(index)]}>
       <View style={[s.actDot, { backgroundColor: dotColor }]} />
       <View style={s.actMid}>
         <Text style={s.actLabel}>{label}</Text>
@@ -196,6 +196,7 @@ export default function PeopleScreen() {
                 key={a.user_id}
                 item={a}
                 last={i === data.pending_acknowledgements.length - 1}
+                index={i}
               />
             ))}
           </View>
@@ -212,6 +213,7 @@ export default function PeopleScreen() {
                 key={a.activity_id}
                 item={a}
                 last={i === data.recent_activity.length - 1}
+                index={i}
               />
             ))}
           </View>

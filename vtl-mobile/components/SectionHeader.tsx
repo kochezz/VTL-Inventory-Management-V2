@@ -11,7 +11,16 @@ export function SectionHeader({ title, subtitle, action }: SectionHeaderProps) {
   return (
     <View style={s.container}>
       <View style={s.left}>
-        <Text style={s.title}>{title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+          <View style={{
+            width: 3,
+            height: 20,
+            backgroundColor: COLORS.sky,
+            borderRadius: 2,
+            marginRight: 10,
+          }} />
+          <Text style={s.title}>{title}</Text>
+        </View>
         {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
       </View>
       {action ? (

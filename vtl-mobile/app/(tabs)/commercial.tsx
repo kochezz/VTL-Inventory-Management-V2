@@ -9,7 +9,7 @@ import {
   CommercialVoidStats, CommercialOpenPos, CommercialTopProduct,
   CommercialPaymentMethod, CommercialCustomerSplit,
 } from '../../services/api';
-import { COLORS, RADIUS, SHADOW, formatCurrency } from '../../constants/theme';
+import { COLORS, RADIUS, SHADOW, formatCurrency, zebraRow } from '../../constants/theme';
 import { SkeletonCard, SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
 import { MonthComparisonChart } from '../../components/MonthComparisonChart';
 import { MiniBarChart } from '../../components/MiniBarChart';
@@ -81,7 +81,7 @@ function ProductRankList({
       {(products ?? []).map((p, i) => (
         <View
           key={(p.sku ?? '') + i}
-          style={[s.productRow, i < (products ?? []).length - 1 && s.rowDivider]}
+          style={[s.productRow, i < (products ?? []).length - 1 && s.rowDivider, zebraRow(i)]}
         >
           <View style={s.productLeft}>
             <View style={s.productNameRow}>
@@ -383,7 +383,7 @@ export default function CommercialScreen() {
                   return (
                     <View
                       key={pm.payment_method}
-                      style={[s.pmRow, i < (payment_breakdown ?? []).length - 1 && s.rowDivider]}
+                      style={[s.pmRow, i < (payment_breakdown ?? []).length - 1 && s.rowDivider, zebraRow(i)]}
                     >
                       <Text style={s.pmLabel}>{label}</Text>
                       <Text style={s.pmTxns}>{n(pm.transaction_count)} txns</Text>
@@ -508,7 +508,7 @@ export default function CommercialScreen() {
                   const arrowColor = diff > 0 ? COLORS.green : diff < 0 ? COLORS.red : COLORS.muted;
                   const name = curr?.product_name ?? prev?.product_name ?? sku;
                   return (
-                    <View key={sku} style={[s.skuRow, i < allSkus.length - 1 && s.rowDivider]}>
+                    <View key={sku} style={[s.skuRow, i < allSkus.length - 1 && s.rowDivider, zebraRow(i)]}>
                       <Text style={s.skuName} numberOfLines={1}>{name}</Text>
                       <Text style={s.skuCurr}>{formatAmount(currRev)}</Text>
                       <Text style={s.skuVs}>vs</Text>

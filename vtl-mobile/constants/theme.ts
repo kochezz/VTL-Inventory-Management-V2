@@ -87,3 +87,9 @@ export function timeAgo(dateStr: string): string {
     month: 'short',
   });
 }
+
+export const zebraRow = (index: number): object => ({
+  backgroundColor: index % 2 === 0
+    ? COLORS.surface
+    : COLORS.surfaceAlt,
+});

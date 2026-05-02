@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
 import { COLORS } from '../../constants/theme';
 
 export default function TabLayout() {
@@ -13,6 +13,7 @@ export default function TabLayout() {
           borderTopColor: COLORS.border,
           height: 64,
           paddingBottom: 8,
+          paddingTop: 4,
         },
         tabBarActiveTintColor: COLORS.sky,
         tabBarInactiveTintColor: COLORS.textMuted,
@@ -26,8 +27,10 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 20, color }}>⌂</Text>
+          tabBarIcon: ({ focused, color }) => (
+            <View style={{ alignItems: 'center', borderTopWidth: focused ? 3 : 0, borderTopColor: COLORS.sky, paddingTop: focused ? 4 : 7, width: 40 }}>
+              <Text style={{ fontSize: 20, color }}>⌂</Text>
+            </View>
           ),
         }}
       />
@@ -35,8 +38,10 @@ export default function TabLayout() {
         name="operations"
         options={{
           title: 'Operations',
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 20, color }}>⚙</Text>
+          tabBarIcon: ({ focused, color }) => (
+            <View style={{ alignItems: 'center', borderTopWidth: focused ? 3 : 0, borderTopColor: COLORS.sky, paddingTop: focused ? 4 : 7, width: 40 }}>
+              <Text style={{ fontSize: 20, color }}>⚙</Text>
+            </View>
           ),
         }}
       />
@@ -44,8 +49,10 @@ export default function TabLayout() {
         name="quality"
         options={{
           title: 'Quality',
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 20, color }}>🛡</Text>
+          tabBarIcon: ({ focused, color }) => (
+            <View style={{ alignItems: 'center', borderTopWidth: focused ? 3 : 0, borderTopColor: COLORS.sky, paddingTop: focused ? 4 : 7, width: 40 }}>
+              <Text style={{ fontSize: 20, color }}>🛡</Text>
+            </View>
           ),
         }}
       />
@@ -53,8 +60,10 @@ export default function TabLayout() {
         name="commercial"
         options={{
           title: 'Commercial',
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 20, color }}>📊</Text>
+          tabBarIcon: ({ focused, color }) => (
+            <View style={{ alignItems: 'center', borderTopWidth: focused ? 3 : 0, borderTopColor: COLORS.sky, paddingTop: focused ? 4 : 7, width: 40 }}>
+              <Text style={{ fontSize: 20, color }}>📊</Text>
+            </View>
           ),
         }}
       />
@@ -62,8 +71,10 @@ export default function TabLayout() {
         name="people"
         options={{
           title: 'People',
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 20, color }}>👥</Text>
+          tabBarIcon: ({ focused, color }) => (
+            <View style={{ alignItems: 'center', borderTopWidth: focused ? 3 : 0, borderTopColor: COLORS.sky, paddingTop: focused ? 4 : 7, width: 40 }}>
+              <Text style={{ fontSize: 20, color }}>👥</Text>
+            </View>
           ),
         }}
       />

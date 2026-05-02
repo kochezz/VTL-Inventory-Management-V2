@@ -68,15 +68,23 @@ export function StatusBadge({ status, small }: StatusBadgeProps) {
         small && s.small,
       ]}
     >
-      <Text
-        style={[
-          s.label,
-          { color },
-          small && s.labelSmall,
-        ]}
-      >
-        {normalised.replace(/_/g, ' ')}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{
+          width: 6, height: 6, borderRadius: 3,
+          backgroundColor: color,
+          marginRight: 5,
+          opacity: 0.9,
+        }} />
+        <Text
+          style={[
+            s.label,
+            { color },
+            small && s.labelSmall,
+          ]}
+        >
+          {normalised.replace(/_/g, ' ')}
+        </Text>
+      </View>
     </View>
   );
 }
