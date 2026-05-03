@@ -779,6 +779,7 @@ const mobileService = {
           u.full_name      AS actor_name
         FROM audit_log al
         LEFT JOIN users u ON al.performed_by = u.user_id
+        WHERE al.performed_at >= NOW() - INTERVAL '45 days'
         ORDER BY al.performed_at DESC NULLS LAST
         LIMIT 20
       `).catch(() =>
@@ -792,6 +793,7 @@ const mobileService = {
           FROM inventory_transactions it
           LEFT JOIN transaction_types tt ON it.transaction_type_id = tt.transaction_type_id
           LEFT JOIN users u ON it.performed_by = u.user_id
+          WHERE it.created_at >= NOW() - INTERVAL '45 days'
           ORDER BY it.created_at DESC NULLS LAST
           LIMIT 20
         `)
@@ -799,6 +801,7 @@ const mobileService = {
     ]);
 
     const leaderboard = leaderboardRes.status === 'fulfilled' ? leaderboardRes.value.rows : [];
+    const recentActivity = activityRes.status === 'fulfilled' ? activityRes.value.rows : [];
 
     return {
       users_by_role: rolesRes.status === 'fulfilled' ? rolesRes.value.rows : [],
@@ -807,7 +810,9 @@ const mobileService = {
         bottom_5: [...leaderboard].sort((a, b) => a.acknowledged_count - b.acknowledged_count).slice(0, 5)
       },
       pending_acknowledgements: pendingAckRes.status === 'fulfilled' ? pendingAckRes.value.rows : [],
-      recent_activity: activityRes.status === 'fulfilled' ? activityRes.value.rows : []
+      recent_activity: recentActivity,
+      activity_window_days: 45,
+      recent_activity_count: recentActivity.length
     };
   }
 };
