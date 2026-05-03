@@ -5,45 +5,184 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import api, { Alert } from '../../services/api';
+import api, { Alert, DashboardSummary } from '../../services/api';
 import { COLORS, RADIUS, SHADOW, timeAgo, zebraRow } from '../../constants/theme';
-import { useAuthStore } from '../../stores/authStore';
 import { KpiCard } from '../../components/KpiCard';
 import { SectionHeader } from '../../components/SectionHeader';
-import { SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
+import { SkeletonCard, SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
 import VTLAppHeader from '../../components/VTLAppHeader';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const SEV_CHIP: Record<string, { bg: string; border: string; text: string; prefix: string }> = {
-  HIGH:   { bg: COLORS.redGlow,   border: COLORS.red,   text: COLORS.red,   prefix: '🚨' },
-  MEDIUM: { bg: COLORS.amberGlow, border: COLORS.amber, text: COLORS.amber, prefix: '⚠️' },
-  LOW:    { bg: COLORS.skyGlow,   border: COLORS.sky,   text: COLORS.sky,   prefix: 'ℹ️' },
+type ExecutiveStatus = {
+  label: 'Critical' | 'Attention Required' | 'Stable';
+  color: string;
+  glow: string;
 };
 
-const DOT_COLOR: Record<string, string> = {
-  HIGH:   COLORS.red,
-  MEDIUM: COLORS.amber,
-  LOW:    COLORS.sky,
-};
+const ACTIONS = [
+  { icon: 'DOC', label: 'Documents', bg: COLORS.skyGlow, route: '/(tabs)/quality' },
+  { icon: 'NCR', label: 'NCRs', bg: COLORS.amberGlow, route: '/(tabs)/quality' },
+  { icon: 'BCH', label: 'Batches', bg: COLORS.tealGlow, route: '/(tabs)/operations' },
+  { icon: 'REV', label: 'Sales', bg: COLORS.greenGlow, route: '/(tabs)/commercial' },
+];
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+function getNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
 
-function AlertChip({ alert }: { alert: Alert }) {
-  const chip = SEV_CHIP[alert.severity] ?? SEV_CHIP.LOW;
+function getSeverityColor(severity?: string | null): string {
+  const sev = (severity ?? '').toUpperCase();
+  if (sev === 'HIGH') return COLORS.red;
+  if (sev === 'MEDIUM') return COLORS.amber;
+  return COLORS.sky;
+}
+
+function getSeverityGlow(severity?: string | null): string {
+  const sev = (severity ?? '').toUpperCase();
+  if (sev === 'HIGH') return COLORS.redGlow;
+  if (sev === 'MEDIUM') return COLORS.amberGlow;
+  return COLORS.skyGlow;
+}
+
+function getExecutiveStatus(dashboard?: DashboardSummary, alerts: Alert[] = []): ExecutiveStatus {
+  const hasHigh = alerts.some((a) => a.severity === 'HIGH');
+  const hasMedium = alerts.some((a) => a.severity === 'MEDIUM');
+  const overdueCapas = getNumber(dashboard?.overdue_capas);
+  const openNcrs = getNumber(dashboard?.open_ncrs);
+  const lowStock = getNumber(dashboard?.low_stock_items);
+
+  if (hasHigh || overdueCapas > 0) {
+    return { label: 'Critical', color: COLORS.red, glow: COLORS.redGlow };
+  }
+  if (hasMedium || openNcrs > 0 || lowStock > 0) {
+    return { label: 'Attention Required', color: COLORS.amber, glow: COLORS.amberGlow };
+  }
+  return { label: 'Stable', color: COLORS.green, glow: COLORS.greenGlow };
+}
+
+function getFinishedProductLowStock(dashboard?: DashboardSummary): number {
+  const extended = dashboard as (DashboardSummary & { finished_product_low_stock_items?: number }) | undefined;
+  return getNumber(extended?.finished_product_low_stock_items ?? dashboard?.low_stock_items);
+}
+
+function getUpdatedLabel(alerts: Alert[]): string {
+  const latest = alerts.find((a) => a.created_at)?.created_at;
+  return latest ? `Updated ${timeAgo(latest)}` : 'Updated just now';
+}
+
+function BellButton({ hasHighAlert, onPress }: { hasHighAlert: boolean; onPress: () => void }) {
   return (
-    <View style={[s.chip, { backgroundColor: chip.bg, borderColor: chip.border }]}>
-      <Text style={[s.chipText, { color: chip.text }]}>
-        {chip.prefix} {alert.title.substring(0, 28)}
-      </Text>
+    <TouchableOpacity style={s.bellButton} onPress={onPress} activeOpacity={0.7}>
+      <Text style={s.bellText}>!</Text>
+      {hasHighAlert && <View style={s.bellDot} />}
+    </TouchableOpacity>
+  );
+}
+
+function SnapshotHero({
+  dashboard,
+  alerts,
+  loading,
+}: {
+  dashboard?: DashboardSummary;
+  alerts: Alert[];
+  loading: boolean;
+}) {
+  if (loading) return <SkeletonCard style={s.heroSkeleton} />;
+
+  const status = getExecutiveStatus(dashboard, alerts);
+  const qmsPct = getNumber(dashboard?.qms_completion_pct);
+  const activeBatches = getNumber(dashboard?.active_batches);
+  const fpLowStock = getFinishedProductLowStock(dashboard);
+
+  return (
+    <View style={[s.heroCard, { borderLeftColor: status.color }]}>
+      <View style={[s.heroGlow, { backgroundColor: status.glow }]} pointerEvents="none" />
+      <View style={s.heroTop}>
+        <View style={s.statusBlock}>
+          <Text style={[s.statusLabel, { color: status.color }]}>{status.label}</Text>
+          <Text style={s.heroTitle}>Executive Snapshot</Text>
+          <Text style={s.updatedText}>{getUpdatedLabel(alerts)}</Text>
+        </View>
+        <View style={s.qmsDial}>
+          <Text style={s.qmsValue}>{qmsPct}%</Text>
+          <Text style={s.qmsLabel}>QMS Ready</Text>
+        </View>
+      </View>
+      <View style={s.heroMetrics}>
+        <MiniMetric label="Active Batches" value={activeBatches} color={COLORS.sky} />
+        <MiniMetric label="FP Low Stock" value={fpLowStock} color={COLORS.amber} />
+      </View>
     </View>
   );
 }
 
-function TimelineItem({ alert, isLast, index }: { alert: Alert; isLast: boolean; index: number }) {
-  const dotColor = DOT_COLOR[alert.severity] ?? COLORS.sky;
+function MiniMetric({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <View style={[s.timelineRow, zebraRow(index), { borderRadius: 8, paddingHorizontal: 6 }]}>
+    <View style={s.miniMetric}>
+      <Text style={[s.miniMetricValue, { color }]}>{value}</Text>
+      <Text style={s.miniMetricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function RiskCard({ alert }: { alert: Alert }) {
+  const color = getSeverityColor(alert.severity);
+  return (
+    <View style={[s.riskCard, { borderLeftColor: color }]}>
+      <View style={s.riskTop}>
+        <View style={[s.severityPill, { backgroundColor: getSeverityGlow(alert.severity), borderColor: color }]}>
+          <Text style={[s.severityPillText, { color }]}>{alert.severity}</Text>
+        </View>
+        <Text style={s.riskTime}>{timeAgo(alert.created_at)}</Text>
+      </View>
+      <Text style={s.riskTitle} numberOfLines={1}>{alert.title}</Text>
+      <Text style={s.riskDesc} numberOfLines={2}>{alert.description}</Text>
+    </View>
+  );
+}
+
+function OperationsPulse({
+  dashboard,
+  loading,
+  onPress,
+}: {
+  dashboard?: DashboardSummary;
+  loading: boolean;
+  onPress: () => void;
+}) {
+  if (loading) return <SkeletonCard style={s.pulseSkeleton} />;
+
+  const activeBatches = getNumber(dashboard?.active_batches);
+  const recentTransactions = getNumber(dashboard?.recent_transactions_count);
+  const fpLowStock = getFinishedProductLowStock(dashboard);
+  const nextAction = getNumber(dashboard?.overdue_capas) > 0
+    ? 'Close overdue CAPAs'
+    : fpLowStock > 0
+      ? 'Review finished-product stock'
+      : activeBatches > 0
+        ? 'Monitor production flow'
+        : 'Maintain operating rhythm';
+
+  return (
+    <TouchableOpacity style={s.pulseCard} onPress={onPress} activeOpacity={0.82}>
+      <View style={s.pulseRow}>
+        <MiniMetric label="Active" value={activeBatches} color={COLORS.sky} />
+        <MiniMetric label="24h Txns" value={recentTransactions} color={COLORS.teal} />
+        <MiniMetric label="FP Low" value={fpLowStock} color={COLORS.amber} />
+      </View>
+      <View style={s.nextActionBox}>
+        <Text style={s.nextActionLabel}>Next Action</Text>
+        <Text style={s.nextActionText}>{nextAction}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function TimelineItem({ alert, isLast, index }: { alert: Alert; isLast: boolean; index: number }) {
+  const dotColor = getSeverityColor(alert.severity);
+  return (
+    <View style={[s.timelineRow, zebraRow(index)]}>
       <View style={s.timelineLeft}>
         <View style={[s.timelineDot, { backgroundColor: dotColor }]} />
         {!isLast && <View style={s.timelineLine} />}
@@ -53,64 +192,55 @@ function TimelineItem({ alert, isLast, index }: { alert: Alert; isLast: boolean;
           <Text style={s.timelineTitle} numberOfLines={1}>{alert.title}</Text>
           <Text style={s.timelineTime}>{timeAgo(alert.created_at)}</Text>
         </View>
-        <Text style={s.timelineDesc} numberOfLines={2}>
-          {alert.description.substring(0, 60)}
-        </Text>
+        <Text style={s.timelineDesc} numberOfLines={2}>{alert.description}</Text>
       </View>
     </View>
   );
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
-
 export default function HomeScreen() {
   const router = useRouter();
-  const user   = useAuthStore((s) => s.user);
 
   const {
-    data: dashboard, isLoading: dashLoading,
-    refetch: refetchDash, isFetching: fetchingDash,
+    data: dashboard,
+    isLoading: dashLoading,
+    isError: dashError,
+    refetch: refetchDash,
+    isFetching: fetchingDash,
   } = useQuery({
     queryKey: ['dashboard'],
-    queryFn:  api.getDashboard,
+    queryFn: api.getDashboard,
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
 
   const {
-    data: alertFeed, isLoading: alertsLoading,
-    refetch: refetchAlerts, isFetching: fetchingAlerts,
+    data: alertFeed,
+    isLoading: alertsLoading,
+    refetch: refetchAlerts,
+    isFetching: fetchingAlerts,
   } = useQuery({
     queryKey: ['alerts'],
-    queryFn:  () => api.getAlerts(50),
+    queryFn: () => api.getAlerts(50),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
 
-  const alerts       = alertFeed?.alerts ?? [];
-  const bannerAlerts = alerts.filter((a) => a.severity === 'HIGH' || a.severity === 'MEDIUM');
+  const alerts = alertFeed?.alerts ?? [];
+  const priorityAlerts = alerts.filter((a) => a.severity === 'HIGH' || a.severity === 'MEDIUM').slice(0, 5);
+  const activityAlerts = alerts.slice(0, 8);
   const hasHighAlert = alerts.some((a) => a.severity === 'HIGH');
   const isRefreshing = fetchingDash || fetchingAlerts;
-  const onRefresh    = () => { refetchDash(); refetchAlerts(); };
+  const onRefresh = () => {
+    refetchDash();
+    refetchAlerts();
+  };
 
   return (
     <SafeAreaView style={s.safe} edges={['bottom']}>
       <VTLAppHeader
         rightElement={
-          <TouchableOpacity
-            style={{ position: 'relative', padding: 4 }}
-            onPress={() => router.push('/notifications')}
-            activeOpacity={0.7}
-          >
-            <Text style={{ fontSize: 22 }}>🔔</Text>
-            {hasHighAlert && (
-              <View style={{
-                position: 'absolute', top: -2, right: -2,
-                width: 8, height: 8, borderRadius: 4,
-                backgroundColor: COLORS.red,
-              }} />
-            )}
-          </TouchableOpacity>
+          <BellButton hasHighAlert={hasHighAlert} onPress={() => router.push('/notifications')} />
         }
       />
       <ScrollView
@@ -121,21 +251,20 @@ export default function HomeScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={COLORS.sky} />
         }
       >
-        {/* ── Alert Banner ── */}
-        {bannerAlerts.length > 0 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.bannerContent}
-            style={s.bannerScroll}
-          >
-            {bannerAlerts.map((a) => (
-              <AlertChip key={a.id} alert={a} />
-            ))}
-          </ScrollView>
-        )}
+        {dashError ? (
+          <View style={s.errorCard}>
+            <Text style={s.errorTitle}>Dashboard unavailable</Text>
+            <Text style={s.errorSub}>Pull to refresh or retry the executive summary.</Text>
+            <TouchableOpacity style={s.retryButton} onPress={() => refetchDash()} activeOpacity={0.8}>
+              <Text style={s.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
-        {/* ── KPI Grid ── */}
+        <View style={s.section}>
+          <SnapshotHero dashboard={dashboard} alerts={alerts} loading={dashLoading} />
+        </View>
+
         <View style={s.section}>
           <View style={s.kpiGrid}>
             {dashLoading ? (
@@ -152,60 +281,66 @@ export default function HomeScreen() {
                 <View style={s.kpiCell}>
                   <KpiCard
                     title="Active Batches"
-                    value={dashboard?.active_batches ?? 0}
+                    subtitle="Production pulse"
+                    value={getNumber(dashboard?.active_batches)}
                     color={COLORS.sky}
                     colorGlow={COLORS.skyGlow}
-                    icon="🏭"
+                    icon="BCH"
                     onPress={() => router.push('/(tabs)/operations')}
                   />
                 </View>
                 <View style={s.kpiCell}>
                   <KpiCard
                     title="Open NCRs"
-                    value={dashboard?.open_ncrs ?? 0}
+                    subtitle="Quality attention"
+                    value={getNumber(dashboard?.open_ncrs)}
                     color={COLORS.amber}
                     colorGlow={COLORS.amberGlow}
-                    icon="⚠️"
+                    icon="NCR"
                     onPress={() => router.push('/(tabs)/quality')}
                   />
                 </View>
                 <View style={s.kpiCell}>
                   <KpiCard
                     title="Overdue CAPAs"
-                    value={dashboard?.overdue_capas ?? 0}
+                    subtitle="Action required"
+                    value={getNumber(dashboard?.overdue_capas)}
                     color={COLORS.red}
                     colorGlow={COLORS.redGlow}
-                    icon="🔴"
+                    icon="CAP"
                     onPress={() => router.push('/(tabs)/quality')}
                   />
                 </View>
                 <View style={s.kpiCell}>
                   <KpiCard
-                    title="Low Stock"
-                    value={dashboard?.low_stock_items ?? 0}
+                    title="FP Low Stock"
+                    subtitle="Finished products only"
+                    value={getFinishedProductLowStock(dashboard)}
                     color={COLORS.amber}
                     colorGlow={COLORS.amberGlow}
-                    icon="📦"
+                    icon="FP"
                     onPress={() => router.push('/(tabs)/operations')}
                   />
                 </View>
                 <View style={s.kpiCell}>
                   <KpiCard
-                    title="Docs In Review"
-                    value={dashboard?.pending_docs_review ?? 0}
+                    title="Docs in Review"
+                    subtitle="QMS workflow"
+                    value={getNumber(dashboard?.pending_docs_review)}
                     color={COLORS.sky}
                     colorGlow={COLORS.skyGlow}
-                    icon="📋"
+                    icon="DOC"
                     onPress={() => router.push('/(tabs)/quality')}
                   />
                 </View>
                 <View style={s.kpiCell}>
                   <KpiCard
                     title="QMS Ready"
-                    value={`${dashboard?.qms_completion_pct ?? 0}%`}
+                    subtitle="Released document coverage"
+                    value={`${getNumber(dashboard?.qms_completion_pct)}%`}
                     color={COLORS.green}
                     colorGlow={COLORS.greenGlow}
-                    icon="✅"
+                    icon="QMS"
                     onPress={() => router.push('/(tabs)/quality')}
                   />
                 </View>
@@ -214,47 +349,52 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* ── Quick Actions ── */}
-        <View style={{
-          marginHorizontal: -16,
-          paddingHorizontal: 16,
-          paddingVertical: 16,
-          backgroundColor: COLORS.surfaceAlt,
-          borderTopWidth: 1, borderBottomWidth: 1,
-          borderColor: COLORS.border,
-          marginBottom: 20,
-        }}>
-          <Text style={{
-            color: COLORS.textMuted, fontSize: 10,
-            fontWeight: '700', letterSpacing: 2,
-            textTransform: 'uppercase', marginBottom: 12,
-          }}>Quick Actions</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.actionsContent}
-            style={s.actionsScroll}
-          >
-            {[
-              { emoji: '📋', label: 'Documents', bg: COLORS.skyGlow,   route: '/(tabs)/quality'     },
-              { emoji: '⚠️', label: 'NCRs',       bg: COLORS.amberGlow, route: '/(tabs)/quality'     },
-              { emoji: '🏭', label: 'Batches',    bg: COLORS.tealGlow,  route: '/(tabs)/operations'  },
-              { emoji: '📊', label: 'Sales',      bg: COLORS.greenGlow, route: '/(tabs)/commercial'  },
-            ].map(({ emoji, label, bg, route }) => (
+        <View style={s.section}>
+          <SectionHeader title="Risk Radar" subtitle="Items requiring leadership attention" />
+          {alertsLoading ? (
+            <>
+              <SkeletonCard style={s.riskSkeleton} />
+              <SkeletonCard style={s.riskSkeleton} />
+            </>
+          ) : priorityAlerts.length === 0 ? (
+            <View style={s.emptyCard}>
+              <Text style={s.emptyText}>No critical risks right now.</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.riskScroll}>
+              {priorityAlerts.map((alert, index) => (
+                <RiskCard key={`risk-${alert.id ?? alert.title}-${index}`} alert={alert} />
+              ))}
+            </ScrollView>
+          )}
+        </View>
+
+        <View style={s.section}>
+          <SectionHeader title="Operations Pulse" subtitle="Production and inventory signal" />
+          <OperationsPulse
+            dashboard={dashboard}
+            loading={dashLoading}
+            onPress={() => router.push('/(tabs)/operations')}
+          />
+        </View>
+
+        <View style={s.quickBand}>
+          <Text style={s.quickTitle}>Quick Actions</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.actionsContent}>
+            {ACTIONS.map((action) => (
               <TouchableOpacity
-                key={label}
-                style={[s.actionTile, { backgroundColor: bg }]}
-                onPress={() => router.push(route as any)}
+                key={action.label}
+                style={[s.actionTile, { backgroundColor: action.bg }]}
+                onPress={() => router.push(action.route as any)}
                 activeOpacity={0.75}
               >
-                <Text style={s.actionEmoji}>{emoji}</Text>
-                <Text style={s.actionLabel}>{label}</Text>
+                <Text style={s.actionIcon}>{action.icon}</Text>
+                <Text style={s.actionLabel}>{action.label}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
 
-        {/* ── Recent Activity ── */}
         <View style={s.section}>
           <SectionHeader
             title="Recent Activity"
@@ -270,12 +410,16 @@ export default function HomeScreen() {
               <SkeletonRow style={s.skeletonRow} />
               <SkeletonRow style={s.skeletonRow} />
             </>
+          ) : activityAlerts.length === 0 ? (
+            <View style={s.emptyCard}>
+              <Text style={s.emptyText}>No recent activity.</Text>
+            </View>
           ) : (
-            alerts.slice(0, 8).map((alert, i) => (
+            activityAlerts.map((alert, i) => (
               <TimelineItem
-                key={alert.id}
+                key={`activity-${alert.id ?? alert.title}-${i}`}
                 alert={alert}
-                isLast={i === Math.min(alerts.length, 8) - 1}
+                isLast={i === activityAlerts.length - 1}
                 index={i}
               />
             ))
@@ -288,41 +432,195 @@ export default function HomeScreen() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
 const s = StyleSheet.create({
-  safe:    { flex: 1, backgroundColor: COLORS.bg },
-  scroll:  { flex: 1 },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  scroll: { flex: 1 },
   content: { paddingBottom: 16 },
-  section: { paddingHorizontal: 16, marginBottom: 8 },
+  section: { paddingHorizontal: 16, marginBottom: 18 },
 
-  // Alert Banner
-  bannerScroll:   { marginBottom: 8 },
-  bannerContent:  { paddingHorizontal: 16, gap: 8 },
-  chip:           { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, marginRight: 0 },
-  chipText:       { fontSize: 11, fontWeight: '600' },
+  bellButton: { position: 'relative', padding: 4 },
+  bellText: { color: COLORS.sky, fontSize: 18, fontWeight: '900' },
+  bellDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.red,
+  },
 
-  // KPI Grid
-  kpiGrid:     { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  kpiCell:     { width: '47.5%' },
-  kpiSkeleton: { margin: 0, width: '47.5%' },
+  heroSkeleton: { height: 190, marginBottom: 0 },
+  heroCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: COLORS.borderBright,
+    borderLeftWidth: 4,
+    padding: 18,
+    overflow: 'hidden',
+    ...SHADOW.card,
+  },
+  heroGlow: {
+    position: 'absolute',
+    top: -36,
+    right: -28,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    opacity: 0.55,
+  },
+  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
+  statusBlock: { flex: 1 },
+  statusLabel: { fontSize: 12, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
+  heroTitle: { color: COLORS.textPrimary, fontSize: 23, fontWeight: '900', marginBottom: 6 },
+  updatedText: { color: COLORS.textMuted, fontSize: 11, fontWeight: '600' },
+  qmsDial: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 7,
+    borderColor: COLORS.green,
+    backgroundColor: COLORS.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qmsValue: { color: COLORS.textPrimary, fontSize: 23, fontWeight: '900' },
+  qmsLabel: { color: COLORS.textMuted, fontSize: 10, fontWeight: '800', marginTop: 2 },
+  heroMetrics: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  miniMetric: {
+    flex: 1,
+    backgroundColor: COLORS.surfaceAlt,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  miniMetricValue: { fontSize: 22, fontWeight: '900', marginBottom: 2 },
+  miniMetricLabel: { color: COLORS.textSecondary, fontSize: 11, fontWeight: '700' },
 
-  // Quick Actions
-  actionsScroll:   { marginBottom: 8 },
-  actionsContent:  { paddingHorizontal: 16, gap: 12 },
-  actionTile:      { width: 80, height: 80, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', justifyContent: 'center', ...SHADOW.card },
-  actionEmoji:     { fontSize: 28 },
-  actionLabel:     { fontSize: 10, color: COLORS.textSecondary, marginTop: 6 },
+  errorCard: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.red,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 14,
+  },
+  errorTitle: { color: COLORS.red, fontSize: 15, fontWeight: '900', marginBottom: 4 },
+  errorSub: { color: COLORS.textSecondary, fontSize: 12, marginBottom: 12 },
+  retryButton: {
+    backgroundColor: COLORS.redGlow,
+    borderColor: COLORS.red,
+    borderWidth: 1,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
+  },
+  retryButtonText: { color: COLORS.red, fontSize: 12, fontWeight: '900' },
 
-  // Timeline
-  skeletonRow:   { marginBottom: 10 },
-  timelineRow:   { flexDirection: 'row', marginBottom: 16 },
-  timelineLeft:  { width: 20, alignItems: 'center' },
-  timelineDot:   { width: 10, height: 10, borderRadius: 5, marginTop: 3 },
-  timelineLine:  { flex: 1, width: 1, backgroundColor: COLORS.border, marginTop: 4 },
+  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  kpiCell: { width: '47.5%' },
+  kpiSkeleton: { margin: 0, width: '47.5%', height: 126 },
+
+  riskScroll: { gap: 12, paddingRight: 16 },
+  riskSkeleton: { width: '100%', height: 104, marginBottom: 10 },
+  riskCard: {
+    width: 260,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderLeftWidth: 3,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 13,
+  },
+  riskTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  severityPill: { borderWidth: 1, borderRadius: RADIUS.sm, paddingHorizontal: 8, paddingVertical: 3 },
+  severityPillText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+  riskTime: { color: COLORS.textMuted, fontSize: 10, fontWeight: '700' },
+  riskTitle: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '800', marginBottom: 5 },
+  riskDesc: { color: COLORS.textSecondary, fontSize: 12, lineHeight: 17 },
+  emptyCard: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 16,
+  },
+  emptyText: { color: COLORS.textSecondary, fontSize: 13, fontWeight: '700' },
+
+  pulseSkeleton: { height: 142 },
+  pulseCard: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.xl,
+    padding: 14,
+    ...SHADOW.card,
+  },
+  pulseRow: { flexDirection: 'row', gap: 8 },
+  nextActionBox: {
+    marginTop: 12,
+    backgroundColor: COLORS.surfaceAlt,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: 12,
+  },
+  nextActionLabel: { color: COLORS.textMuted, fontSize: 10, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
+  nextActionText: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '800' },
+
+  quickBand: {
+    marginHorizontal: 16,
+    marginBottom: 20,
+    backgroundColor: COLORS.surfaceAlt,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.xl,
+    paddingVertical: 16,
+    ...SHADOW.card,
+  },
+  quickTitle: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 12,
+    paddingHorizontal: 16,
+  },
+  actionsContent: { paddingHorizontal: 16, gap: 12 },
+  actionTile: {
+    width: 86,
+    height: 78,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionIcon: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '900', marginBottom: 7 },
+  actionLabel: { fontSize: 10, color: COLORS.textSecondary, fontWeight: '700' },
+
+  skeletonRow: { marginBottom: 10 },
+  timelineRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  timelineLeft: { width: 20, alignItems: 'center' },
+  timelineDot: { width: 10, height: 10, borderRadius: 5, marginTop: 3 },
+  timelineLine: { flex: 1, width: 1, backgroundColor: COLORS.border, marginTop: 4 },
   timelineRight: { flex: 1, paddingLeft: 10 },
-  timelineTopRow:{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
-  timelineTitle: { color: COLORS.textPrimary, fontSize: 13, fontWeight: '700', flex: 1, marginRight: 8 },
-  timelineTime:  { color: COLORS.textMuted,   fontSize: 10 },
-  timelineDesc:  { color: COLORS.textMuted,   fontSize: 11, lineHeight: 16 },
+  timelineTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
+  timelineTitle: { color: COLORS.textPrimary, fontSize: 13, fontWeight: '800', flex: 1, marginRight: 8 },
+  timelineTime: { color: COLORS.textMuted, fontSize: 10, fontWeight: '700' },
+  timelineDesc: { color: COLORS.textSecondary, fontSize: 11, lineHeight: 16 },
 });
