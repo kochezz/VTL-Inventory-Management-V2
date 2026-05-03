@@ -43,8 +43,22 @@ const mobileService = {
           WHERE i.quantity_on_hand > 0
             AND i.quantity_on_hand <= p.reorder_level
             AND p.is_active = true
+            AND p.product_id IN (
+              SELECT DISTINCT finished_product_id
+              FROM product_bom
+            )
         `),
-        pool.query(`SELECT COUNT(*) FROM inventory WHERE quantity_on_hand = 0`),
+        pool.query(`
+          SELECT COUNT(*)
+          FROM inventory i
+          JOIN products p ON i.product_id = p.product_id
+          WHERE i.quantity_on_hand = 0
+            AND p.is_active = true
+            AND p.product_id IN (
+              SELECT DISTINCT finished_product_id
+              FROM product_bom
+            )
+        `),
         pool.query(`SELECT COUNT(*) FROM qms_documents WHERE status = 'REVIEW'`),
         pool.query(`
           SELECT COUNT(*) FROM inventory_transactions
@@ -123,6 +137,10 @@ const mobileService = {
         JOIN products p ON i.product_id = p.product_id
         WHERE i.quantity_on_hand = 0
           AND p.is_active = true
+          AND p.product_id IN (
+            SELECT DISTINCT finished_product_id
+            FROM product_bom
+          )
           AND COALESCE(i.last_updated, NOW()) >= DATE_TRUNC('month', NOW())
 
         UNION ALL
@@ -189,7 +207,12 @@ const mobileService = {
         JOIN inventory i ON p.product_id = i.product_id
         LEFT JOIN warehouse_locations l ON i.location_id = l.location_id
         WHERE p.is_active = true
+          AND i.quantity_on_hand > 0
           AND i.quantity_on_hand <= p.reorder_level
+          AND p.product_id IN (
+            SELECT DISTINCT finished_product_id
+            FROM product_bom
+          )
         GROUP BY p.product_id, p.product_name, p.sku, p.reorder_level
         ORDER BY quantity ASC
         LIMIT 10
@@ -470,6 +493,11 @@ const mobileService = {
           COALESCE(SUM(i.quantity_on_hand::numeric), 0) AS quantity
         FROM inventory i
         JOIN products p ON i.product_id = p.product_id
+        WHERE p.is_active = true
+          AND p.product_id IN (
+            SELECT DISTINCT finished_product_id
+            FROM product_bom
+          )
         GROUP BY p.product_id, p.product_name, p.sku
         HAVING COALESCE(SUM(i.quantity_on_hand::numeric), 0) = 0
         LIMIT 10
