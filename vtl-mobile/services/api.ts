@@ -223,6 +223,7 @@ export interface PeopleSummary {
 
 export interface BatchComponent {
   component_id: string;
+  product_id?: string | null;
   component_name: string;
   sku: string;
   quantity_assigned: number;
@@ -235,6 +236,7 @@ export interface BatchComponent {
 
 export interface QAGate {
   gate_id: string;
+  qa_gate_id?: string | null;
   gate_number: number;
   gate_name: string;
   status: string;
@@ -243,10 +245,21 @@ export interface QAGate {
   rejection_reason: string | null;
 }
 
+export interface IPQCCheck {
+  check_id?: string | null;
+  ipqc_check_id?: string | null;
+  ipqc_id?: string | null;
+  check_sequence?: number | null;
+  stage_name?: string | null;
+  qa_status?: string | null;
+  created_at?: string | null;
+}
+
 export interface BatchDetail {
   batch_id: string;
   batch_number: string;
   batch_record_code: string;
+  product_id?: string;
   product_name: string;
   sku: string;
   production_date: string;
@@ -263,6 +276,7 @@ export interface BatchDetail {
   created_at: string;
   components: BatchComponent[];
   qa_gates: QAGate[];
+  ipqc_checks?: IPQCCheck[];
 }
 
 // ── NCR detail ────────────────────────────────────────────────────────────────
@@ -399,8 +413,11 @@ export const api = {
   getPeople: (): Promise<PeopleSummary> =>
     apiClient.get('/mobile/people').then((r) => r.data),
 
-  getBatch: (id: string): Promise<BatchDetail> =>
-    apiClient.get(`/production/batches/${id}`).then((r) => r.data),
+  getBatch: async (id: string): Promise<BatchDetail> => {
+    const response = await apiClient.get(`/production/batches/${id}`);
+    const payload = response.data;
+    return payload?.batch ?? payload;
+  },
 
   getNCR: (id: string): Promise<NCRDetail> =>
     apiClient.get(`/qms/ncrs/${id}`).then((r) => r.data),
