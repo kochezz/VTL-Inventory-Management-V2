@@ -277,7 +277,7 @@ export default function QualityScreen() {
         <VTLAppHeader title="Quality Management" subtitle="QMS · NCR · CAPA · Audits" />
         <View style={{ padding: 16 }}>
           {[...Array(5)].map((_, i) => (
-            <SkeletonRow key={i} style={{ marginBottom: 12 }} />
+            <SkeletonRow key={`quality-skeleton-${i}`} style={{ marginBottom: 12 }} />
           ))}
         </View>
       </SafeAreaView>
@@ -359,7 +359,7 @@ export default function QualityScreen() {
         {data.qms_sections.map((sec) => {
           const pct = sec.completion_percentage;
           return (
-            <View key={sec.section_id} style={s.secRow}>
+            <View key={`qms-section-${sec.section_id ?? sec.section_name}-${sec.section_name}`} style={s.secRow}>
               <View style={s.secCodeChip}>
                 <Text style={s.secCode} numberOfLines={1}>
                   {sec.section_name.slice(0, 3).toUpperCase()}
@@ -403,7 +403,7 @@ export default function QualityScreen() {
                 <SectionHeader title="Documents in Review" count={docsInReview.length} />
                 <View style={s.card}>
                   {docsInReview.map((doc, i) => (
-                    <View key={doc.doc_id}>
+                    <View key={`doc-${doc.doc_id ?? doc.current_version_id ?? doc.doc_code ?? i}-${doc.current_version_id ?? doc.version_number ?? i}`}>
                       {i > 0 && <View style={s.divider} />}
                       <DocRow doc={doc} canApprove={canApprove} onRelease={() => setDocSheet(doc)} />
                     </View>
@@ -418,7 +418,7 @@ export default function QualityScreen() {
             ) : (
               <View style={s.card}>
                 {data.open_ncrs.map((ncr, i) => (
-                  <View key={ncr.ncr_id}>
+                  <View key={`ncr-${ncr.ncr_id ?? ncr.ncr_code ?? i}-${ncr.ncr_code ?? i}`}>
                     {i > 0 && <View style={s.divider} />}
                     <NcrRow ncr={ncr} onPress={() => router.push(`/ncr/${ncr.ncr_id}` as any)} />
                   </View>
@@ -437,7 +437,7 @@ export default function QualityScreen() {
             ) : (
               <View style={s.card}>
                 {sortedCapas.map((capa, i) => (
-                  <View key={capa.capa_id}>
+                  <View key={`capa-${capa.capa_id ?? capa.capa_code ?? i}-${capa.capa_code ?? i}`}>
                     {i > 0 && <View style={s.divider} />}
                     <CapaRow
                       capa={capa}
@@ -460,7 +460,7 @@ export default function QualityScreen() {
             ) : (
               <View style={s.card}>
                 {data.upcoming_audits.map((audit, i) => (
-                  <View key={audit.audit_id}>
+                  <View key={`audit-${audit.audit_id ?? audit.audit_code ?? i}-${audit.audit_code ?? audit.audit_date ?? i}`}>
                     {i > 0 && <View style={s.divider} />}
                     <AuditCard audit={audit} />
                   </View>
@@ -500,7 +500,7 @@ export default function QualityScreen() {
                     const isWeak   = relPct < 50;
                     const barColor = isStrong ? COLORS.green : isWeak ? COLORS.red : COLORS.amber;
                     return (
-                      <View key={u.user_id}>
+                      <View key={`training-user-${u.user_id ?? u.full_name ?? i}-${u.role ?? i}`}>
                         {i > 0 && <View style={s.divider} />}
                         <View style={s.leaderRow}>
                           <Text style={[s.leaderRank, { color: isStrong ? COLORS.green : isWeak ? COLORS.red : COLORS.muted }]}>
