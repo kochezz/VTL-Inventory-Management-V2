@@ -46,6 +46,15 @@ apiClient.interceptors.response.use(
       console.log('API ERROR DATA:', JSON.stringify(error.response?.data));
     }
 
+    if (
+      status === 403 &&
+      error.response?.data?.error === 'MOBILE_ACCESS_RESTRICTED'
+    ) {
+      error.message = error.response.data.message;
+      router.replace('/access-restricted');
+      return Promise.reject(error);
+    }
+
     const original = error.config;
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;

@@ -9,12 +9,28 @@ const { pool }      = require('../services/auth-service');
 const mobileService = require('../services/mobile-service');
 const qmsService    = require('../services/qms-service');
 
-// ── Ping (no auth — routing diagnostic) ──────────────────────────────────────
+const MOBILE_ALLOWED_ROLES = ['admin', 'system_admin', 'ceo', 'cfo', 'manager'];
+
+function requireMobileExecutiveAccess(req, res, next) {
+  const role = String(req.user?.role ?? '').toLowerCase();
+  if (!MOBILE_ALLOWED_ROLES.includes(role)) {
+    return res.status(403).json({
+      error: 'MOBILE_ACCESS_RESTRICTED',
+      message: 'VTL Executive mobile access is restricted to Managers, CEO, CFO and System Admin users.'
+    });
+  }
+  next();
+}
+
+router.use(authenticate);
+router.use(requireMobileExecutiveAccess);
+
+// ── Ping (auth + mobile role guard) ──────────────────────────────────────────
 router.get('/ping', (req, res) => {
   res.json({ ok: true, message: 'mobile routes working' });
 });
 
-// ── Inventory transactions column diagnostic (no auth — temporary) ───────────
+// ── Inventory transactions column diagnostic (auth + mobile role guard) ──────
 router.get('/debug-inv', async (req, res) => {
   try {
     const invCols = await pool.query(`
@@ -31,8 +47,6 @@ router.get('/debug-inv', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
-router.use(authenticate);
 
 const APPROVERS = ['admin', 'qa', 'manager', 'ceo', 'cfo'];
 

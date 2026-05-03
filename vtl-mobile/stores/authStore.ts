@@ -6,6 +6,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Do NOT append /api again in any fetch call below
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 
+const MOBILE_ALLOWED_ROLES = ['admin', 'system_admin', 'ceo', 'cfo', 'manager'];
+
+export const hasMobileExecutiveAccess = (role?: string | null) =>
+  MOBILE_ALLOWED_ROLES.includes(String(role ?? '').toLowerCase());
+
 export interface AuthState {
   user: Record<string, unknown> | null;
   token: string | null;
