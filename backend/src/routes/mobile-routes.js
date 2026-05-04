@@ -8,6 +8,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 const { pool }      = require('../services/auth-service');
 const mobileService = require('../services/mobile-service');
 const qmsService    = require('../services/qms-service');
+const { getSalesAnalytics } = require('../services/sales-analytics-service');
 
 const MOBILE_ALLOWED_ROLES = ['admin', 'system_admin', 'ceo', 'cfo', 'manager'];
 
@@ -110,6 +111,30 @@ router.get('/commercial', async (req, res) => {
   } catch (err) {
     console.error('❌ GET /api/mobile/commercial:', err.message);
     res.status(500).json({ message: 'Failed to load commercial summary' });
+  }
+});
+
+router.get('/sales-intelligence', async (req, res) => {
+  try {
+    const range = req.query.range || '30d';
+    const analytics = await getSalesAnalytics(range);
+
+    res.json({
+      range,
+      exchangeRate: analytics.exchangeRate ?? 27,
+      kpis: analytics.kpis ?? {},
+      dailyTrend: Array.isArray(analytics.dailyTrend) ? analytics.dailyTrend : [],
+      revenueBySku: Array.isArray(analytics.revenueBySku)
+        ? analytics.revenueBySku.slice(0, 8)
+        : [],
+    });
+  } catch (error) {
+    console.error('[Mobile Sales Intelligence] Failed:', error);
+    res.status(500).json({
+      error: 'Failed to load mobile sales intelligence',
+      dailyTrend: [],
+      revenueBySku: [],
+    });
   }
 });
 

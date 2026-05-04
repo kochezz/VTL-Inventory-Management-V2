@@ -401,6 +401,34 @@ export interface CommercialSummary {
   mom_txn_change_pct: number | null;
 }
 
+export type HomeSalesRange = '7d' | '30d' | '90d' | '1y';
+
+export interface HomeSalesTrendDay {
+  sale_date: string;
+  transactions: number | string;
+  revenue: number | string;
+  b2b_revenue: number | string;
+  walkin_revenue: number | string;
+}
+
+export interface HomeRevenueBySku {
+  sku: string;
+  product_name: string;
+  units_sold: number | string;
+  revenue: number | string;
+  avg_price: number | string;
+  order_count: number | string;
+  total_discounts: number | string;
+}
+
+export interface HomeSalesIntelligence {
+  range: string;
+  exchangeRate: number;
+  kpis: Record<string, unknown>;
+  dailyTrend: HomeSalesTrendDay[];
+  revenueBySku: HomeRevenueBySku[];
+}
+
 // ── API methods ──────────────────────────────────────────────────────────────
 // NOTE: paths here are RELATIVE to BASE_URL which already ends in /api
 // So '/mobile/dashboard' becomes 'https://.../api/mobile/dashboard' ✓
@@ -433,6 +461,9 @@ export const api = {
 
   getCommercial: (): Promise<CommercialSummary> =>
     apiClient.get('/mobile/commercial').then((r) => r.data),
+
+  getHomeSalesIntelligence: (range: HomeSalesRange = '30d'): Promise<HomeSalesIntelligence> =>
+    apiClient.get('/mobile/sales-intelligence', { params: { range } }).then((r) => r.data),
 
   approveNCR: (
     id: string,

@@ -5,12 +5,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import api, { Alert, DashboardSummary } from '../../services/api';
-import { COLORS, RADIUS, SHADOW, timeAgo, zebraRow } from '../../constants/theme';
-import { KpiCard } from '../../components/KpiCard';
+import api, { Alert, DashboardSummary, HomeSalesIntelligence } from '../../services/api';
+import { COLORS, RADIUS, SHADOW, formatCurrency, timeAgo, zebraRow } from '../../constants/theme';
 import { SectionHeader } from '../../components/SectionHeader';
-import { SkeletonCard, SkeletonKpi, SkeletonRow } from '../../components/SkeletonLoader';
+import { SkeletonCard, SkeletonRow } from '../../components/SkeletonLoader';
 import VTLAppHeader from '../../components/VTLAppHeader';
+import { useHomeSalesIntelligence } from '../../hooks/useHomeSalesIntelligence';
+import { MobileSalesTrendChart } from '../../components/MobileSalesTrendChart';
+import { HorizontalRevenueBarChart } from '../../components/HorizontalRevenueBarChart';
 
 type ExecutiveStatus = {
   label: 'Critical' | 'Attention Required' | 'Stable';
@@ -65,6 +67,19 @@ function getFinishedProductLowStock(dashboard?: DashboardSummary): number {
   return getNumber(extended?.finished_product_low_stock_items ?? dashboard?.low_stock_items);
 }
 
+function getSalesKpi(sales?: HomeSalesIntelligence, key?: string): number {
+  if (!sales || !key) return 0;
+  return getNumber(sales.kpis?.[key]);
+}
+
+function getSalesRevenue(sales?: HomeSalesIntelligence): number {
+  return getSalesKpi(sales, 'totalRevenue')
+    || getSalesKpi(sales, 'total_revenue')
+    || (Array.isArray(sales?.dailyTrend)
+      ? sales.dailyTrend.reduce((sum, day) => sum + getNumber(day.revenue), 0)
+      : 0);
+}
+
 function getUpdatedLabel(alerts: Alert[]): string {
   const latest = alerts.find((a) => a.created_at)?.created_at;
   return latest ? `Updated ${timeAgo(latest)}` : 'Updated just now';
@@ -82,11 +97,15 @@ function BellButton({ hasHighAlert, onPress }: { hasHighAlert: boolean; onPress:
 function SnapshotHero({
   dashboard,
   alerts,
+  sales,
   loading,
+  onNavigate,
 }: {
   dashboard?: DashboardSummary;
   alerts: Alert[];
+  sales?: HomeSalesIntelligence;
   loading: boolean;
+  onNavigate: (route: string) => void;
 }) {
   if (loading) return <SkeletonCard style={s.heroSkeleton} />;
 
@@ -94,6 +113,11 @@ function SnapshotHero({
   const qmsPct = getNumber(dashboard?.qms_completion_pct);
   const activeBatches = getNumber(dashboard?.active_batches);
   const fpLowStock = getFinishedProductLowStock(dashboard);
+  const openNcrs = getNumber(dashboard?.open_ncrs);
+  const overdueCapas = getNumber(dashboard?.overdue_capas);
+  const docsInReview = getNumber(dashboard?.pending_docs_review);
+  const revenue = getSalesRevenue(sales);
+  const peopleActivity = getNumber(dashboard?.recent_transactions_count);
 
   return (
     <View style={[s.heroCard, { borderLeftColor: status.color }]}>
@@ -113,6 +137,56 @@ function SnapshotHero({
         <MiniMetric label="Active Batches" value={activeBatches} color={COLORS.sky} />
         <MiniMetric label="FP Low Stock" value={fpLowStock} color={COLORS.amber} />
       </View>
+      <View style={s.commandRows}>
+        <CommandRow
+          label="Active batches"
+          value={activeBatches}
+          color={COLORS.sky}
+          onPress={() => onNavigate('/(tabs)/operations')}
+        />
+        <CommandRow
+          label="Open NCRs"
+          value={openNcrs}
+          color={COLORS.amber}
+          onPress={() => onNavigate('/(tabs)/quality')}
+        />
+        <CommandRow
+          label="Overdue CAPAs"
+          value={overdueCapas}
+          color={COLORS.red}
+          onPress={() => onNavigate('/(tabs)/quality')}
+        />
+        <CommandRow
+          label="Finished-product stock alerts"
+          value={fpLowStock}
+          color={COLORS.amber}
+          onPress={() => onNavigate('/(tabs)/operations')}
+        />
+        <CommandRow
+          label="Docs in review"
+          value={docsInReview}
+          color={COLORS.sky}
+          onPress={() => onNavigate('/(tabs)/quality')}
+        />
+        <CommandRow
+          label="QMS readiness"
+          value={`${qmsPct}%`}
+          color={COLORS.green}
+          onPress={() => onNavigate('/(tabs)/quality')}
+        />
+        <CommandRow
+          label="Commercial revenue"
+          value={revenue > 0 ? formatCurrency(revenue) : 'View'}
+          color={COLORS.green}
+          onPress={() => onNavigate('/(tabs)/commercial')}
+        />
+        <CommandRow
+          label="People activity"
+          value={peopleActivity > 0 ? peopleActivity : 'View'}
+          color={COLORS.purple}
+          onPress={() => onNavigate('/(tabs)/people')}
+        />
+      </View>
     </View>
   );
 }
@@ -123,6 +197,26 @@ function MiniMetric({ label, value, color }: { label: string; value: number; col
       <Text style={[s.miniMetricValue, { color }]}>{value}</Text>
       <Text style={s.miniMetricLabel}>{label}</Text>
     </View>
+  );
+}
+
+function CommandRow({
+  label,
+  value,
+  color,
+  onPress,
+}: {
+  label: string;
+  value: number | string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={s.commandRow} onPress={onPress} activeOpacity={0.78}>
+      <View style={[s.commandDot, { backgroundColor: color }]} />
+      <Text style={s.commandLabel} numberOfLines={1}>{label}</Text>
+      <Text style={[s.commandValue, { color }]} numberOfLines={1}>{value}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -226,14 +320,22 @@ export default function HomeScreen() {
     refetchInterval: 60_000,
   });
 
+  const {
+    data: salesIntelligence,
+    isLoading: salesLoading,
+    refetch: refetchSales,
+    isFetching: fetchingSales,
+  } = useHomeSalesIntelligence('30d');
+
   const alerts = alertFeed?.alerts ?? [];
   const priorityAlerts = alerts.filter((a) => a.severity === 'HIGH' || a.severity === 'MEDIUM').slice(0, 5);
   const activityAlerts = alerts.slice(0, 8);
   const hasHighAlert = alerts.some((a) => a.severity === 'HIGH');
-  const isRefreshing = fetchingDash || fetchingAlerts;
+  const isRefreshing = fetchingDash || fetchingAlerts || fetchingSales;
   const onRefresh = () => {
     refetchDash();
     refetchAlerts();
+    refetchSales();
   };
 
   return (
@@ -262,91 +364,29 @@ export default function HomeScreen() {
         ) : null}
 
         <View style={s.section}>
-          <SnapshotHero dashboard={dashboard} alerts={alerts} loading={dashLoading} />
+          <SnapshotHero
+            dashboard={dashboard}
+            alerts={alerts}
+            sales={salesIntelligence}
+            loading={dashLoading}
+            onNavigate={(route) => router.push(route as any)}
+          />
         </View>
 
         <View style={s.section}>
-          <View style={s.kpiGrid}>
-            {dashLoading ? (
-              <>
-                <SkeletonKpi style={s.kpiSkeleton} />
-                <SkeletonKpi style={s.kpiSkeleton} />
-                <SkeletonKpi style={s.kpiSkeleton} />
-                <SkeletonKpi style={s.kpiSkeleton} />
-                <SkeletonKpi style={s.kpiSkeleton} />
-                <SkeletonKpi style={s.kpiSkeleton} />
-              </>
-            ) : (
-              <>
-                <View style={s.kpiCell}>
-                  <KpiCard
-                    title="Active Batches"
-                    subtitle="Production pulse"
-                    value={getNumber(dashboard?.active_batches)}
-                    color={COLORS.sky}
-                    colorGlow={COLORS.skyGlow}
-                    icon="BCH"
-                    onPress={() => router.push('/(tabs)/operations')}
-                  />
-                </View>
-                <View style={s.kpiCell}>
-                  <KpiCard
-                    title="Open NCRs"
-                    subtitle="Quality attention"
-                    value={getNumber(dashboard?.open_ncrs)}
-                    color={COLORS.amber}
-                    colorGlow={COLORS.amberGlow}
-                    icon="NCR"
-                    onPress={() => router.push('/(tabs)/quality')}
-                  />
-                </View>
-                <View style={s.kpiCell}>
-                  <KpiCard
-                    title="Overdue CAPAs"
-                    subtitle="Action required"
-                    value={getNumber(dashboard?.overdue_capas)}
-                    color={COLORS.red}
-                    colorGlow={COLORS.redGlow}
-                    icon="CAP"
-                    onPress={() => router.push('/(tabs)/quality')}
-                  />
-                </View>
-                <View style={s.kpiCell}>
-                  <KpiCard
-                    title="FP Low Stock"
-                    subtitle="Finished products only"
-                    value={getFinishedProductLowStock(dashboard)}
-                    color={COLORS.amber}
-                    colorGlow={COLORS.amberGlow}
-                    icon="FP"
-                    onPress={() => router.push('/(tabs)/operations')}
-                  />
-                </View>
-                <View style={s.kpiCell}>
-                  <KpiCard
-                    title="Docs in Review"
-                    subtitle="QMS workflow"
-                    value={getNumber(dashboard?.pending_docs_review)}
-                    color={COLORS.sky}
-                    colorGlow={COLORS.skyGlow}
-                    icon="DOC"
-                    onPress={() => router.push('/(tabs)/quality')}
-                  />
-                </View>
-                <View style={s.kpiCell}>
-                  <KpiCard
-                    title="QMS Ready"
-                    subtitle="Released document coverage"
-                    value={`${getNumber(dashboard?.qms_completion_pct)}%`}
-                    color={COLORS.green}
-                    colorGlow={COLORS.greenGlow}
-                    icon="QMS"
-                    onPress={() => router.push('/(tabs)/quality')}
-                  />
-                </View>
-              </>
-            )}
-          </View>
+          {salesLoading ? (
+            <SkeletonCard style={s.chartSkeleton} />
+          ) : (
+            <MobileSalesTrendChart data={salesIntelligence?.dailyTrend ?? []} />
+          )}
+        </View>
+
+        <View style={s.section}>
+          {salesLoading ? (
+            <SkeletonCard style={s.barSkeleton} />
+          ) : (
+            <HorizontalRevenueBarChart data={salesIntelligence?.revenueBySku ?? []} />
+          )}
         </View>
 
         <View style={s.section}>
@@ -488,6 +528,26 @@ const s = StyleSheet.create({
   qmsValue: { color: COLORS.textPrimary, fontSize: 23, fontWeight: '900' },
   qmsLabel: { color: COLORS.textMuted, fontSize: 10, fontWeight: '800', marginTop: 2 },
   heroMetrics: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  commandRows: {
+    marginTop: 14,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+  },
+  commandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceAlt,
+    borderBottomColor: COLORS.border,
+    borderBottomWidth: 1,
+    minHeight: 42,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  commandDot: { width: 8, height: 8, borderRadius: 4, marginRight: 9 },
+  commandLabel: { color: COLORS.textSecondary, fontSize: 12, fontWeight: '800', flex: 1, marginRight: 8 },
+  commandValue: { fontSize: 12, fontWeight: '900', maxWidth: 104, textAlign: 'right' },
   miniMetric: {
     flex: 1,
     backgroundColor: COLORS.surfaceAlt,
@@ -522,9 +582,8 @@ const s = StyleSheet.create({
   },
   retryButtonText: { color: COLORS.red, fontSize: 12, fontWeight: '900' },
 
-  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  kpiCell: { width: '47.5%' },
-  kpiSkeleton: { margin: 0, width: '47.5%', height: 126 },
+  chartSkeleton: { height: 300 },
+  barSkeleton: { height: 340 },
 
   riskScroll: { gap: 12, paddingRight: 16 },
   riskSkeleton: { width: '100%', height: 104, marginBottom: 10 },
