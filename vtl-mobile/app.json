@@ -23,7 +23,10 @@
         "foregroundImage": "./assets/vtl-app-logo.png",
         "backgroundColor": "#080F1A"
       },
-      "package": "com.vtl.executive"
+      "package": "com.vtl.executive",
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 34,
+      "buildToolsVersion": "35.0.0"
     },
     "web": {
       "favicon": "./assets/favicon.png"
