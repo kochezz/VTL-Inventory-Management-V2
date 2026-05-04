@@ -11,7 +11,7 @@ import { SectionHeader } from '../../components/SectionHeader';
 import { SkeletonCard, SkeletonRow } from '../../components/SkeletonLoader';
 import VTLAppHeader from '../../components/VTLAppHeader';
 import { useHomeSalesIntelligence } from '../../hooks/useHomeSalesIntelligence';
-import { MobileSalesTrendChart } from '../../components/MobileSalesTrendChart';
+import { MobileLineChart } from '../../components/MobileLineChart';
 import { HorizontalRevenueBarChart } from '../../components/HorizontalRevenueBarChart';
 
 type ExecutiveStatus = {
@@ -83,6 +83,22 @@ function getSalesRevenue(sales?: HomeSalesIntelligence): number {
 function getUpdatedLabel(alerts: Alert[]): string {
   const latest = alerts.find((a) => a.created_at)?.created_at;
   return latest ? `Updated ${timeAgo(latest)}` : 'Updated just now';
+}
+
+function getAlertTarget(item: any): string {
+  const type = String(item?.type ?? item?.title ?? '').toLowerCase();
+
+  if (type.includes('batch')) return '/(tabs)/operations';
+  if (type.includes('ncr')) return '/(tabs)/quality';
+  if (type.includes('capa')) return '/(tabs)/quality';
+  if (type.includes('stock')) return '/(tabs)/operations';
+  if (type.includes('inventory')) return '/(tabs)/operations';
+  if (type.includes('doc')) return '/(tabs)/quality';
+  if (type.includes('qms')) return '/(tabs)/quality';
+  if (type.includes('sales') || type.includes('revenue') || type.includes('commercial')) return '/(tabs)/commercial';
+  if (type.includes('people') || type.includes('user') || type.includes('activity')) return '/(tabs)/people';
+
+  return '/notifications';
 }
 
 function BellButton({ hasHighAlert, onPress }: { hasHighAlert: boolean; onPress: () => void }) {
@@ -220,10 +236,10 @@ function CommandRow({
   );
 }
 
-function RiskCard({ alert }: { alert: Alert }) {
+function RiskCard({ alert, onPress }: { alert: Alert; onPress: () => void }) {
   const color = getSeverityColor(alert.severity);
   return (
-    <View style={[s.riskCard, { borderLeftColor: color }]}>
+    <TouchableOpacity style={[s.riskCard, { borderLeftColor: color }]} onPress={onPress} activeOpacity={0.82}>
       <View style={s.riskTop}>
         <View style={[s.severityPill, { backgroundColor: getSeverityGlow(alert.severity), borderColor: color }]}>
           <Text style={[s.severityPillText, { color }]}>{alert.severity}</Text>
@@ -232,7 +248,7 @@ function RiskCard({ alert }: { alert: Alert }) {
       </View>
       <Text style={s.riskTitle} numberOfLines={1}>{alert.title}</Text>
       <Text style={s.riskDesc} numberOfLines={2}>{alert.description}</Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -273,10 +289,20 @@ function OperationsPulse({
   );
 }
 
-function TimelineItem({ alert, isLast, index }: { alert: Alert; isLast: boolean; index: number }) {
+function TimelineItem({
+  alert,
+  isLast,
+  index,
+  onPress,
+}: {
+  alert: Alert;
+  isLast: boolean;
+  index: number;
+  onPress: () => void;
+}) {
   const dotColor = getSeverityColor(alert.severity);
   return (
-    <View style={[s.timelineRow, zebraRow(index)]}>
+    <TouchableOpacity style={[s.timelineRow, zebraRow(index)]} onPress={onPress} activeOpacity={0.78}>
       <View style={s.timelineLeft}>
         <View style={[s.timelineDot, { backgroundColor: dotColor }]} />
         {!isLast && <View style={s.timelineLine} />}
@@ -288,7 +314,7 @@ function TimelineItem({ alert, isLast, index }: { alert: Alert; isLast: boolean;
         </View>
         <Text style={s.timelineDesc} numberOfLines={2}>{alert.description}</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -323,6 +349,7 @@ export default function HomeScreen() {
   const {
     data: salesIntelligence,
     isLoading: salesLoading,
+    isError: salesError,
     refetch: refetchSales,
     isFetching: fetchingSales,
   } = useHomeSalesIntelligence('30d');
@@ -376,16 +403,60 @@ export default function HomeScreen() {
         <View style={s.section}>
           {salesLoading ? (
             <SkeletonCard style={s.chartSkeleton} />
+          ) : salesError ? (
+            <View style={s.salesErrorCard}>
+              <Text style={s.errorTitle}>Sales intelligence unavailable</Text>
+              <Text style={s.errorSub}>Pull to refresh or check backend connection.</Text>
+            </View>
           ) : (
-            <MobileSalesTrendChart data={salesIntelligence?.dailyTrend ?? []} />
+            <View style={s.chartCard}>
+              <View style={s.chartHeader}>
+                <View style={s.chartTitleBlock}>
+                  <Text style={s.chartTitle}>Daily Revenue Trend</Text>
+                  <Text style={s.chartSubtitle}>B2B accounts vs walk-in split</Text>
+                </View>
+                <View style={s.chartPill}>
+                  <Text style={s.chartPillText}>30D</Text>
+                </View>
+              </View>
+              <MobileLineChart
+                data={salesIntelligence?.dailyTrend ?? []}
+                xKey="sale_date"
+                series={[
+                  { key: 'b2b_revenue', label: 'B2B Revenue', color: COLORS.sky },
+                  { key: 'walkin_revenue', label: 'Walk-in Revenue', color: COLORS.green },
+                ]}
+                currencyPrefix="$"
+              />
+            </View>
           )}
         </View>
 
         <View style={s.section}>
           {salesLoading ? (
             <SkeletonCard style={s.barSkeleton} />
+          ) : salesError ? (
+            <View style={s.salesErrorCard}>
+              <Text style={s.errorTitle}>Sales intelligence unavailable</Text>
+              <Text style={s.errorSub}>Pull to refresh or check backend connection.</Text>
+            </View>
           ) : (
-            <HorizontalRevenueBarChart data={salesIntelligence?.revenueBySku ?? []} />
+            <View style={s.chartCard}>
+              <View style={s.chartHeader}>
+                <View style={s.chartTitleBlock}>
+                  <Text style={s.chartTitle}>Revenue by SKU</Text>
+                  <Text style={s.chartSubtitle}>Completed sales - revenue and units sold</Text>
+                </View>
+                <View style={s.chartPill}>
+                  <Text style={s.chartPillText}>TOP 8</Text>
+                </View>
+              </View>
+              <HorizontalRevenueBarChart
+                data={salesIntelligence?.revenueBySku ?? []}
+                maxItems={8}
+                currencyPrefix="$"
+              />
+            </View>
           )}
         </View>
 
@@ -403,7 +474,11 @@ export default function HomeScreen() {
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.riskScroll}>
               {priorityAlerts.map((alert, index) => (
-                <RiskCard key={`risk-${alert.id ?? alert.title}-${index}`} alert={alert} />
+                <RiskCard
+                  key={`risk-${alert.id ?? alert.title}-${index}`}
+                  alert={alert}
+                  onPress={() => router.push(getAlertTarget(alert) as any)}
+                />
               ))}
             </ScrollView>
           )}
@@ -461,6 +536,7 @@ export default function HomeScreen() {
                 alert={alert}
                 isLast={i === activityAlerts.length - 1}
                 index={i}
+                onPress={() => router.push(getAlertTarget(alert) as any)}
               />
             ))
           )}
@@ -584,6 +660,36 @@ const s = StyleSheet.create({
 
   chartSkeleton: { height: 300 },
   barSkeleton: { height: 340 },
+  chartCard: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.xl,
+    padding: 14,
+    overflow: 'hidden',
+    ...SHADOW.card,
+  },
+  chartHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
+  chartTitleBlock: { flex: 1 },
+  chartTitle: { color: COLORS.textPrimary, fontSize: 16, fontWeight: '900' },
+  chartSubtitle: { color: COLORS.textSecondary, fontSize: 11, fontWeight: '700', marginTop: 3 },
+  chartPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.skyGlow,
+    borderColor: COLORS.sky,
+    borderWidth: 1,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  chartPillText: { color: COLORS.sky, fontSize: 10, fontWeight: '900' },
+  salesErrorCard: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.amber,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 14,
+  },
 
   riskScroll: { gap: 12, paddingRight: 16 },
   riskSkeleton: { width: '100%', height: 104, marginBottom: 10 },
