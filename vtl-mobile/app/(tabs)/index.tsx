@@ -21,10 +21,10 @@ type ExecutiveStatus = {
 };
 
 const ACTIONS = [
-  { icon: 'DOC', label: 'Documents', bg: COLORS.skyGlow, route: '/(tabs)/quality' },
-  { icon: 'NCR', label: 'NCRs', bg: COLORS.amberGlow, route: '/(tabs)/quality' },
-  { icon: 'BCH', label: 'Batches', bg: COLORS.tealGlow, route: '/(tabs)/operations' },
-  { icon: 'REV', label: 'Sales', bg: COLORS.greenGlow, route: '/(tabs)/commercial' },
+  { icon: 'BCH', label: 'Operations', bg: COLORS.tealGlow, route: '/(tabs)/operations' },
+  { icon: 'QMS', label: 'Quality', bg: COLORS.skyGlow, route: '/(tabs)/quality' },
+  { icon: 'REV', label: 'Commercial', bg: COLORS.greenGlow, route: '/(tabs)/commercial' },
+  { icon: 'PPL', label: 'People', bg: COLORS.purpleGlow, route: '/(tabs)/people' },
 ];
 
 function getNumber(value: unknown): number {
@@ -67,14 +67,45 @@ function getFinishedProductLowStock(dashboard?: DashboardSummary): number {
   return getNumber(extended?.finished_product_low_stock_items ?? dashboard?.low_stock_items);
 }
 
-function getDailyRevenue(sales?: HomeSalesIntelligence): number {
-  const latestRevenuePoint = Array.isArray(sales?.dailyTrend) && sales.dailyTrend.length > 0
-    ? sales.dailyTrend[sales.dailyTrend.length - 1]
-    : null;
-  const fallbackRevenue = getNumber(latestRevenuePoint?.b2b_revenue)
-    + getNumber(latestRevenuePoint?.walkin_revenue);
+function normaliseDateKey(value: unknown): string {
+  if (!value) return '';
+  const d = new Date(value as any);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+}
 
-  return Math.ceil(getNumber(latestRevenuePoint?.revenue ?? fallbackRevenue));
+function getDailyRevenue(sales?: HomeSalesIntelligence): number {
+  const salesData = sales as (HomeSalesIntelligence & {
+    today_stats?: { today_revenue?: number | string };
+    todayRevenue?: number | string;
+    today_revenue?: number | string;
+  }) | undefined;
+  const commercialTodayRevenue = Number(
+    salesData?.today_stats?.today_revenue
+      ?? salesData?.todayRevenue
+      ?? salesData?.today_revenue
+      ?? NaN,
+  );
+
+  if (Number.isFinite(commercialTodayRevenue)) {
+    return Math.ceil(commercialTodayRevenue);
+  }
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  // Do not use latest dailyTrend point because it may be a previous transaction date.
+  const todayTrendPoint = Array.isArray(salesData?.dailyTrend)
+    ? salesData.dailyTrend.find((row: any) => normaliseDateKey(row.sale_date) === todayKey)
+    : null;
+  const calculatedTodayRevenue = todayTrendPoint
+    ? Number(
+      todayTrendPoint.revenue
+        ?? getNumber(todayTrendPoint.b2b_revenue) + getNumber(todayTrendPoint.walkin_revenue),
+    )
+    : 0;
+
+  return Math.ceil(getNumber(calculatedTodayRevenue));
 }
 
 function getUpdatedLabel(alerts: Alert[]): string {
@@ -492,7 +523,7 @@ export default function HomeScreen() {
 
         <View style={s.quickBand}>
           <Text style={s.quickTitle}>Quick Actions</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.actionsContent}>
+          <View style={s.quickActionsGrid}>
             {ACTIONS.map((action) => (
               <TouchableOpacity
                 key={action.label}
@@ -504,7 +535,7 @@ export default function HomeScreen() {
                 <Text style={s.actionLabel}>{action.label}</Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </View>
         </View>
 
         <View style={s.section}>
@@ -762,10 +793,15 @@ const s = StyleSheet.create({
     marginBottom: 12,
     paddingHorizontal: 16,
   },
-  actionsContent: { paddingHorizontal: 16, gap: 12 },
+  quickActionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingHorizontal: 16,
+  },
   actionTile: {
-    width: 86,
-    height: 78,
+    width: '48%',
+    minHeight: 68,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLORS.border,

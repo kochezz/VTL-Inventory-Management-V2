@@ -64,6 +64,16 @@ function createSmoothPath(points: ChartPoint[]): string {
   return path;
 }
 
+function createAreaPath(points: ChartPoint[], baselineY: number): string {
+  if (!points.length) return '';
+
+  const linePath = createSmoothPath(points);
+  const last = points[points.length - 1];
+  const first = points[0];
+
+  return `${linePath} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
+}
+
 export function MobileLineChart({
   data,
   xKey,
@@ -140,24 +150,21 @@ export function MobileLineChart({
 
           {series.map((item) => {
             const points = rows.map((row, index) => getPoint(row, index, item.key));
-            const path = createSmoothPath(points);
+            const linePath = createSmoothPath(points);
+            const areaPath = createAreaPath(points, padTop + innerH);
 
             return (
               <G key={`line-${item.key}`}>
                 <Path
-                  d={path}
-                  fill="none"
-                  stroke={item.color}
-                  strokeWidth={8}
-                  strokeOpacity={0.2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                  d={areaPath}
+                  fill={item.color}
+                  fillOpacity={0.16}
                 />
                 <Path
-                  d={path}
+                  d={linePath}
                   fill="none"
                   stroke={item.color}
-                  strokeWidth={3}
+                  strokeWidth={2.75}
                   strokeOpacity={1}
                   strokeLinecap="round"
                   strokeLinejoin="round"
