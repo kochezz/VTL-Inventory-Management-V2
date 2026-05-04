@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import api, { Alert, DashboardSummary, HomeSalesIntelligence } from '../../services/api';
-import { COLORS, RADIUS, SHADOW, formatCurrency, timeAgo, zebraRow } from '../../constants/theme';
+import { COLORS, RADIUS, SHADOW, timeAgo, zebraRow } from '../../constants/theme';
 import { SectionHeader } from '../../components/SectionHeader';
 import { SkeletonCard, SkeletonRow } from '../../components/SkeletonLoader';
 import VTLAppHeader from '../../components/VTLAppHeader';
@@ -67,17 +67,14 @@ function getFinishedProductLowStock(dashboard?: DashboardSummary): number {
   return getNumber(extended?.finished_product_low_stock_items ?? dashboard?.low_stock_items);
 }
 
-function getSalesKpi(sales?: HomeSalesIntelligence, key?: string): number {
-  if (!sales || !key) return 0;
-  return getNumber(sales.kpis?.[key]);
-}
+function getDailyRevenue(sales?: HomeSalesIntelligence): number {
+  const latestRevenuePoint = Array.isArray(sales?.dailyTrend) && sales.dailyTrend.length > 0
+    ? sales.dailyTrend[sales.dailyTrend.length - 1]
+    : null;
+  const fallbackRevenue = getNumber(latestRevenuePoint?.b2b_revenue)
+    + getNumber(latestRevenuePoint?.walkin_revenue);
 
-function getSalesRevenue(sales?: HomeSalesIntelligence): number {
-  return getSalesKpi(sales, 'totalRevenue')
-    || getSalesKpi(sales, 'total_revenue')
-    || (Array.isArray(sales?.dailyTrend)
-      ? sales.dailyTrend.reduce((sum, day) => sum + getNumber(day.revenue), 0)
-      : 0);
+  return Math.ceil(getNumber(latestRevenuePoint?.revenue ?? fallbackRevenue));
 }
 
 function getUpdatedLabel(alerts: Alert[]): string {
@@ -126,14 +123,49 @@ function SnapshotHero({
   if (loading) return <SkeletonCard style={s.heroSkeleton} />;
 
   const status = getExecutiveStatus(dashboard, alerts);
-  const qmsPct = getNumber(dashboard?.qms_completion_pct);
   const activeBatches = getNumber(dashboard?.active_batches);
   const fpLowStock = getFinishedProductLowStock(dashboard);
   const openNcrs = getNumber(dashboard?.open_ncrs);
   const overdueCapas = getNumber(dashboard?.overdue_capas);
   const docsInReview = getNumber(dashboard?.pending_docs_review);
-  const revenue = getSalesRevenue(sales);
-  const peopleActivity = getNumber(dashboard?.recent_transactions_count);
+  const dailyRevenue = getDailyRevenue(sales);
+  const executiveSnapshotItems = [
+    {
+      key: 'active_batches',
+      label: 'Active Batches',
+      value: activeBatches,
+      route: '/(tabs)/operations',
+      color: COLORS.sky,
+    },
+    {
+      key: 'open_ncrs',
+      label: 'Open NCRs',
+      value: openNcrs,
+      route: '/(tabs)/quality',
+      color: COLORS.amber,
+    },
+    {
+      key: 'overdue_capas',
+      label: 'Overdue CAPAs',
+      value: overdueCapas,
+      route: '/(tabs)/quality',
+      color: COLORS.red,
+    },
+    {
+      key: 'low_stock_items',
+      label: 'Low Stock',
+      value: fpLowStock,
+      route: '/(tabs)/operations',
+      color: COLORS.amber,
+    },
+    {
+      key: 'pending_docs_review',
+      label: 'Docs in Review',
+      value: docsInReview,
+      route: '/(tabs)/quality',
+      color: COLORS.sky,
+    },
+  ].filter((item) => Number(item.value ?? 0) > 0);
 
   return (
     <View style={[s.heroCard, { borderLeftColor: status.color }]}>
@@ -144,74 +176,30 @@ function SnapshotHero({
           <Text style={s.heroTitle}>Executive Snapshot</Text>
           <Text style={s.updatedText}>{getUpdatedLabel(alerts)}</Text>
         </View>
-        <View style={s.qmsDial}>
-          <Text style={s.qmsValue}>{qmsPct}%</Text>
-          <Text style={s.qmsLabel}>QMS Ready</Text>
+        <View style={s.revenueDial}>
+          <Text style={s.revenueValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>
+            {`$${dailyRevenue.toLocaleString()}`}
+          </Text>
+          <Text style={s.revenueLabel}>Daily Revenue</Text>
         </View>
       </View>
-      <View style={s.heroMetrics}>
-        <MiniMetric label="Active Batches" value={activeBatches} color={COLORS.sky} />
-        <MiniMetric label="FP Low Stock" value={fpLowStock} color={COLORS.amber} />
-      </View>
-      <View style={s.commandRows}>
-        <CommandRow
-          label="Active batches"
-          value={activeBatches}
-          color={COLORS.sky}
-          onPress={() => onNavigate('/(tabs)/operations')}
-        />
-        <CommandRow
-          label="Open NCRs"
-          value={openNcrs}
-          color={COLORS.amber}
-          onPress={() => onNavigate('/(tabs)/quality')}
-        />
-        <CommandRow
-          label="Overdue CAPAs"
-          value={overdueCapas}
-          color={COLORS.red}
-          onPress={() => onNavigate('/(tabs)/quality')}
-        />
-        <CommandRow
-          label="Finished-product stock alerts"
-          value={fpLowStock}
-          color={COLORS.amber}
-          onPress={() => onNavigate('/(tabs)/operations')}
-        />
-        <CommandRow
-          label="Docs in review"
-          value={docsInReview}
-          color={COLORS.sky}
-          onPress={() => onNavigate('/(tabs)/quality')}
-        />
-        <CommandRow
-          label="QMS readiness"
-          value={`${qmsPct}%`}
-          color={COLORS.green}
-          onPress={() => onNavigate('/(tabs)/quality')}
-        />
-        <CommandRow
-          label="Commercial revenue"
-          value={revenue > 0 ? formatCurrency(revenue) : 'View'}
-          color={COLORS.green}
-          onPress={() => onNavigate('/(tabs)/commercial')}
-        />
-        <CommandRow
-          label="People activity"
-          value={peopleActivity > 0 ? peopleActivity : 'View'}
-          color={COLORS.purple}
-          onPress={() => onNavigate('/(tabs)/people')}
-        />
-      </View>
-    </View>
-  );
-}
-
-function MiniMetric({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <View style={s.miniMetric}>
-      <Text style={[s.miniMetricValue, { color }]}>{value}</Text>
-      <Text style={s.miniMetricLabel}>{label}</Text>
+      {executiveSnapshotItems.length === 0 ? (
+        <View style={s.calmState}>
+          <Text style={s.calmText}>No operational alerts requiring attention right now.</Text>
+        </View>
+      ) : (
+        <View style={s.commandRows}>
+          {executiveSnapshotItems.map((item) => (
+            <CommandRow
+              key={item.key}
+              label={item.label}
+              value={item.value}
+              color={item.color}
+              onPress={() => onNavigate(item.route)}
+            />
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -233,6 +221,15 @@ function CommandRow({
       <Text style={s.commandLabel} numberOfLines={1}>{label}</Text>
       <Text style={[s.commandValue, { color }]} numberOfLines={1}>{value}</Text>
     </TouchableOpacity>
+  );
+}
+
+function MiniMetric({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <View style={s.miniMetric}>
+      <Text style={[s.miniMetricValue, { color }]}>{value}</Text>
+      <Text style={s.miniMetricLabel}>{label}</Text>
+    </View>
   );
 }
 
@@ -591,7 +588,7 @@ const s = StyleSheet.create({
   statusLabel: { fontSize: 12, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
   heroTitle: { color: COLORS.textPrimary, fontSize: 23, fontWeight: '900', marginBottom: 6 },
   updatedText: { color: COLORS.textMuted, fontSize: 11, fontWeight: '600' },
-  qmsDial: {
+  revenueDial: {
     width: 96,
     height: 96,
     borderRadius: 48,
@@ -600,10 +597,19 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.surfaceAlt,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 6,
   },
-  qmsValue: { color: COLORS.textPrimary, fontSize: 23, fontWeight: '900' },
-  qmsLabel: { color: COLORS.textMuted, fontSize: 10, fontWeight: '800', marginTop: 2 },
-  heroMetrics: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  revenueValue: { color: COLORS.textPrimary, fontSize: 18, fontWeight: '900', textAlign: 'center' },
+  revenueLabel: { color: COLORS.textMuted, fontSize: 9, fontWeight: '800', marginTop: 3, textAlign: 'center' },
+  calmState: {
+    marginTop: 14,
+    backgroundColor: COLORS.surfaceAlt,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 13,
+  },
+  calmText: { color: COLORS.textSecondary, fontSize: 12, fontWeight: '800', lineHeight: 17 },
   commandRows: {
     marginTop: 14,
     borderColor: COLORS.border,
@@ -617,7 +623,6 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.surfaceAlt,
     borderBottomColor: COLORS.border,
     borderBottomWidth: 1,
-    minHeight: 42,
     paddingHorizontal: 12,
     paddingVertical: 9,
   },

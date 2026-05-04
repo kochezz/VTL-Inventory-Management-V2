@@ -1,5 +1,5 @@
 import { Dimensions, StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, G, Line, Path, Polyline, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Line, Path, Text as SvgText } from 'react-native-svg';
 import { COLORS } from '../constants/theme';
 
 interface LineSeries {
@@ -14,6 +14,11 @@ interface MobileLineChartProps {
   series: LineSeries[];
   height?: number;
   currencyPrefix?: string;
+}
+
+interface ChartPoint {
+  x: number;
+  y: number;
 }
 
 function getNumber(value: unknown): number {
@@ -40,6 +45,23 @@ function getLabelIndexes(length: number): number[] {
   const steps = Math.min(4, length - 1);
   return Array.from({ length: steps + 1 }, (_, index) => Math.round((index / steps) * (length - 1)))
     .filter((value, index, list) => list.indexOf(value) === index);
+}
+
+function createSmoothPath(points: ChartPoint[]): string {
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+
+  let path = `M ${points[0].x} ${points[0].y}`;
+
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const current = points[i];
+    const next = points[i + 1];
+    const midX = (current.x + next.x) / 2;
+
+    path += ` C ${midX} ${current.y}, ${midX} ${next.y}, ${next.x} ${next.y}`;
+  }
+
+  return path;
 }
 
 export function MobileLineChart({
@@ -117,31 +139,47 @@ export function MobileLineChart({
           />
 
           {series.map((item) => {
-            const points = rows.map((row, index) => {
-              const point = getPoint(row, index, item.key);
-              return `${point.x},${point.y}`;
-            }).join(' ');
+            const points = rows.map((row, index) => getPoint(row, index, item.key));
+            const path = createSmoothPath(points);
 
             return (
               <G key={`line-${item.key}`}>
-                <Polyline
-                  points={points}
+                <Path
+                  d={path}
+                  fill="none"
+                  stroke={item.color}
+                  strokeWidth={8}
+                  strokeOpacity={0.2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <Path
+                  d={path}
                   fill="none"
                   stroke={item.color}
                   strokeWidth={3}
+                  strokeOpacity={1}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
                 {rows.map((row, index) => {
                   const point = getPoint(row, index, item.key);
                   return (
-                    <Circle
-                      key={`point-${item.key}-${String(row[xKey] ?? index)}-${index}`}
-                      cx={point.x}
-                      cy={point.y}
-                      r={3}
-                      fill={item.color}
-                    />
+                    <G key={`point-${item.key}-${String(row[xKey] ?? index)}-${index}`}>
+                      <Circle
+                        cx={point.x}
+                        cy={point.y}
+                        r={7}
+                        fill={item.color}
+                        opacity={0.2}
+                      />
+                      <Circle
+                        cx={point.x}
+                        cy={point.y}
+                        r={3}
+                        fill={item.color}
+                      />
+                    </G>
                   );
                 })}
               </G>
