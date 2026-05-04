@@ -4,11 +4,13 @@ import { router } from 'expo-router';
 
 // EXPO_PUBLIC_API_URL already includes /api (e.g. https://host/api)
 // Do NOT add /api again in any endpoint path below
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+const BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ??
+  'https://vilagio-erp-api.onrender.com/api';
 
 export const apiClient = axios.create({
   baseURL: BASE_URL,
-  timeout: 15000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
