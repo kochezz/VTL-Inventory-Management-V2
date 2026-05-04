@@ -4,12 +4,12 @@
     "slug": "vtl-executive",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/vtl-app-logo.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/vtl-app-logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F2942"
+      "backgroundColor": "#080F1A"
     },
     "ios": {
       "supportsTablet": true,
@@ -17,8 +17,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0F2942"
+        "foregroundImage": "./assets/vtl-app-logo.png",
+        "backgroundColor": "#080F1A"
       },
       "package": "com.vtl.executive"
     },
