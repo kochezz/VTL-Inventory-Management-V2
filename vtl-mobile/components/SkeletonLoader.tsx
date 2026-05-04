@@ -1,61 +1,34 @@
-import { useEffect, useRef } from 'react';
-import { Animated, View, ViewStyle, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Animated, View, ViewStyle } from 'react-native';
 import { COLORS, RADIUS } from '../constants/theme';
 
 interface SkeletonProps {
-  width: number | string;
+  width?: number | string;
   height: number;
   borderRadius?: number;
   style?: ViewStyle;
 }
 
-export function SkeletonLoader({
-  width,
-  height,
-  borderRadius = RADIUS.md,
-  style,
-}: SkeletonProps) {
-  const shimmer = useRef(new Animated.Value(0)).current;
+export default function SkeletonLoader({ width = '100%', height, borderRadius = RADIUS.md, style }: SkeletonProps) {
+  const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const anim = Animated.loop(
+    Animated.loop(
       Animated.sequence([
-        Animated.timing(shimmer, { toValue: 1, duration: 600, useNativeDriver: true }),
-        Animated.timing(shimmer, { toValue: 0, duration: 600, useNativeDriver: true }),
-      ]),
-    );
-    anim.start();
-    return () => anim.stop();
+        Animated.timing(anim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
   }, []);
 
-  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.65] });
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] });
 
   return (
-    <View style={[s.outer, { width: width as any, height, borderRadius }, style]}>
-      <Animated.View style={[s.inner, { borderRadius, opacity }]} />
-    </View>
+    <Animated.View style={[{ width, height, borderRadius, backgroundColor: COLORS.border, opacity }, style]} />
   );
 }
 
-const s = StyleSheet.create({
-  outer: { backgroundColor: COLORS.surfaceAlt, overflow: 'hidden' },
-  inner: { ...StyleSheet.absoluteFillObject, backgroundColor: COLORS.border },
-});
-
-// ── Presets ───────────────────────────────────────────────────────────────────
-
-export function SkeletonCard({ style }: { style?: ViewStyle }) {
-  return <SkeletonLoader width="100%" height={100} borderRadius={RADIUS.lg} style={style} />;
-}
-
-export function SkeletonKpi({ style }: { style?: ViewStyle }) {
-  return <SkeletonLoader width="48%" height={88} borderRadius={RADIUS.xl} style={style} />;
-}
-
-export function SkeletonRow({ style }: { style?: ViewStyle }) {
-  return <SkeletonLoader width="100%" height={20} borderRadius={RADIUS.sm} style={style} />;
-}
-
-export function SkeletonCircle({ style }: { style?: ViewStyle }) {
-  return <SkeletonLoader width={48} height={48} borderRadius={24} style={style} />;
-}
+export const SkeletonCard  = (p?: { style?: ViewStyle }) => <SkeletonLoader width="100%" height={100} borderRadius={RADIUS.lg} style={p?.style} />;
+export const SkeletonKpi   = (p?: { style?: ViewStyle }) => <SkeletonLoader width="48%"  height={88}  borderRadius={RADIUS.xl} style={p?.style} />;
+export const SkeletonRow   = (p?: { style?: ViewStyle }) => <SkeletonLoader width="100%" height={20}  borderRadius={RADIUS.sm} style={p?.style} />;
+export const SkeletonCircle= (p?: { style?: ViewStyle }) => <SkeletonLoader width={48}   height={48}  borderRadius={24}        style={p?.style} />;
