@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/vtl-app-logo.png",
     "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/vtl-app-logo.png",
       "resizeMode": "contain",
@@ -14,6 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.vtl.executive",
+      "newArchEnabled": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -26,7 +28,8 @@
       "package": "com.vtl.executive",
       "compileSdkVersion": 35,
       "targetSdkVersion": 34,
-      "buildToolsVersion": "35.0.0"
+      "buildToolsVersion": "35.0.0",
+      "newArchEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"

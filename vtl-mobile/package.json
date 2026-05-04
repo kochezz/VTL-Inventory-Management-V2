@@ -40,7 +40,8 @@
     "typescript": "~5.9.2"
   },
   "resolutions": {
-    "react-native-reanimated": "3.10.1"
+    "react-native-reanimated": "3.10.1",
+    "react-native-reanimated/android": "3.10.1"
   },
   "overrides": {
     "react-native-reanimated": "3.10.1"
