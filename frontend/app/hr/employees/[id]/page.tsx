@@ -105,6 +105,7 @@ function Field({ label, value, mono = false }: { label: string; value: React.Rea
   );
 }
 
+// ── HR Record create/edit form ────────────────────────────────────────────────
 function HRRecordForm({
   userId,
   profile,
@@ -121,31 +122,30 @@ function HRRecordForm({
   onSaved: () => Promise<void>;
 }) {
   const [form, setForm] = useState({
-    department_id: '',
-    reports_to_user_id: '',
-    hr_status: 'onboarding',
-    contract_type: 'probationary',
-    offer_accepted_date: '',
-    basic_salary_zmw: '',
+    department_id:        '',
+    reports_to_user_id:   '',
+    hr_status:            'onboarding',
+    contract_type:        'probationary',
+    offer_accepted_date:  '',
+    basic_salary_zmw:     '',
     salary_effective_date: toDateInput(profile?.employment_date),
-    napsa_member_number: '',
+    napsa_member_number:  '',
   });
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving]   = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
 
   useEffect(() => {
     setForm(prev => ({
       ...prev,
-      department_id: prev.department_id || String(matchDepartmentId(profile?.department, departments)),
+      department_id:      prev.department_id      || String(matchDepartmentId(profile?.department, departments)),
       reports_to_user_id: prev.reports_to_user_id || matchReportsToUserId(profile?.reports_to, users, userId),
       salary_effective_date: prev.salary_effective_date || toDateInput(profile?.employment_date),
     }));
   }, [profile, departments, users, userId]);
 
-  const update = (key: string, value: string) => {
+  const update = (key: string, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,14 +154,14 @@ function HRRecordForm({
     setMessage(null);
     try {
       const payload = {
-        department_id: form.department_id || null,
-        reports_to_user_id: form.reports_to_user_id || null,
-        hr_status: form.hr_status || 'onboarding',
-        contract_type: form.contract_type || 'probationary',
-        offer_accepted_date: form.offer_accepted_date || null,
-        basic_salary_zmw: form.basic_salary_zmw === '' ? null : Number(form.basic_salary_zmw),
+        department_id:        form.department_id        || null,
+        reports_to_user_id:   form.reports_to_user_id   || null,
+        hr_status:            form.hr_status            || 'onboarding',
+        contract_type:        form.contract_type        || 'probationary',
+        offer_accepted_date:  form.offer_accepted_date  || null,
+        basic_salary_zmw:     form.basic_salary_zmw === '' ? null : Number(form.basic_salary_zmw),
         salary_effective_date: form.salary_effective_date || null,
-        napsa_member_number: form.napsa_member_number || null,
+        napsa_member_number:  form.napsa_member_number  || null,
       };
 
       await axios.post(`${HR_BASE}/hr/employees/${userId}/record`, payload, {
@@ -317,7 +317,7 @@ function HRRecordForm({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
-  // Unwrap the asynchronous params using the use() hook
+  // Next.js 15: params is a Promise — unwrap with React.use()
   const resolvedParams = use(params);
   const userId = resolvedParams.id;
 
@@ -325,17 +325,17 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const { token, user: currentUser } = useAuth();
   const [createModeRequested, setCreateModeRequested] = useState(false);
 
-  const [tab, setTab]             = useState<Tab>('overview');
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState<string | null>(null);
-  const [profileData, setProfile] = useState<any>(null);
-  const [onboarding, setOnboarding] = useState<any[]>([]);
-  const [reviews, setReviews]     = useState<any[]>([]);
-  const [leave, setLeave]         = useState<any>(null);
+  const [tab, setTab]                 = useState<Tab>('overview');
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [profileData, setProfile]     = useState<any>(null);
+  const [onboarding, setOnboarding]   = useState<any[]>([]);
+  const [reviews, setReviews]         = useState<any[]>([]);
+  const [leave, setLeave]             = useState<any>(null);
   const [departments, setDepartments] = useState<any[]>([]);
   const [activeUsers, setActiveUsers] = useState<any[]>([]);
 
-  const canSeeSalary = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+  const canSeeSalary    = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
   const canManageHrRecord = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
 
   useEffect(() => {
@@ -353,19 +353,27 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
     setError(null);
     try {
       const headers = { Authorization: `Bearer ${token}` };
+
+      // FIX: /hr/active-users does not exist as a route.
+      // Use the existing /users endpoint (admin-gated) to populate the
+      // Reports To dropdown in the HR record creation form.
       const [empRes, deptRes, usersRes] = await Promise.all([
         axios.get(`${HR_BASE}/hr/employees/${userId}`, { headers }),
         canManageHrRecord
           ? axios.get(`${HR_BASE}/hr/departments`, { headers })
           : Promise.resolve({ data: [] }),
         canManageHrRecord
-          ? axios.get(`${HR_BASE}/hr/active-users`, { headers })
+          ? axios.get(`${HR_BASE}/users`, { headers }).catch(() => ({ data: [] }))
           : Promise.resolve({ data: [] }),
       ]);
+
       const returnedProfile = empRes.data?.profile;
       setProfile(empRes.data);
       setDepartments(deptRes.data);
-      setActiveUsers(usersRes.data);
+
+      // Filter to active users only for the Reports To dropdown
+      const allUsers = Array.isArray(usersRes.data) ? usersRes.data : [];
+      setActiveUsers(allUsers.filter((u: any) => u.is_active !== false));
 
       if (returnedProfile?.hr_record_exists === false) {
         setOnboarding([]);
@@ -396,18 +404,18 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
     }
   };
 
-  const profile    = profileData?.profile ?? null;
-  const contract   = profileData?.contract ?? null;
-  const activePip  = profileData?.activePip ?? null;
-  const name       = profile?.full_name ?? 'Employee Profile';
+  const profile     = profileData?.profile  ?? null;
+  const contract    = profileData?.contract  ?? null;
+  const activePip   = profileData?.activePip ?? null;
+  const name        = profile?.full_name ?? 'Employee Profile';
   const hasHrRecord = profile?.hr_record_exists !== false;
   const showCreateForm = canManageHrRecord && (!hasHrRecord || createModeRequested);
 
   const TABS: { key: Tab; label: string }[] = hasHrRecord ? [
-    { key: 'overview',   label: 'Overview' },
+    { key: 'overview',   label: 'Overview'   },
     { key: 'onboarding', label: 'Onboarding' },
-    { key: 'reviews',    label: 'Reviews' },
-    { key: 'leave',      label: 'Leave' },
+    { key: 'reviews',    label: 'Reviews'    },
+    { key: 'leave',      label: 'Leave'      },
   ] : [
     { key: 'overview', label: 'Overview' },
   ];
@@ -440,7 +448,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           <ChevronLeft className="w-4 h-4" /> Back to Employees
         </button>
 
-        {/* Error */}
+        {/* Page-level error */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-5 py-4 text-sm flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 flex-shrink-0" />{error}
@@ -460,12 +468,14 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           </div>
         )}
 
+        {/* No HR record — non-admin message */}
         {profile && !hasHrRecord && !canManageHrRecord && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded-xl px-5 py-4 text-sm">
             This employee has not yet had an HR record created. Please contact HR Admin.
           </div>
         )}
 
+        {/* HR record creation form */}
         {profile && showCreateForm && token && (
           <HRRecordForm
             userId={userId}
@@ -477,7 +487,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           />
         )}
 
-        {/* Tab bar */}
+        {/* Tabs + tab content */}
         {profile && (
           <>
             <div className="flex border-b border-dark-700">
@@ -506,17 +516,17 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                     Employment Details
                   </h3>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                    <Field label="Full Name"        value={fmt(profile.full_name)} />
-                    <Field label="Email"            value={fmt(profile.email)} />
-                    <Field label="Employee Number"  value={fmt(profile.employee_number)} mono />
-                    <Field label="Job Title"        value={fmt(profile.job_title)} />
-                    <Field label="Department"       value={fmt(profile.department_structured ?? profile.department)} />
-                    <Field label="Reports To"       value={fmt(profile.reports_to_name ?? profile.reports_to)} />
-                    <Field label="Employment Date"  value={fmtDate(profile.employment_date)} />
+                    <Field label="Full Name"         value={fmt(profile.full_name)} />
+                    <Field label="Email"             value={fmt(profile.email)} />
+                    <Field label="Employee Number"   value={fmt(profile.employee_number)} mono />
+                    <Field label="Job Title"         value={fmt(profile.job_title)} />
+                    <Field label="Department"        value={fmt(profile.department_structured ?? profile.department)} />
+                    <Field label="Reports To"        value={fmt(profile.reports_to_name ?? profile.reports_to)} />
+                    <Field label="Employment Date"   value={fmtDate(profile.employment_date)} />
                     <Field label="Employment Status" value={fmt(profile.employment_status)} />
-                    <Field label="Employment Type"  value={fmt(profile.employment_type)} />
-                    <Field label="System Role"      value={fmt(profile.role?.replace(/_/g, ' '))} />
-                    <Field label="Contract Type"    value={fmt(contract?.contract_type ?? profile.contract_type)} />
+                    <Field label="Employment Type"   value={fmt(profile.employment_type)} />
+                    <Field label="System Role"       value={fmt(profile.role?.replace(/_/g, ' '))} />
+                    <Field label="Contract Type"     value={fmt(contract?.contract_type ?? profile.contract_type)} />
                   </div>
                 </div>
 
@@ -535,17 +545,22 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                           ? <CheckCircle2 className="w-4 h-4 text-green-400 inline" />
                           : <XCircle className="w-4 h-4 text-gray-600 inline" />
                       } />
-                      <Field label="Probation End"       value={fmtDate(profile.effective_probation_end ?? profile.probation_end_date)} />
-                      <Field label="Days to Prob. End"   value={
-                        profile.days_to_probation_end !== null
+                      <Field label="Probation End" value={fmtDate(profile.effective_probation_end ?? profile.probation_end_date)} />
+                      <Field label="Days to Prob. End" value={
+                        profile.days_to_probation_end !== null && profile.days_to_probation_end !== undefined
                           ? <span className={
-                              (profile.days_to_probation_end ?? 99) < 14 ? 'text-red-400 font-semibold' :
-                              (profile.days_to_probation_end ?? 99) < 30 ? 'text-yellow-400' : 'text-gray-300'
-                            }>{profile.days_to_probation_end} days</span>
+                              (profile.days_to_probation_end ?? 99) < 14
+                                ? 'text-red-400 font-semibold'
+                                : (profile.days_to_probation_end ?? 99) < 30
+                                  ? 'text-yellow-400'
+                                  : 'text-gray-300'
+                            }>
+                              {profile.days_to_probation_end} days
+                            </span>
                           : null
                       } />
-                      <Field label="Confirmation Date"   value={fmtDate(profile.confirmation_date)} />
-                      <Field label="Exit Date"           value={fmtDate(profile.exit_date)} />
+                      <Field label="Confirmation Date" value={fmtDate(profile.confirmation_date)} />
+                      <Field label="Exit Date"         value={fmtDate(profile.exit_date)} />
                     </div>
                   </div>
 
@@ -665,10 +680,10 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                       {[
-                        { label: 'Annual Entitlement', value: leave.annual_entitlement ?? 15, color: 'blue' },
-                        { label: 'Days Taken',         value: leave.annual_taken ?? 0,        color: 'green' },
-                        { label: 'Days Pending',       value: leave.pending_days ?? 0,        color: 'yellow' },
-                        { label: 'Balance Remaining',  value: leave.annual_balance ?? (15 - (leave.annual_taken ?? 0)), color: 'primary' },
+                        { label: 'Annual Entitlement', value: leave.annual_entitlement ?? 15 },
+                        { label: 'Days Taken',         value: leave.annual_taken ?? 0 },
+                        { label: 'Days Pending',       value: leave.pending_days ?? 0 },
+                        { label: 'Balance Remaining',  value: leave.annual_balance ?? (15 - (leave.annual_taken ?? 0)) },
                       ].map(card => (
                         <div key={card.label} className="bg-dark-800 border border-dark-700 rounded-xl p-5">
                           <p className="text-xs text-gray-400 mb-1">{card.label}</p>
@@ -691,7 +706,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                             width: `${Math.min(
                               ((leave.annual_taken ?? 0) / (leave.annual_entitlement ?? 15)) * 100,
                               100
-                            )}%`
+                            )}%`,
                           }}
                         />
                       </div>
