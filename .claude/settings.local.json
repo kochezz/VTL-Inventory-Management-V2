@@ -6,7 +6,11 @@
       "Bash(npm install *)",
       "Bash(npx tsc *)",
       "Bash(node -e \"const m = require\\('react-native-mmkv'\\); console.log\\(Object.keys\\(m\\)\\)\")",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(node -e ' *)",
+      "Bash(curl -s http://localhost:3001/api/auth/login -X POST -H 'Content-Type: application/json' -d '{\"email\":\"admin@vilag.io\",\"password\":\"Admin123!\"}')",
+      "Bash(python -m json.tool)",
+      "Bash(npm run *)"
     ]
   }
 }

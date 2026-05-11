@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import HRLayout from '@/components/hr/HRLayout';
@@ -56,7 +56,7 @@ const OUTCOME_BADGE: Record<string, string> = {
   probation_failed: 'bg-red-500/10 text-red-400 border-red-500/20',
   pip_failed:       'bg-red-500/10 text-red-400 border-red-500/20',
   serious_concern:  'bg-red-500/10 text-red-400 border-red-500/20',
-  pending:          'bg-gray-500/10 text-gray-400 border-gray-500/20',
+  pending:          'bg-gray-500/10 text-gray-400 border-dark-600',
 };
 
 // ── Field row helper ──────────────────────────────────────────────────────────
@@ -70,8 +70,11 @@ function Field({ label, value, mono = false }: { label: string; value: React.Rea
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
-export default function EmployeeProfilePage({ params }: { params: { id: string } }) {
-  const userId = params.id;
+export default function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
+  // Unwrap the asynchronous params using the use() hook
+  const resolvedParams = use(params);
+  const userId = resolvedParams.id;
+
   const router = useRouter();
   const { token, user: currentUser } = useAuth();
 
