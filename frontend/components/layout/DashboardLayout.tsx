@@ -169,6 +169,12 @@ const navigation: NavItem[] = [
     roles: ['admin']
   },
   {
+    name: 'HR Module',
+    href: '/hr',
+    icon: Users,
+    roles: ['admin', 'hr_admin', 'hr_manager', 'ceo', 'manager', 'production_manager', 'warehouse_manager']
+  },
+  {
     name: 'Settings',
     href: '/settings',
     icon: Settings,
