@@ -3,7 +3,27 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('./auth-service');
 
 // FIX: Added 'sales' to the valid roles list
-const VALID_ROLES = ['admin', 'ceo', 'cfo', 'manager', 'qa', 'engineering', 'staff', 'operator', 'sales', 'super_viewer', 'viewer'];
+const VALID_ROLES = [
+  // Currently assigned in database
+  'admin',
+  'manager',
+  'production_manager',
+  'qa',
+  'viewer',
+  'warehouse_manager',
+  'warehouse_staff',
+  // Available for future assignment
+  'ceo',
+  'cfo',
+  'engineering',
+  'operator',
+  'sales',
+  'staff',
+  'super_viewer',
+  // HR module roles
+  'hr_admin',
+  'hr_manager'
+];
 
 const getAllUsers = async () => {
   try {
