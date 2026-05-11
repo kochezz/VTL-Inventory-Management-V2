@@ -36,11 +36,27 @@ router.get('/departments', requireHrAccess, async (req, res) => {
   }
 });
 
+router.get('/active-users', requireHrAdmin, async (req, res) => {
+  try {
+    res.json(await hrService.getActiveUsersForHrRecord());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ─── Employees ───────────────────────────────────────────────────────────────
 
 router.get('/employees', requireHrAccess, async (req, res) => {
   try {
     res.json(await hrService.getAllEmployees(req.user.role));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/employees-missing-records', requireHrAdmin, async (req, res) => {
+  try {
+    res.json(await hrService.getUsersMissingHrRecord());
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

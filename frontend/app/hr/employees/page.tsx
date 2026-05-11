@@ -10,7 +10,6 @@ import axios from 'axios';
 // HR routes are at /hr (not /api/hr)
 const HR_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api')
   .replace(/\/api\/?$/, '').replace(/\/$/, '');
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 const HR_STATUS_BADGE: Record<string, string> = {
   pre_start:     'bg-gray-500/10 text-gray-400 border-gray-500/20',
@@ -45,7 +44,7 @@ export default function HREmployeesPage() {
 
   const [employees, setEmployees]     = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
-  const [allUsers, setAllUsers]       = useState<any[]>([]);
+  const [missingHrRecords, setMissingHrRecords] = useState<any[]>([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
 
@@ -56,27 +55,24 @@ export default function HREmployeesPage() {
   useEffect(() => {
     if (!token) return;
     fetchData();
-  }, [token]);
+  }, [token, currentUser?.role]);
 
   const fetchData = async () => {
     setLoading(true);
     setError(null);
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [empRes, deptRes] = await Promise.all([
+      const canCreateHrRecord = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+      const [empRes, deptRes, missingRes] = await Promise.all([
         axios.get(`${HR_BASE}/hr/employees`, { headers }),
         axios.get(`${HR_BASE}/hr/departments`, { headers }),
+        canCreateHrRecord
+          ? axios.get(`${HR_BASE}/hr/employees-missing-records`, { headers })
+          : Promise.resolve({ data: [] }),
       ]);
       setEmployees(empRes.data);
       setDepartments(deptRes.data);
-
-      // Fetch raw users for the empty-state fallback (admin only)
-      if (currentUser?.role === 'admin' || currentUser?.role === 'hr_admin') {
-        try {
-          const usersRes = await axios.get(`${API_URL}/users`, { headers });
-          setAllUsers(usersRes.data);
-        } catch { /* non-critical */ }
-      }
+      setMissingHrRecords(missingRes.data);
     } catch (err: any) {
       if (err?.response?.status === 403) {
         setError('You do not have access to this section');
@@ -99,10 +95,6 @@ export default function HREmployeesPage() {
     const matchDept   = deptFilter   === 'all' || dept === deptFilter;
     return matchSearch && matchStatus && matchDept;
   });
-
-  // Users without an HR record (for empty-state secondary table)
-  const hrUserIds = new Set(employees.map(e => e.user_id));
-  const usersWithoutHr = allUsers.filter(u => u.is_active && !hrUserIds.has(u.user_id));
 
   if (loading) {
     return (
@@ -276,30 +268,51 @@ export default function HREmployeesPage() {
           </div>
         )}
 
-        {/* Fallback: users without HR records (admin/hr_admin only) */}
-        {employees.length === 0 && usersWithoutHr.length > 0 && (
+        {/* Users missing HR records (admin/hr_admin only) */}
+        {missingHrRecords.length > 0 && (
           <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
             <div className="px-5 py-3 bg-dark-900 border-b border-dark-700">
               <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-yellow-400" />
-                Active users without an HR record ({usersWithoutHr.length})
+                Users Missing HR Record ({missingHrRecords.length})
               </h3>
+              <p className="text-xs text-gray-500 mt-1">
+                Active system users who need an HR extension record created.
+              </p>
             </div>
             <table className="w-full text-left">
               <thead className="bg-dark-900/50 border-b border-dark-700">
                 <tr>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Name</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Email</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Role</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Employee</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Department / Job Title</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Hire Date</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Reports To</th>
                   <th className="px-5 py-3 text-right text-xs font-medium text-gray-400 uppercase">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-dark-700">
-                {usersWithoutHr.map(u => (
+                {missingHrRecords.map(u => (
                   <tr key={u.user_id} className="hover:bg-dark-700/40 transition-colors">
-                    <td className="px-5 py-3 text-sm text-white">{u.full_name}</td>
-                    <td className="px-5 py-3 text-sm text-gray-400">{u.email}</td>
-                    <td className="px-5 py-3 text-sm text-gray-400 capitalize">{u.role?.replace(/_/g, ' ')}</td>
+                    <td className="px-5 py-3">
+                      <p className="text-sm font-semibold text-white">{u.full_name}</p>
+                      <p className="text-xs text-gray-500 font-mono">
+                        {u.employee_number ? `#${u.employee_number}` : u.email}
+                      </p>
+                    </td>
+                    <td className="px-5 py-3">
+                      <p className="text-sm text-gray-300">{u.department || 'Unassigned'}</p>
+                      <p className="text-xs text-gray-500">{u.job_title || 'No job title'}</p>
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-400">
+                      {u.employment_date
+                        ? new Date(u.employment_date).toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                          })
+                        : '—'}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-400">{u.reports_to || '—'}</td>
                     <td className="px-5 py-3 text-right">
                       <button
                         onClick={() => router.push(`/hr/employees/${u.user_id}?create=true`)}

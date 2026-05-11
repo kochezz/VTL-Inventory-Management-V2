@@ -15,6 +15,31 @@ function redactSalary(row) {
   return r;
 }
 
+const getBaseUserById = async (userId) => {
+  const result = await pool.query(
+    `SELECT
+      user_id,
+      email,
+      full_name,
+      preferred_name,
+      role,
+      employee_number,
+      job_title,
+      department,
+      reports_to,
+      employment_date,
+      employment_status,
+      employment_type,
+      is_active
+    FROM users
+    WHERE user_id = $1
+    LIMIT 1`,
+    [userId]
+  );
+
+  return result.rows[0] || null;
+};
+
 // ─── 1. getDashboardStats ────────────────────────────────────────────────────
 
 const getDashboardStats = async () => {
@@ -33,10 +58,11 @@ const getAllEmployees = async (requestingUserRole) => {
     const result = await pool.query(
       'SELECT * FROM v_hr_employee_profile ORDER BY full_name'
     );
+    const rows = result.rows.map((row) => ({ ...row, hr_record_exists: true }));
     if (!canSeeSalary(requestingUserRole)) {
-      return result.rows.map(redactSalary);
+      return rows.map(redactSalary);
     }
-    return result.rows;
+    return rows;
   } catch (error) {
     throw error;
   }
@@ -46,8 +72,36 @@ const getAllEmployees = async (requestingUserRole) => {
 
 const getEmployeeByUserId = async (userId, requestingUserRole) => {
   try {
-    const [profileRes, contractRes, pipRes] = await Promise.all([
-      pool.query('SELECT * FROM v_hr_employee_profile WHERE user_id = $1', [userId]),
+    const profileRes = await pool.query(
+      'SELECT * FROM v_hr_employee_profile WHERE user_id = $1',
+      [userId]
+    );
+
+    if (profileRes.rows.length === 0) {
+      const baseUser = await getBaseUserById(userId);
+      if (!baseUser) return null;
+
+      return {
+        profile: {
+          ...baseUser,
+          hr_record_exists: false,
+          hr_status: null,
+          department_structured: null,
+          reports_to_name: baseUser.reports_to,
+          onboarding_complete: false,
+          onboarding_pct: 0,
+          has_active_pip: false,
+          probation_end_date: null,
+          effective_probation_end: null,
+          days_to_probation_end: null,
+          basic_salary_zmw: undefined,
+        },
+        contract: null,
+        activePip: null,
+      };
+    }
+
+    const [contractRes, pipRes] = await Promise.all([
       pool.query(
         'SELECT * FROM hr_contracts WHERE user_id = $1 AND is_current = TRUE LIMIT 1',
         [userId]
@@ -58,9 +112,7 @@ const getEmployeeByUserId = async (userId, requestingUserRole) => {
       ),
     ]);
 
-    if (profileRes.rows.length === 0) throw new Error('Employee not found');
-
-    let profile = profileRes.rows[0];
+    let profile = { ...profileRes.rows[0], hr_record_exists: true };
     if (!canSeeSalary(requestingUserRole)) {
       profile = redactSalary(profile);
     }
@@ -70,6 +122,59 @@ const getEmployeeByUserId = async (userId, requestingUserRole) => {
       contract: contractRes.rows[0] || null,
       activePip: pipRes.rows[0] || null,
     };
+  } catch (error) {
+    throw error;
+  }
+};
+
+const getUsersMissingHrRecord = async () => {
+  try {
+    const result = await pool.query(
+      `SELECT
+        u.user_id,
+        u.full_name,
+        u.email,
+        u.employee_number,
+        u.job_title,
+        u.department,
+        u.reports_to,
+        u.employment_date,
+        u.employment_status,
+        u.employment_type,
+        u.role,
+        u.is_active
+      FROM users u
+      LEFT JOIN hr_employees he ON he.user_id = u.user_id
+      WHERE u.is_active = TRUE
+        AND he.user_id IS NULL
+      ORDER BY u.full_name`
+    );
+
+    return result.rows;
+  } catch (error) {
+    throw error;
+  }
+};
+
+const getActiveUsersForHrRecord = async () => {
+  try {
+    const result = await pool.query(
+      `SELECT
+        user_id,
+        full_name,
+        email,
+        employee_number,
+        job_title,
+        department,
+        reports_to,
+        role,
+        is_active
+      FROM users
+      WHERE is_active = TRUE
+      ORDER BY full_name`
+    );
+
+    return result.rows;
   } catch (error) {
     throw error;
   }
@@ -109,7 +214,7 @@ const createHrRecord = async (userId, hrData, createdByUserId) => {
       RETURNING *
     `;
 
-    const result = await pool.query(query, [
+    await pool.query(query, [
       userId,
       department_id || null,
       reports_to_user_id || null,
@@ -122,7 +227,7 @@ const createHrRecord = async (userId, hrData, createdByUserId) => {
       createdByUserId,
     ]);
 
-    return result.rows[0];
+    return await getEmployeeByUserId(userId, 'admin');
   } catch (error) {
     throw error;
   }
@@ -657,6 +762,9 @@ module.exports = {
   getDashboardStats,
   getAllEmployees,
   getEmployeeByUserId,
+  getBaseUserById,
+  getUsersMissingHrRecord,
+  getActiveUsersForHrRecord,
   createHrRecord,
   updateHrRecord,
   getOnboardingProgress,

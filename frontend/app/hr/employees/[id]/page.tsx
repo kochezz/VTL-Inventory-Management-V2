@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import HRLayout from '@/components/hr/HRLayout';
 import {
   Loader2, AlertTriangle, ChevronLeft, Lock,
-  CheckCircle2, XCircle, Clock, AlertOctagon,
+  CheckCircle2, XCircle, Clock, AlertOctagon, Save,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -40,6 +40,42 @@ function fmtModule(m: string) {
   return MODULE_NAMES[m] || m.replace(/_/g, ' ');
 }
 
+function toDateInput(val: string | null | undefined) {
+  if (!val) return '';
+  return new Date(val).toISOString().split('T')[0];
+}
+
+function matchDepartmentId(userDepartment: string | null | undefined, departments: any[]) {
+  if (!userDepartment) return '';
+  const normalized = userDepartment.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    'quality assurance': 'Quality Assurance',
+    qa: 'Quality Assurance',
+    production: 'Production',
+    operations: 'Production',
+    engineering: 'Engineering',
+    inventory: 'Inventory',
+    warehouse: 'Inventory',
+    'human resources': 'Human Resources',
+    hr: 'Human Resources',
+    finance: 'Finance',
+    sales: 'Sales',
+    management: 'Management',
+    it: 'IT',
+    'information technology': 'IT',
+  };
+  const target = aliases[normalized] ?? userDepartment;
+  return departments.find(d => d.name?.toLowerCase() === target.toLowerCase())?.id ?? '';
+}
+
+function matchReportsToUserId(reportsTo: string | null | undefined, users: any[], currentUserId: string) {
+  if (!reportsTo) return '';
+  const normalized = reportsTo.trim().toLowerCase();
+  return users.find(u =>
+    u.user_id !== currentUserId && u.full_name?.trim().toLowerCase() === normalized
+  )?.user_id ?? '';
+}
+
 const ONBOARDING_BADGE: Record<string, string> = {
   completed:      'bg-green-500/10 text-green-400 border-green-500/20',
   in_progress:    'bg-blue-500/10 text-blue-400 border-blue-500/20',
@@ -69,6 +105,216 @@ function Field({ label, value, mono = false }: { label: string; value: React.Rea
   );
 }
 
+function HRRecordForm({
+  userId,
+  profile,
+  departments,
+  users,
+  token,
+  onSaved,
+}: {
+  userId: string;
+  profile: any;
+  departments: any[];
+  users: any[];
+  token: string;
+  onSaved: () => Promise<void>;
+}) {
+  const [form, setForm] = useState({
+    department_id: '',
+    reports_to_user_id: '',
+    hr_status: 'onboarding',
+    contract_type: 'probationary',
+    offer_accepted_date: '',
+    basic_salary_zmw: '',
+    salary_effective_date: toDateInput(profile?.employment_date),
+    napsa_member_number: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm(prev => ({
+      ...prev,
+      department_id: prev.department_id || String(matchDepartmentId(profile?.department, departments)),
+      reports_to_user_id: prev.reports_to_user_id || matchReportsToUserId(profile?.reports_to, users, userId),
+      salary_effective_date: prev.salary_effective_date || toDateInput(profile?.employment_date),
+    }));
+  }, [profile, departments, users, userId]);
+
+  const update = (key: string, value: string) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload = {
+        department_id: form.department_id || null,
+        reports_to_user_id: form.reports_to_user_id || null,
+        hr_status: form.hr_status || 'onboarding',
+        contract_type: form.contract_type || 'probationary',
+        offer_accepted_date: form.offer_accepted_date || null,
+        basic_salary_zmw: form.basic_salary_zmw === '' ? null : Number(form.basic_salary_zmw),
+        salary_effective_date: form.salary_effective_date || null,
+        napsa_member_number: form.napsa_member_number || null,
+      };
+
+      await axios.post(`${HR_BASE}/hr/employees/${userId}/record`, payload, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setMessage('HR record created successfully.');
+      await onSaved();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Failed to create HR record');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-dark-800 border border-primary-500/30 rounded-xl p-6 space-y-5">
+      <div>
+        <h3 className="text-xs font-bold text-primary-400 uppercase tracking-widest">Create HR Record</h3>
+        <p className="text-sm text-gray-400 mt-1">
+          Complete the HR extension fields. Base user details are synced from System User Management.
+        </p>
+      </div>
+
+      {message && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 rounded-lg px-4 py-3 text-sm">
+          {message}
+        </div>
+      )}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Department</label>
+          <select
+            value={form.department_id}
+            onChange={e => update('department_id', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          >
+            <option value="">Unassigned</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Reports To</label>
+          <select
+            value={form.reports_to_user_id}
+            onChange={e => update('reports_to_user_id', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          >
+            <option value="">Unassigned</option>
+            {users.filter(u => u.user_id !== userId).map(u => (
+              <option key={u.user_id} value={u.user_id}>
+                {u.full_name} {u.job_title ? `- ${u.job_title}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">HR Status</label>
+          <select
+            value={form.hr_status}
+            onChange={e => update('hr_status', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          >
+            <option value="pre_start">Pre-Start</option>
+            <option value="onboarding">Onboarding</option>
+            <option value="probation">Probation</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="pip_active">PIP Active</option>
+            <option value="notice_period">Notice Period</option>
+            <option value="exited">Exited</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Contract Type</label>
+          <select
+            value={form.contract_type}
+            onChange={e => update('contract_type', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          >
+            <option value="probationary">Probationary</option>
+            <option value="permanent">Permanent</option>
+            <option value="long_term">Long Term</option>
+            <option value="short_term">Short Term</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Offer Accepted Date</label>
+          <input
+            type="date"
+            value={form.offer_accepted_date}
+            onChange={e => update('offer_accepted_date', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Salary Effective Date</label>
+          <input
+            type="date"
+            value={form.salary_effective_date}
+            onChange={e => update('salary_effective_date', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Basic Salary ZMW</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.basic_salary_zmw}
+            onChange={e => update('basic_salary_zmw', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">NAPSA Member Number</label>
+          <input
+            type="text"
+            value={form.napsa_member_number}
+            onChange={e => update('napsa_member_number', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="submit"
+          disabled={saving}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {saving ? 'Saving...' : 'Save HR Record'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
   // Unwrap the asynchronous params using the use() hook
@@ -77,6 +323,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
 
   const router = useRouter();
   const { token, user: currentUser } = useAuth();
+  const [createModeRequested, setCreateModeRequested] = useState(false);
 
   const [tab, setTab]             = useState<Tab>('overview');
   const [loading, setLoading]     = useState(true);
@@ -85,32 +332,60 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const [onboarding, setOnboarding] = useState<any[]>([]);
   const [reviews, setReviews]     = useState<any[]>([]);
   const [leave, setLeave]         = useState<any>(null);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [activeUsers, setActiveUsers] = useState<any[]>([]);
 
   const canSeeSalary = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+  const canManageHrRecord = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setCreateModeRequested(new URLSearchParams(window.location.search).get('create') === 'true');
+  }, []);
 
   useEffect(() => {
     if (!token || !userId) return;
     fetchAll();
-  }, [token, userId]);
+  }, [token, userId, currentUser?.role]);
 
   const fetchAll = async () => {
     setLoading(true);
     setError(null);
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [empRes, onbRes, revRes, leaveRes] = await Promise.all([
+      const [empRes, deptRes, usersRes] = await Promise.all([
         axios.get(`${HR_BASE}/hr/employees/${userId}`, { headers }),
+        canManageHrRecord
+          ? axios.get(`${HR_BASE}/hr/departments`, { headers })
+          : Promise.resolve({ data: [] }),
+        canManageHrRecord
+          ? axios.get(`${HR_BASE}/hr/active-users`, { headers })
+          : Promise.resolve({ data: [] }),
+      ]);
+      const returnedProfile = empRes.data?.profile;
+      setProfile(empRes.data);
+      setDepartments(deptRes.data);
+      setActiveUsers(usersRes.data);
+
+      if (returnedProfile?.hr_record_exists === false) {
+        setOnboarding([]);
+        setReviews([]);
+        setLeave(null);
+        setTab('overview');
+        return;
+      }
+
+      const [onbRes, revRes, leaveRes] = await Promise.all([
         axios.get(`${HR_BASE}/hr/employees/${userId}/onboarding`, { headers }),
         axios.get(`${HR_BASE}/hr/employees/${userId}/reviews`, { headers }),
         axios.get(`${HR_BASE}/hr/employees/${userId}/leave-balance`, { headers }),
       ]);
-      setProfile(empRes.data);
       setOnboarding(onbRes.data);
       setReviews(revRes.data);
       setLeave(leaveRes.data);
     } catch (err: any) {
       if (err?.response?.status === 404) {
-        setError('Employee HR record not found.');
+        setError('Employee not found.');
       } else if (err?.response?.status === 403) {
         setError('You do not have access to this profile.');
       } else {
@@ -125,13 +400,23 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const contract   = profileData?.contract ?? null;
   const activePip  = profileData?.activePip ?? null;
   const name       = profile?.full_name ?? 'Employee Profile';
+  const hasHrRecord = profile?.hr_record_exists !== false;
+  const showCreateForm = canManageHrRecord && (!hasHrRecord || createModeRequested);
 
-  const TABS: { key: Tab; label: string }[] = [
+  const TABS: { key: Tab; label: string }[] = hasHrRecord ? [
     { key: 'overview',   label: 'Overview' },
     { key: 'onboarding', label: 'Onboarding' },
     { key: 'reviews',    label: 'Reviews' },
     { key: 'leave',      label: 'Leave' },
+  ] : [
+    { key: 'overview', label: 'Overview' },
   ];
+
+  const handleRecordSaved = async () => {
+    await fetchAll();
+    setCreateModeRequested(false);
+    router.replace(`/hr/employees/${userId}`);
+  };
 
   if (loading) {
     return (
@@ -175,6 +460,23 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           </div>
         )}
 
+        {profile && !hasHrRecord && !canManageHrRecord && (
+          <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded-xl px-5 py-4 text-sm">
+            This employee has not yet had an HR record created. Please contact HR Admin.
+          </div>
+        )}
+
+        {profile && showCreateForm && token && (
+          <HRRecordForm
+            userId={userId}
+            profile={profile}
+            departments={departments}
+            users={activeUsers}
+            token={token}
+            onSaved={handleRecordSaved}
+          />
+        )}
+
         {/* Tab bar */}
         {profile && (
           <>
@@ -206,11 +508,14 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                   <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                     <Field label="Full Name"        value={fmt(profile.full_name)} />
                     <Field label="Email"            value={fmt(profile.email)} />
+                    <Field label="Employee Number"  value={fmt(profile.employee_number)} mono />
                     <Field label="Job Title"        value={fmt(profile.job_title)} />
                     <Field label="Department"       value={fmt(profile.department_structured ?? profile.department)} />
+                    <Field label="Reports To"       value={fmt(profile.reports_to_name ?? profile.reports_to)} />
                     <Field label="Employment Date"  value={fmtDate(profile.employment_date)} />
                     <Field label="Employment Status" value={fmt(profile.employment_status)} />
-                    <Field label="Reports To"       value={fmt(profile.reports_to_name ?? profile.reports_to)} />
+                    <Field label="Employment Type"  value={fmt(profile.employment_type)} />
+                    <Field label="System Role"      value={fmt(profile.role?.replace(/_/g, ' '))} />
                     <Field label="Contract Type"    value={fmt(contract?.contract_type ?? profile.contract_type)} />
                   </div>
                 </div>
