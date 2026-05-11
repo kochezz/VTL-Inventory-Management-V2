@@ -36,7 +36,8 @@ const MODULE_NAMES: Record<string, string> = {
   module_f_mgmt_systems: 'Module F: Management Systems',
 };
 
-function fmtModule(m: string) {
+function fmtModule(m: string | null | undefined) {
+  if (!m) return '—';
   return MODULE_NAMES[m] || m.replace(/_/g, ' ');
 }
 
