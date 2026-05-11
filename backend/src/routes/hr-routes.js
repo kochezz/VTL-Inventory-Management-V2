@@ -3,14 +3,14 @@
 const express = require('express');
 const router  = express.Router();
 
-const { authenticate }                   = require('../middleware/auth-middleware');
+const { authenticate }                    = require('../middleware/auth-middleware');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hr-middleware');
 const hrService                           = require('../services/hr-service');
 
 // Authenticate every HR request
 router.use(authenticate);
 
-// ─── Dashboard & Overview ────────────────────────────────────────────────────
+// ─── Dashboard & Overview ─────────────────────────────────────────────────────
 
 router.get('/dashboard', requireHrAccess, async (req, res) => {
   try {
@@ -36,7 +36,10 @@ router.get('/departments', requireHrAccess, async (req, res) => {
   }
 });
 
-router.get('/active-users', requireHrAdmin, async (req, res) => {
+// FIX: was requireHrAdmin — changed to requireHrAccess so hr_admin and
+// hr_manager roles can both load the Reports To dropdown on the HR record
+// creation form. Returns only non-sensitive fields (no salary, no password).
+router.get('/active-users', requireHrAccess, async (req, res) => {
   try {
     res.json(await hrService.getActiveUsersForHrRecord());
   } catch (error) {
@@ -44,7 +47,7 @@ router.get('/active-users', requireHrAdmin, async (req, res) => {
   }
 });
 
-// ─── Employees ───────────────────────────────────────────────────────────────
+// ─── Employees ────────────────────────────────────────────────────────────────
 
 router.get('/employees', requireHrAccess, async (req, res) => {
   try {
@@ -94,7 +97,7 @@ router.put('/employees/:userId/record', requireHrAdmin, async (req, res) => {
   }
 });
 
-// ─── Onboarding ──────────────────────────────────────────────────────────────
+// ─── Onboarding ───────────────────────────────────────────────────────────────
 
 router.get('/employees/:userId/onboarding', requireHrAccess, async (req, res) => {
   try {
@@ -119,7 +122,7 @@ router.put('/employees/:userId/onboarding/:module', requireHrAccess, async (req,
   }
 });
 
-// ─── SOP Training ────────────────────────────────────────────────────────────
+// ─── SOP Training ─────────────────────────────────────────────────────────────
 
 router.get('/employees/:userId/sop-training', requireHrAccess, async (req, res) => {
   try {
@@ -139,7 +142,7 @@ router.post('/employees/:userId/sop-training', requireHrAdmin, async (req, res) 
   }
 });
 
-// ─── Reviews ─────────────────────────────────────────────────────────────────
+// ─── Reviews ──────────────────────────────────────────────────────────────────
 
 router.get('/employees/:userId/reviews', requireHrAccess, async (req, res) => {
   try {
@@ -170,7 +173,7 @@ router.put('/reviews/:reviewId', requireHrAdmin, async (req, res) => {
   }
 });
 
-// ─── PIPs ────────────────────────────────────────────────────────────────────
+// ─── PIPs ─────────────────────────────────────────────────────────────────────
 
 router.get('/employees/:userId/pips', requireHrAccess, async (req, res) => {
   try {
@@ -190,7 +193,7 @@ router.post('/employees/:userId/pips', requireHrAdmin, async (req, res) => {
   }
 });
 
-// ─── Performance Ratings ─────────────────────────────────────────────────────
+// ─── Performance Ratings ──────────────────────────────────────────────────────
 
 router.get('/employees/:userId/ratings', requireHrAccess, async (req, res) => {
   try {

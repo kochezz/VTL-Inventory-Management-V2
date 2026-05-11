@@ -363,7 +363,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           ? axios.get(`${HR_BASE}/hr/departments`, { headers })
           : Promise.resolve({ data: [] }),
         canManageHrRecord
-          ? axios.get(`${HR_BASE}/users`, { headers }).catch(() => ({ data: [] }))
+          ? axios.get(`${HR_BASE}/hr/active-users`, { headers }).catch(() => ({ data: [] }))
           : Promise.resolve({ data: [] }),
       ]);
 
