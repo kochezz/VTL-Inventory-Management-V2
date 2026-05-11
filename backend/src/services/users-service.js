@@ -207,7 +207,12 @@ const getUserStats = async () => {
         COUNT(*) FILTER (WHERE role = 'engineering') as engineers, COUNT(*) FILTER (WHERE role = 'qa') as qa_users,
         COUNT(*) FILTER (WHERE role = 'staff') as staff, COUNT(*) FILTER (WHERE role = 'operator') as operators,
         COUNT(*) FILTER (WHERE role = 'sales') as sales_reps,
-        COUNT(*) FILTER (WHERE role = 'super_viewer') as super_viewers, COUNT(*) FILTER (WHERE role = 'viewer') as viewers
+        COUNT(*) FILTER (WHERE role = 'super_viewer') as super_viewers, COUNT(*) FILTER (WHERE role = 'viewer') as viewers,
+        COUNT(*) FILTER (WHERE role = 'production_manager') as production_managers,
+        COUNT(*) FILTER (WHERE role = 'warehouse_manager') as warehouse_managers,
+        COUNT(*) FILTER (WHERE role = 'warehouse_staff') as warehouse_staff_count,
+        COUNT(*) FILTER (WHERE role = 'hr_admin') as hr_admins,
+        COUNT(*) FILTER (WHERE role = 'hr_manager') as hr_managers
       FROM users
     `);
     return result.rows[0];
@@ -221,8 +226,15 @@ const getUserStats = async () => {
 const getHolidayData = async (userId) => {
   try {
     const year = new Date().getFullYear();
-    const totalAllowance = 15; 
-    
+
+    const balanceRow = await pool.query(
+      'SELECT annual_entitlement FROM hr_leave_balances WHERE user_id = $1 AND leave_year = $2',
+      [userId, year]
+    );
+    const totalAllowance = balanceRow.rows.length > 0
+      ? balanceRow.rows[0].annual_entitlement
+      : 15;
+
     const reqQuery = await pool.query(
       `SELECT * FROM holiday_requests WHERE user_id = $1 ORDER BY created_at DESC`,
       [userId]
