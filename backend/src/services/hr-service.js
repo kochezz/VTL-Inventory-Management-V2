@@ -101,7 +101,7 @@ const getEmployeeByUserId = async (userId, requestingUserRole) => {
       };
     }
 
-    const [contractRes, pipRes] = await Promise.all([
+    const [contractRes, pipRes, hrEmpRes] = await Promise.all([
       pool.query(
         'SELECT * FROM hr_contracts WHERE user_id = $1 AND is_current = TRUE LIMIT 1',
         [userId]
@@ -110,9 +110,25 @@ const getEmployeeByUserId = async (userId, requestingUserRole) => {
         'SELECT * FROM hr_pips WHERE user_id = $1 AND is_active = TRUE LIMIT 1',
         [userId]
       ),
+      pool.query(
+        `SELECT basic_salary_zmw, salary_effective_date, napsa_member_number,
+                hr_status, contract_type, probation_end_date, probation_extended_to,
+                confirmation_date, offer_accepted_date, exit_date, exit_reason,
+                department_id, reports_to_user_id, onboarding_complete
+         FROM hr_employees WHERE user_id = $1 LIMIT 1`,
+        [userId]
+      ),
     ]);
 
-    let profile = { ...profileRes.rows[0], hr_record_exists: true };
+    // Merge hr_employees fields into profile (view data + direct table data)
+    const hrEmpRow = hrEmpRes.rows[0] || {};
+    let profile = {
+      ...profileRes.rows[0],
+      ...hrEmpRow,           // hr_employees fields take precedence for HR-specific data
+      hr_record_exists: true,
+    };
+
+    // Re-apply salary redaction after merge
     if (!canSeeSalary(requestingUserRole)) {
       profile = redactSalary(profile);
     }
@@ -255,6 +271,8 @@ const updateHrRecord = async (userId, updates, updatedByUserId) => {
     values.push(updatedByUserId);
     idx++;
     setClauses.push(`updated_at = NOW()`);
+    // DO NOT push a value for NOW() — it is a SQL function, not a parameter
+    // Add the WHERE clause parameter AFTER all SET clauses
     values.push(userId);
 
     const query = `
@@ -756,6 +774,64 @@ const upsertSopTraining = async (userId, sopData, createdByUserId) => {
   }
 };
 
+// ─── 21. getPersonnelDocuments ───────────────────────────────────────────────
+
+const getPersonnelDocuments = async (userId) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, document_type, document_title, document_date, version,
+              storage_url, filename, file_size_bytes, content_type,
+              is_filed, filed_date, notes, created_at
+       FROM hr_personnel_documents
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [userId]
+    );
+    return result.rows;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// ─── 22. logPersonnelDocument ────────────────────────────────────────────────
+
+const logPersonnelDocument = async (userId, docData, createdByUserId) => {
+  try {
+    const {
+      document_type, document_title, document_date, version,
+      storage_url, filename, file_size_bytes, content_type,
+      is_filed, filed_date, notes,
+    } = docData;
+
+    const result = await pool.query(
+      `INSERT INTO hr_personnel_documents (
+        user_id, document_type, document_title, document_date, version,
+        storage_url, filename, file_size_bytes, content_type,
+        is_filed, filed_date, notes, created_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING *`,
+      [
+        userId,
+        document_type || null,
+        document_title || null,
+        document_date || null,
+        version || '1.0',
+        storage_url || null,
+        filename || null,
+        file_size_bytes || null,
+        content_type || null,
+        is_filed !== undefined ? is_filed : false,
+        filed_date || null,
+        notes || null,
+        createdByUserId,
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    throw error;
+  }
+};
+
 // ────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -782,4 +858,6 @@ module.exports = {
   getDepartments,
   getSopTrainingRecords,
   upsertSopTraining,
+  getPersonnelDocuments,
+  logPersonnelDocument,
 };

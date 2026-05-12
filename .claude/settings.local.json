@@ -10,7 +10,15 @@
       "Bash(node -e ' *)",
       "Bash(curl -s http://localhost:3001/api/auth/login -X POST -H 'Content-Type: application/json' -d '{\"email\":\"admin@vilag.io\",\"password\":\"Admin123!\"}')",
       "Bash(python -m json.tool)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(node -e \"require\\('./backend/src/services/hr-service.js'\\); console.log\\('OK'\\)\")",
+      "Bash(node server.js)",
+      "Bash(curl -s http://localhost:3001/api/health)",
+      "Bash(curl -s http://localhost:3001/health)",
+      "Bash(curl -s http://localhost:3001/)",
+      "PowerShell($pids = \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess | Select-Object -Unique; Write-Host \"PIDs on 3001: $pids\"; if \\($pids\\) { $pids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; Write-Host \"Killed $_\" } })",
+      "PowerShell(Start-Sleep -Seconds 1; \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).Count)",
+      "PowerShell(Stop-Process -Id 19304 -Force; Start-Sleep -Seconds 1; \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).Count -eq 0)"
     ]
   }
 }

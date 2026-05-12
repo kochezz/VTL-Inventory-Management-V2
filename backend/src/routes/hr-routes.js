@@ -237,4 +237,24 @@ router.put('/employees/:userId/leave-balance', requireHrAdmin, async (req, res) 
   }
 });
 
+// ─── Personnel Documents ──────────────────────────────────────────────────────
+
+router.get('/employees/:userId/documents', requireHrAccess, async (req, res) => {
+  try {
+    res.json(await hrService.getPersonnelDocuments(req.params.userId));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/employees/:userId/documents', requireHrAdmin, async (req, res) => {
+  try {
+    res.status(201).json(
+      await hrService.logPersonnelDocument(req.params.userId, req.body, req.user.user_id)
+    );
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;

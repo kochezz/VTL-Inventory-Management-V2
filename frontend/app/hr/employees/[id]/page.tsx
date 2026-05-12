@@ -6,14 +6,14 @@ import { useAuth } from '@/hooks/useAuth';
 import HRLayout from '@/components/hr/HRLayout';
 import {
   Loader2, AlertTriangle, ChevronLeft, Lock,
-  CheckCircle2, XCircle, Clock, AlertOctagon, Save,
+  CheckCircle2, XCircle, Clock, AlertOctagon, Save, Plus, X,
 } from 'lucide-react';
 import axios from 'axios';
 
 const HR_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api')
   .replace(/\/api\/?$/, '').replace(/\/$/, '');
 
-type Tab = 'overview' | 'onboarding' | 'reviews' | 'leave';
+type Tab = 'overview' | 'onboarding' | 'reviews' | 'leave' | 'documents';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmt(val: string | null | undefined) {
@@ -43,7 +43,7 @@ function fmtModule(m: string | null | undefined) {
 
 function toDateInput(val: string | null | undefined) {
   if (!val) return '';
-  return new Date(val).toISOString().split('T')[0];
+  try { return new Date(val).toISOString().split('T')[0]; } catch { return ''; }
 }
 
 function matchDepartmentId(userDepartment: string | null | undefined, departments: any[]) {
@@ -96,6 +96,22 @@ const OUTCOME_BADGE: Record<string, string> = {
   pending:          'bg-gray-500/10 text-gray-400 border-dark-600',
 };
 
+const DOC_TYPE_LABEL: Record<string, string> = {
+  employment_contract: 'Employment Contract',
+  day_30_review_form:  'Day 30 Review Form',
+  day_90_review_form:  'Day 90 Review Form',
+  confirmation_letter: 'Confirmation Letter',
+  pip_document:        'PIP Document',
+  written_warning:     'Written Warning',
+  phase_1_signoff:     'Phase 1 Sign-Off',
+  phase_2_signoff:     'Phase 2 Sign-Off',
+  module_signoff:      'Module Sign-Off',
+  sop_training_record: 'SOP Training Record',
+  offer_letter:        'Offer Letter',
+  nda:                 'NDA',
+  other:               'Other',
+};
+
 // ── Field row helper ──────────────────────────────────────────────────────────
 function Field({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -114,6 +130,7 @@ function HRRecordForm({
   users,
   token,
   onSaved,
+  existingRecord,
 }: {
   userId: string;
   profile: any;
@@ -121,29 +138,35 @@ function HRRecordForm({
   users: any[];
   token: string;
   onSaved: () => Promise<void>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  existingRecord?: any;
 }) {
+  const isEdit = !!existingRecord;
+
   const [form, setForm] = useState({
-    department_id:        '',
-    reports_to_user_id:   '',
-    hr_status:            'onboarding',
-    contract_type:        'probationary',
-    offer_accepted_date:  '',
-    basic_salary_zmw:     '',
-    salary_effective_date: toDateInput(profile?.employment_date),
-    napsa_member_number:  '',
+    department_id:         existingRecord?.department_id         || '',
+    reports_to_user_id:    existingRecord?.reports_to_user_id    || '',
+    hr_status:             existingRecord?.hr_status             || 'onboarding',
+    contract_type:         existingRecord?.contract_type         || 'probationary',
+    offer_accepted_date:   toDateInput(existingRecord?.offer_accepted_date)   || '',
+    basic_salary_zmw:      existingRecord?.basic_salary_zmw      ? String(existingRecord.basic_salary_zmw) : '',
+    salary_effective_date: toDateInput(existingRecord?.salary_effective_date) || toDateInput(profile?.employment_date),
+    napsa_member_number:   existingRecord?.napsa_member_number   || '',
+    confirmation_date:     toDateInput(existingRecord?.confirmation_date)     || '',
   });
   const [saving, setSaving]   = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError]     = useState<string | null>(null);
 
   useEffect(() => {
+    if (isEdit) return;
     setForm(prev => ({
       ...prev,
       department_id:      prev.department_id      || String(matchDepartmentId(profile?.department, departments)),
       reports_to_user_id: prev.reports_to_user_id || matchReportsToUserId(profile?.reports_to, users, userId),
       salary_effective_date: prev.salary_effective_date || toDateInput(profile?.employment_date),
     }));
-  }, [profile, departments, users, userId]);
+  }, [profile, departments, users, userId, isEdit]);
 
   const update = (key: string, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
@@ -155,23 +178,25 @@ function HRRecordForm({
     setMessage(null);
     try {
       const payload = {
-        department_id:        form.department_id        || null,
-        reports_to_user_id:   form.reports_to_user_id   || null,
-        hr_status:            form.hr_status            || 'onboarding',
-        contract_type:        form.contract_type        || 'probationary',
-        offer_accepted_date:  form.offer_accepted_date  || null,
-        basic_salary_zmw:     form.basic_salary_zmw === '' ? null : Number(form.basic_salary_zmw),
+        department_id:         form.department_id        || null,
+        reports_to_user_id:    form.reports_to_user_id   || null,
+        hr_status:             form.hr_status            || 'onboarding',
+        contract_type:         form.contract_type        || 'probationary',
+        offer_accepted_date:   form.offer_accepted_date  || null,
+        basic_salary_zmw:      form.basic_salary_zmw === '' ? null : Number(form.basic_salary_zmw),
         salary_effective_date: form.salary_effective_date || null,
-        napsa_member_number:  form.napsa_member_number  || null,
+        napsa_member_number:   form.napsa_member_number  || null,
+        confirmation_date:     form.confirmation_date    || null,
       };
 
-      await axios.post(`${HR_BASE}/hr/employees/${userId}/record`, payload, {
+      const method = isEdit ? 'put' : 'post';
+      await axios[method](`${HR_BASE}/hr/employees/${userId}/record`, payload, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setMessage('HR record created successfully.');
+      setMessage(isEdit ? 'HR record updated successfully.' : 'HR record created successfully.');
       await onSaved();
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to create HR record');
+      setError(err?.response?.data?.message || 'Failed to save HR record');
     } finally {
       setSaving(false);
     }
@@ -180,7 +205,9 @@ function HRRecordForm({
   return (
     <form onSubmit={handleSubmit} className="bg-dark-800 border border-primary-500/30 rounded-xl p-6 space-y-5">
       <div>
-        <h3 className="text-xs font-bold text-primary-400 uppercase tracking-widest">Create HR Record</h3>
+        <h3 className="text-xs font-bold text-primary-400 uppercase tracking-widest">
+          {isEdit ? 'Edit HR Record' : 'Create HR Record'}
+        </h3>
         <p className="text-sm text-gray-400 mt-1">
           Complete the HR extension fields. Base user details are synced from System User Management.
         </p>
@@ -200,11 +227,8 @@ function HRRecordForm({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-xs text-gray-400 mb-1">Department</label>
-          <select
-            value={form.department_id}
-            onChange={e => update('department_id', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          >
+          <select value={form.department_id} onChange={e => update('department_id', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
             <option value="">Unassigned</option>
             {departments.map(d => (
               <option key={d.id} value={d.id}>{d.name}</option>
@@ -214,11 +238,8 @@ function HRRecordForm({
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">Reports To</label>
-          <select
-            value={form.reports_to_user_id}
-            onChange={e => update('reports_to_user_id', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          >
+          <select value={form.reports_to_user_id} onChange={e => update('reports_to_user_id', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
             <option value="">Unassigned</option>
             {users.filter(u => u.user_id !== userId).map(u => (
               <option key={u.user_id} value={u.user_id}>
@@ -230,11 +251,8 @@ function HRRecordForm({
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">HR Status</label>
-          <select
-            value={form.hr_status}
-            onChange={e => update('hr_status', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          >
+          <select value={form.hr_status} onChange={e => update('hr_status', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
             <option value="pre_start">Pre-Start</option>
             <option value="onboarding">Onboarding</option>
             <option value="probation">Probation</option>
@@ -247,11 +265,8 @@ function HRRecordForm({
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">Contract Type</label>
-          <select
-            value={form.contract_type}
-            onChange={e => update('contract_type', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          >
+          <select value={form.contract_type} onChange={e => update('contract_type', e.target.value)}
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
             <option value="probationary">Probationary</option>
             <option value="permanent">Permanent</option>
             <option value="long_term">Long Term</option>
@@ -261,53 +276,45 @@ function HRRecordForm({
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">Offer Accepted Date</label>
-          <input
-            type="date"
-            value={form.offer_accepted_date}
+          <input type="date" value={form.offer_accepted_date}
             onChange={e => update('offer_accepted_date', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          />
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
         </div>
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">Salary Effective Date</label>
-          <input
-            type="date"
-            value={form.salary_effective_date}
+          <input type="date" value={form.salary_effective_date}
             onChange={e => update('salary_effective_date', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          />
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
         </div>
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">Basic Salary ZMW</label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={form.basic_salary_zmw}
+          <input type="number" min="0" step="0.01" value={form.basic_salary_zmw}
             onChange={e => update('basic_salary_zmw', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          />
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
         </div>
 
         <div>
           <label className="block text-xs text-gray-400 mb-1">NAPSA Member Number</label>
-          <input
-            type="text"
-            value={form.napsa_member_number}
+          <input type="text" value={form.napsa_member_number}
             onChange={e => update('napsa_member_number', e.target.value)}
-            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm"
-          />
+            className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
         </div>
+
+        {form.hr_status === 'confirmed' && (
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Confirmation Date</label>
+            <input type="date" value={form.confirmation_date}
+              onChange={e => update('confirmation_date', e.target.value)}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end">
-        <button
-          type="submit"
-          disabled={saving}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
-        >
+        <button type="submit" disabled={saving}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {saving ? 'Saving...' : 'Save HR Record'}
         </button>
@@ -316,15 +323,437 @@ function HRRecordForm({
   );
 }
 
+// ── OnboardingUpdateModal ─────────────────────────────────────────────────────
+function OnboardingUpdateModal({ userId, token, modalData, onClose, onSaved }: {
+  userId: string;
+  token: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  modalData: any;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [form, setForm] = useState({
+    status:              modalData?.status || 'not_started',
+    scheduled_date:      toDateInput(modalData?.scheduled_date),
+    started_date:        toDateInput(modalData?.started_date),
+    completed_date:      toDateInput(modalData?.completed_date),
+    trainer_signed_date: toDateInput(modalData?.trainer_signed_date),
+    trainee_signed_date: toDateInput(modalData?.trainee_signed_date),
+    assessment_score:    modalData?.assessment_score != null ? String(modalData.assessment_score) : '',
+    notes:               modalData?.notes || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  const update = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await axios.put(
+        `${HR_BASE}/hr/employees/${userId}/onboarding/${modalData.module}`,
+        {
+          status:              form.status,
+          scheduled_date:      form.scheduled_date      || null,
+          started_date:        form.started_date        || null,
+          completed_date:      form.completed_date      || null,
+          trainer_signed_date: form.trainer_signed_date || null,
+          trainee_signed_date: form.trainee_signed_date || null,
+          assessment_score:    form.assessment_score !== '' ? Number(form.assessment_score) : null,
+          notes:               form.notes               || null,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      await onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Failed to update onboarding module');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 w-full max-w-lg space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white">{fmtModule(modalData.module)}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Status</label>
+            <select value={form.status} onChange={e => update('status', e.target.value)}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
+              <option value="not_started">Not Started</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+              <option value="not_applicable">Not Applicable</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Scheduled Date</label>
+              <input type="date" value={form.scheduled_date} onChange={e => update('scheduled_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Started Date</label>
+              <input type="date" value={form.started_date} onChange={e => update('started_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Completed Date</label>
+              <input type="date" value={form.completed_date} onChange={e => update('completed_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Trainer Signed Date</label>
+              <input type="date" value={form.trainer_signed_date} onChange={e => update('trainer_signed_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Trainee Signed Date</label>
+              <input type="date" value={form.trainee_signed_date} onChange={e => update('trainee_signed_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            {modalData.module === 'phase_2_gmp_safety' && (
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Assessment Score (0–100)</label>
+                <input type="number" min="0" max="100" value={form.assessment_score}
+                  onChange={e => update('assessment_score', e.target.value)}
+                  className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Notes</label>
+            <textarea value={form.notes} onChange={e => update('notes', e.target.value)} rows={3}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm resize-none" />
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-dark-600 rounded-lg transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60 transition-colors">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── ReviewModal ───────────────────────────────────────────────────────────────
+function ReviewModal({ userId, token, onClose, onSaved }: {
+  userId: string;
+  token: string;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [form, setForm] = useState({
+    review_type:            'day_30',
+    review_date:            new Date().toISOString().split('T')[0],
+    scheduled_date:         '',
+    outcome:                'pending',
+    outcome_justification:  '',
+    weighted_overall_score: '',
+    confirmed_in_post:      false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  const update = (key: string, value: string | boolean) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await axios.post(
+        `${HR_BASE}/hr/employees/${userId}/reviews`,
+        {
+          review_type:            form.review_type,
+          review_date:            form.review_date            || null,
+          scheduled_date:         form.scheduled_date         || null,
+          outcome:                form.outcome,
+          outcome_justification:  form.outcome_justification  || null,
+          weighted_overall_score: form.weighted_overall_score !== '' ? Number(form.weighted_overall_score) : null,
+          confirmed_in_post:      form.confirmed_in_post,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      await onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Failed to create review');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 w-full max-w-lg space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white">New Review</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Review Type</label>
+              <select value={form.review_type} onChange={e => update('review_type', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
+                <option value="day_30">Day 30</option>
+                <option value="day_90">Day 90</option>
+                <option value="pip_30_day">PIP 30 Day</option>
+                <option value="pip_final">PIP Final</option>
+                <option value="annual_h1">Annual H1</option>
+                <option value="annual_h2">Annual H2</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Review Date *</label>
+              <input type="date" value={form.review_date} required
+                onChange={e => update('review_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Scheduled Date</label>
+              <input type="date" value={form.scheduled_date}
+                onChange={e => update('scheduled_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Outcome</label>
+              <select value={form.outcome} onChange={e => update('outcome', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
+                <option value="pending">Pending</option>
+                <option value="on_track">On Track</option>
+                <option value="action_required">Action Required</option>
+                <option value="serious_concern">Serious Concern</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="extended">Extended</option>
+                <option value="probation_failed">Probation Failed</option>
+                <option value="pip_passed">PIP Passed</option>
+                <option value="pip_failed">PIP Failed</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Weighted Overall Score (1–5)</label>
+              <input type="number" min="1" max="5" step="0.1" value={form.weighted_overall_score}
+                onChange={e => update('weighted_overall_score', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Outcome Justification</label>
+            <textarea value={form.outcome_justification}
+              onChange={e => update('outcome_justification', e.target.value)} rows={3}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm resize-none" />
+          </div>
+
+          {form.outcome === 'confirmed' && (
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input type="checkbox" checked={form.confirmed_in_post}
+                onChange={e => update('confirmed_in_post', e.target.checked)}
+                className="accent-primary-500" />
+              Confirmed in Post
+            </label>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-dark-600 rounded-lg transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60 transition-colors">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving...' : 'Save Review'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── DocLogModal ───────────────────────────────────────────────────────────────
+function DocLogModal({ userId, token, onClose, onSaved }: {
+  userId: string;
+  token: string;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [form, setForm] = useState({
+    document_type:  '',
+    document_title: '',
+    document_date:  '',
+    notes:          '',
+    is_filed:       false,
+    filed_date:     '',
+    storage_url:    '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  const update = (key: string, value: string | boolean) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await axios.post(
+        `${HR_BASE}/hr/employees/${userId}/documents`,
+        {
+          document_type:  form.document_type  || null,
+          document_title: form.document_title || null,
+          document_date:  form.document_date  || null,
+          notes:          form.notes          || null,
+          is_filed:       form.is_filed,
+          filed_date:     form.filed_date     || null,
+          storage_url:    form.storage_url    || null,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      await onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Failed to log document');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 w-full max-w-lg space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white">Log Document</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Document Type</label>
+              <select value={form.document_type} onChange={e => update('document_type', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
+                <option value="">— Select —</option>
+                {Object.entries(DOC_TYPE_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Document Date</label>
+              <input type="date" value={form.document_date}
+                onChange={e => update('document_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Title</label>
+            <input type="text" value={form.document_title}
+              onChange={e => update('document_title', e.target.value)}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Storage URL</label>
+            <input type="text" value={form.storage_url} placeholder="https://..."
+              onChange={e => update('storage_url', e.target.value)}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Notes</label>
+            <textarea value={form.notes} onChange={e => update('notes', e.target.value)} rows={2}
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm resize-none" />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={form.is_filed}
+              onChange={e => update('is_filed', e.target.checked)}
+              className="accent-primary-500" />
+            Filed
+          </label>
+
+          {form.is_filed && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Filed Date</label>
+              <input type="date" value={form.filed_date}
+                onChange={e => update('filed_date', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-dark-600 rounded-lg transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60 transition-colors">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving...' : 'Log Document'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
-  // Next.js 15: params is a Promise — unwrap with React.use()
   const resolvedParams = use(params);
   const userId = resolvedParams.id;
 
   const router = useRouter();
   const { token, user: currentUser } = useAuth();
   const [createModeRequested, setCreateModeRequested] = useState(false);
+  const [editHrMode, setEditHrMode]     = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [onboardingModal, setOnboardingModal] = useState<any>(null);
+  const [reviewModal, setReviewModal]   = useState(false);
+  const [docModal, setDocModal]         = useState(false);
 
   const [tab, setTab]                 = useState<Tab>('overview');
   const [loading, setLoading]         = useState(true);
@@ -333,10 +762,11 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const [onboarding, setOnboarding]   = useState<any[]>([]);
   const [reviews, setReviews]         = useState<any[]>([]);
   const [leave, setLeave]             = useState<any>(null);
+  const [documents, setDocuments]     = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [activeUsers, setActiveUsers] = useState<any[]>([]);
 
-  const canSeeSalary    = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+  const canSeeSalary      = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
   const canManageHrRecord = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
 
   useEffect(() => {
@@ -355,9 +785,6 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
     try {
       const headers = { Authorization: `Bearer ${token}` };
 
-      // FIX: /hr/active-users does not exist as a route.
-      // Use the existing /users endpoint (admin-gated) to populate the
-      // Reports To dropdown in the HR record creation form.
       const [empRes, deptRes, usersRes] = await Promise.all([
         axios.get(`${HR_BASE}/hr/employees/${userId}`, { headers }),
         canManageHrRecord
@@ -372,7 +799,6 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
       setProfile(empRes.data);
       setDepartments(deptRes.data);
 
-      // Filter to active users only for the Reports To dropdown
       const allUsers = Array.isArray(usersRes.data) ? usersRes.data : [];
       setActiveUsers(allUsers.filter((u: any) => u.is_active !== false));
 
@@ -380,18 +806,21 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
         setOnboarding([]);
         setReviews([]);
         setLeave(null);
+        setDocuments([]);
         setTab('overview');
         return;
       }
 
-      const [onbRes, revRes, leaveRes] = await Promise.all([
+      const [onbRes, revRes, leaveRes, docsRes] = await Promise.all([
         axios.get(`${HR_BASE}/hr/employees/${userId}/onboarding`, { headers }),
         axios.get(`${HR_BASE}/hr/employees/${userId}/reviews`, { headers }),
         axios.get(`${HR_BASE}/hr/employees/${userId}/leave-balance`, { headers }),
+        axios.get(`${HR_BASE}/hr/employees/${userId}/documents`, { headers }).catch(() => ({ data: [] })),
       ]);
       setOnboarding(onbRes.data);
       setReviews(revRes.data);
       setLeave(leaveRes.data);
+      setDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
     } catch (err: any) {
       if (err?.response?.status === 404) {
         setError('Employee not found.');
@@ -410,13 +839,14 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const activePip   = profileData?.activePip ?? null;
   const name        = profile?.full_name ?? 'Employee Profile';
   const hasHrRecord = profile?.hr_record_exists !== false;
-  const showCreateForm = canManageHrRecord && (!hasHrRecord || createModeRequested);
+  const showCreateForm = canManageHrRecord && (!hasHrRecord || createModeRequested || editHrMode);
 
   const TABS: { key: Tab; label: string }[] = hasHrRecord ? [
     { key: 'overview',   label: 'Overview'   },
     { key: 'onboarding', label: 'Onboarding' },
     { key: 'reviews',    label: 'Reviews'    },
     { key: 'leave',      label: 'Leave'      },
+    { key: 'documents',  label: 'Documents'  },
   ] : [
     { key: 'overview', label: 'Overview' },
   ];
@@ -424,6 +854,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const handleRecordSaved = async () => {
     await fetchAll();
     setCreateModeRequested(false);
+    setEditHrMode(false);
     router.replace(`/hr/employees/${userId}`);
   };
 
@@ -476,7 +907,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           </div>
         )}
 
-        {/* HR record creation form */}
+        {/* HR record creation / edit form */}
         {profile && showCreateForm && token && (
           <HRRecordForm
             userId={userId}
@@ -485,6 +916,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
             users={activeUsers}
             token={token}
             onSaved={handleRecordSaved}
+            existingRecord={editHrMode ? profile : undefined}
           />
         )}
 
@@ -534,9 +966,19 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                 {/* Right: HR extension */}
                 <div className="space-y-4">
                   <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 space-y-4">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">
-                      HR Status
-                    </h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                        HR Status
+                      </h3>
+                      {canManageHrRecord && hasHrRecord && !showCreateForm && (
+                        <button
+                          onClick={() => setEditHrMode(true)}
+                          className="text-xs text-primary-400 hover:text-primary-300 border border-primary-500/30 px-2 py-0.5 rounded transition-colors"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                       <Field label="HR Status" value={
                         <span className="capitalize">{fmt(profile.hr_status?.replace(/_/g, ' '))}</span>
@@ -547,19 +989,30 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                           : <XCircle className="w-4 h-4 text-gray-600 inline" />
                       } />
                       <Field label="Probation End" value={fmtDate(profile.effective_probation_end ?? profile.probation_end_date)} />
-                      <Field label="Days to Prob. End" value={
-                        profile.days_to_probation_end !== null && profile.days_to_probation_end !== undefined
-                          ? <span className={
-                              (profile.days_to_probation_end ?? 99) < 14
-                                ? 'text-red-400 font-semibold'
-                                : (profile.days_to_probation_end ?? 99) < 30
-                                  ? 'text-yellow-400'
-                                  : 'text-gray-300'
-                            }>
-                              {profile.days_to_probation_end} days
-                            </span>
-                          : null
-                      } />
+
+                      {/* Only show probation countdown for employees still on probation */}
+                      {['onboarding', 'probation'].includes(profile.hr_status ?? '') ? (
+                        <Field label="Days to Prob. End" value={
+                          profile.days_to_probation_end !== null && profile.days_to_probation_end !== undefined
+                            ? <span className={
+                                Number(profile.days_to_probation_end) < 0   ? 'text-red-400 font-semibold' :
+                                Number(profile.days_to_probation_end) < 14  ? 'text-red-400 font-semibold' :
+                                Number(profile.days_to_probation_end) < 30  ? 'text-yellow-400' : 'text-gray-300'
+                              }>
+                                {Number(profile.days_to_probation_end) < 0
+                                  ? `${Math.abs(profile.days_to_probation_end)} days overdue`
+                                  : `${profile.days_to_probation_end} days remaining`}
+                              </span>
+                            : '—'
+                        } />
+                      ) : (
+                        <Field label="Probation Status" value={
+                          <span className="text-green-400 font-semibold capitalize">
+                            {profile.hr_status?.replace(/_/g, ' ') ?? '—'}
+                          </span>
+                        } />
+                      )}
+
                       <Field label="Confirmation Date" value={fmtDate(profile.confirmation_date)} />
                       <Field label="Exit Date"         value={fmtDate(profile.exit_date)} />
                     </div>
@@ -603,6 +1056,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                         <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Status</th>
                         <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Completed</th>
                         <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Score</th>
+                        <th className="px-5 py-3 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-dark-700">
@@ -622,6 +1076,17 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                                 ? `${m.assessment_score}%`
                                 : '—'}
                             </td>
+                            <td className="px-5 py-3 text-right">
+                              {(currentUser?.role === 'hr_admin' || currentUser?.role === 'admin' ||
+                                currentUser?.role === 'hr_manager') && (
+                                <button
+                                  onClick={() => setOnboardingModal(m)}
+                                  className="text-xs px-3 py-1.5 bg-primary-600/20 hover:bg-primary-600/40 border border-primary-500/30 text-primary-400 rounded-lg transition-colors"
+                                >
+                                  Update
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
@@ -633,44 +1098,56 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
 
             {/* ── Tab: Reviews ───────────────────────────────────────────────── */}
             {tab === 'reviews' && (
-              <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
-                {reviews.length === 0 ? (
-                  <div className="p-10 text-center text-gray-500 text-sm">No review records yet.</div>
-                ) : (
-                  <table className="w-full text-left">
-                    <thead className="bg-dark-900 border-b border-dark-700">
-                      <tr>
-                        <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
-                        <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Review Date</th>
-                        <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Outcome</th>
-                        <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Score</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-dark-700">
-                      {reviews.map((r, i) => {
-                        const badge = OUTCOME_BADGE[r.outcome] || OUTCOME_BADGE.pending;
-                        return (
-                          <tr key={i} className="hover:bg-dark-700/40 transition-colors">
-                            <td className="px-5 py-3 text-sm text-white font-medium capitalize">
-                              {r.review_type?.replace(/_/g, ' ') ?? '—'}
-                            </td>
-                            <td className="px-5 py-3 text-sm text-gray-400">{fmtDate(r.review_date)}</td>
-                            <td className="px-5 py-3">
-                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${badge}`}>
-                                {(r.outcome ?? 'pending').replace(/_/g, ' ')}
-                              </span>
-                            </td>
-                            <td className="px-5 py-3 text-sm text-gray-300 font-mono">
-                              {r.weighted_overall_score !== null && r.weighted_overall_score !== undefined
-                                ? Number(r.weighted_overall_score).toFixed(1)
-                                : '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  {canManageHrRecord && (
+                    <button
+                      onClick={() => setReviewModal(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                    >
+                      <Plus className="w-4 h-4" /> New Review
+                    </button>
+                  )}
+                </div>
+                <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+                  {reviews.length === 0 ? (
+                    <div className="p-10 text-center text-gray-500 text-sm">No review records yet.</div>
+                  ) : (
+                    <table className="w-full text-left">
+                      <thead className="bg-dark-900 border-b border-dark-700">
+                        <tr>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Review Date</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Outcome</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Score</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-dark-700">
+                        {reviews.map((r, i) => {
+                          const badge = OUTCOME_BADGE[r.outcome] || OUTCOME_BADGE.pending;
+                          return (
+                            <tr key={i} className="hover:bg-dark-700/40 transition-colors">
+                              <td className="px-5 py-3 text-sm text-white font-medium capitalize">
+                                {r.review_type?.replace(/_/g, ' ') ?? '—'}
+                              </td>
+                              <td className="px-5 py-3 text-sm text-gray-400">{fmtDate(r.review_date)}</td>
+                              <td className="px-5 py-3">
+                                <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${badge}`}>
+                                  {(r.outcome ?? 'pending').replace(/_/g, ' ')}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-sm text-gray-300 font-mono">
+                                {r.weighted_overall_score !== null && r.weighted_overall_score !== undefined
+                                  ? Number(r.weighted_overall_score).toFixed(1)
+                                  : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </div>
             )}
 
@@ -694,7 +1171,6 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                       ))}
                     </div>
 
-                    {/* Usage progress bar */}
                     <div className="bg-dark-800 border border-dark-700 rounded-xl p-5">
                       <div className="flex justify-between text-xs text-gray-400 mb-2">
                         <span>Annual leave usage</span>
@@ -724,10 +1200,90 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                 )}
               </div>
             )}
+
+            {/* ── Tab: Documents ─────────────────────────────────────────────── */}
+            {tab === 'documents' && (
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  {canManageHrRecord && token && (
+                    <button
+                      onClick={() => setDocModal(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                    >
+                      <Plus className="w-4 h-4" /> Log Document
+                    </button>
+                  )}
+                </div>
+                <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+                  {documents.length === 0 ? (
+                    <div className="p-10 text-center text-gray-500 text-sm">No documents logged yet.</div>
+                  ) : (
+                    <table className="w-full text-left">
+                      <thead className="bg-dark-900 border-b border-dark-700">
+                        <tr>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Title</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Date</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Filed</th>
+                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-dark-700">
+                        {documents.map((d, i) => (
+                          <tr key={i} className="hover:bg-dark-700/40 transition-colors">
+                            <td className="px-5 py-3 text-sm text-white">
+                              {DOC_TYPE_LABEL[d.document_type] ?? fmt(d.document_type)}
+                            </td>
+                            <td className="px-5 py-3 text-sm text-gray-300">{fmt(d.document_title)}</td>
+                            <td className="px-5 py-3 text-sm text-gray-400">{fmtDate(d.document_date)}</td>
+                            <td className="px-5 py-3 text-sm">
+                              {d.is_filed
+                                ? <CheckCircle2 className="w-4 h-4 text-green-400 inline" />
+                                : <XCircle className="w-4 h-4 text-gray-600 inline" />}
+                            </td>
+                            <td className="px-5 py-3 text-sm text-gray-400 max-w-[200px] truncate">{fmt(d.notes)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
 
       </div>
+
+      {/* ── Modals ─────────────────────────────────────────────────────────── */}
+      {onboardingModal && token && (
+        <OnboardingUpdateModal
+          userId={userId}
+          token={token}
+          modalData={onboardingModal}
+          onClose={() => setOnboardingModal(null)}
+          onSaved={fetchAll}
+        />
+      )}
+
+      {reviewModal && token && (
+        <ReviewModal
+          userId={userId}
+          token={token}
+          onClose={() => setReviewModal(false)}
+          onSaved={fetchAll}
+        />
+      )}
+
+      {docModal && token && (
+        <DocLogModal
+          userId={userId}
+          token={token}
+          onClose={() => setDocModal(false)}
+          onSaved={fetchAll}
+        />
+      )}
+
     </HRLayout>
   );
 }

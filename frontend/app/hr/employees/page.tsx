@@ -226,10 +226,16 @@ export default function HREmployeesPage() {
                       </td>
                       {/* Probation */}
                       <td className="px-5 py-4">
-                        {days !== null ? (
-                          <span className={`text-sm ${probationClass(days)}`}>
-                            {days} days
-                          </span>
+                        {['onboarding', 'probation'].includes(emp.hr_status ?? '') ? (
+                          days !== null ? (
+                            <span className={`text-sm ${probationClass(days)}`}>
+                              {days < 0 ? `${Math.abs(days)}d overdue` : `${days}d left`}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-600">—</span>
+                          )
+                        ) : emp.hr_status === 'confirmed' ? (
+                          <span className="text-xs text-green-400">Confirmed</span>
                         ) : (
                           <span className="text-xs text-gray-600">—</span>
                         )}

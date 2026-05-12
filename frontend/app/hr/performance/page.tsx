@@ -257,7 +257,7 @@ export default function PerformancePage() {
                   <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Bonus</th>
                   <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Action Req.</th>
                   <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">PIP</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Profile</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-dark-700">
@@ -336,14 +336,25 @@ export default function PerformancePage() {
                           : <span className="text-gray-700 text-sm">—</span>
                         }
                       </td>
-                      {/* Profile link */}
+                      {/* Actions */}
                       <td
                         className="px-4 py-3 text-right"
-                        onClick={e => { e.stopPropagation(); router.push(`/hr/employees/${emp.user_id}`); }}
+                        onClick={e => e.stopPropagation()}
                       >
-                        <button className="inline-flex items-center gap-1 px-2 py-1 bg-dark-700 hover:bg-dark-600 border border-dark-600 text-white text-xs rounded transition-colors">
-                          Profile <ChevronRight className="w-3 h-3" />
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => router.push(`/hr/employees/${emp.user_id}?tab=reviews`)}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-primary-600/20 hover:bg-primary-600/40 border border-primary-500/30 text-primary-400 text-xs rounded transition-colors"
+                          >
+                            Rate
+                          </button>
+                          <button
+                            onClick={() => router.push(`/hr/employees/${emp.user_id}`)}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-dark-700 hover:bg-dark-600 border border-dark-600 text-white text-xs rounded transition-colors"
+                          >
+                            Profile <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
