@@ -243,6 +243,29 @@ const createHrRecord = async (userId, hrData, createdByUserId) => {
       createdByUserId,
     ]);
 
+    // Initialise all 8 onboarding modules with 'not_started' so the
+    // onboarding tracker has real rows and the completion trigger works.
+    // Uses ON CONFLICT DO NOTHING so re-running create is safe.
+    const ONBOARDING_MODULES = [
+      'phase_1_induction',
+      'phase_2_gmp_safety',
+      'module_a_finance',
+      'module_b_operations',
+      'module_c_engineering',
+      'module_d_qa_qc',
+      'module_e_sales_admin',
+      'module_f_mgmt_systems',
+    ];
+
+    for (const module of ONBOARDING_MODULES) {
+      await pool.query(
+        `INSERT INTO hr_onboarding_progress (user_id, module, status)
+         VALUES ($1, $2, 'not_started')
+         ON CONFLICT (user_id, module) DO NOTHING`,
+        [userId, module]
+      );
+    }
+
     return await getEmployeeByUserId(userId, 'admin');
   } catch (error) {
     throw error;
@@ -314,6 +337,14 @@ const getOnboardingProgress = async (userId) => {
 // ─── 7. upsertOnboardingModule ───────────────────────────────────────────────
 
 const upsertOnboardingModule = async (userId, module, moduleData, trainerUserId) => {
+  const VALID_MODULES = [
+    'phase_1_induction', 'phase_2_gmp_safety', 'module_a_finance',
+    'module_b_operations', 'module_c_engineering', 'module_d_qa_qc',
+    'module_e_sales_admin', 'module_f_mgmt_systems',
+  ];
+  if (!module || !VALID_MODULES.includes(module)) {
+    throw new Error(`Invalid onboarding module: ${module}`);
+  }
   try {
     const {
       status,

@@ -1077,7 +1077,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                                 : '—'}
                             </td>
                             <td className="px-5 py-3 text-right">
-                              {(currentUser?.role === 'hr_admin' || currentUser?.role === 'admin' ||
+                              {m.module && (currentUser?.role === 'hr_admin' || currentUser?.role === 'admin' ||
                                 currentUser?.role === 'hr_manager') && (
                                 <button
                                   onClick={() => setOnboardingModal(m)}
