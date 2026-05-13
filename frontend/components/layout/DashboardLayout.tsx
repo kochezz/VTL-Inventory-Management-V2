@@ -219,35 +219,47 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return init;
   });
 
-  // ── Session idle timeout ─────────────────────────────────────
+  // ── FIX: Self-contained session expiry — clears auth then redirects ──────
+  // logout() from useAuth clears Zustand state + localStorage but does NOT
+  // redirect. Without an explicit router.push('/login') the page stays
+  // mounted with no token, causing the "inactive crash" appearance.
+  // Using window.location.replace (not router.push) guarantees the redirect
+  // fires even if the component is mid-unmount and the router hook is stale.
+  const expireSession = useCallback(() => {
+    logout();
+    window.location.replace('/login');
+  }, [logout]);
+
+  // ── Session idle timeout ─────────────────────────────────────────────────
   const handleIdle = useCallback(() => {
     setShowIdleWarning(true);
     setWarningCountdown(60);
   }, []);
 
   useIdleTimeout({ timeoutMs: 9 * 60 * 1000, onIdle: handleIdle });
-  // 9 minutes idle → show warning. User has 60 seconds to dismiss.
-  // If not dismissed, logout fires at the 10-minute mark.
 
   useEffect(() => {
     if (!showIdleWarning) return;
+
+    // Countdown reached zero — session has expired
     if (warningCountdown <= 0) {
       setShowIdleWarning(false);
-      logout();
+      expireSession();   // FIX: was logout() with no redirect
       return;
     }
+
     const timer = setTimeout(
       () => setWarningCountdown(c => c - 1),
       1000
     );
     return () => clearTimeout(timer);
-  }, [showIdleWarning, warningCountdown, logout]);
+  }, [showIdleWarning, warningCountdown, expireSession]);
 
   const dismissIdleWarning = useCallback(() => {
     setShowIdleWarning(false);
     setWarningCountdown(60);
   }, []);
-  // ── End session idle timeout ─────────────────────────────────
+  // ── End session idle timeout ─────────────────────────────────────────────
 
   useEffect(() => {
     if (!isAuthenticated) router.push('/login');
@@ -427,7 +439,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </main>
       </div>
 
-      {/* ── Idle Session Warning Modal ────────────────────────── */}
+      {/* ── Idle Session Warning Modal ───────────────────────────────────────── */}
       {showIdleWarning && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center">
           <div className="bg-dark-800 border border-amber-500/50 rounded-xl p-8 max-w-sm w-full mx-4 shadow-2xl text-center">
@@ -460,10 +472,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 I&apos;m Still Here — Continue
               </button>
               <button
-                onClick={() => {
-                  setShowIdleWarning(false);
-                  logout();
-                }}
+                onClick={expireSession}  {/* FIX: was logout() with no redirect */}
                 className="w-full px-6 py-3 bg-dark-900 hover:bg-dark-700 text-gray-400 hover:text-white rounded-lg transition-colors text-sm border border-dark-600"
               >
                 Log Out Now
