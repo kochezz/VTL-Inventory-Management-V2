@@ -805,64 +805,6 @@ const upsertSopTraining = async (userId, sopData, createdByUserId) => {
   }
 };
 
-// ─── 21. getPersonnelDocuments ───────────────────────────────────────────────
-
-const getPersonnelDocuments = async (userId) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, document_type, document_title, document_date, version,
-              storage_url, filename, file_size_bytes, content_type,
-              is_filed, filed_date, notes, created_at
-       FROM hr_personnel_documents
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
-      [userId]
-    );
-    return result.rows;
-  } catch (error) {
-    throw error;
-  }
-};
-
-// ─── 22. logPersonnelDocument ────────────────────────────────────────────────
-
-const logPersonnelDocument = async (userId, docData, createdByUserId) => {
-  try {
-    const {
-      document_type, document_title, document_date, version,
-      storage_url, filename, file_size_bytes, content_type,
-      is_filed, filed_date, notes,
-    } = docData;
-
-    const result = await pool.query(
-      `INSERT INTO hr_personnel_documents (
-        user_id, document_type, document_title, document_date, version,
-        storage_url, filename, file_size_bytes, content_type,
-        is_filed, filed_date, notes, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      RETURNING *`,
-      [
-        userId,
-        document_type || null,
-        document_title || null,
-        document_date || null,
-        version || '1.0',
-        storage_url || null,
-        filename || null,
-        file_size_bytes || null,
-        content_type || null,
-        is_filed !== undefined ? is_filed : false,
-        filed_date || null,
-        notes || null,
-        createdByUserId,
-      ]
-    );
-    return result.rows[0];
-  } catch (error) {
-    throw error;
-  }
-};
-
 // ────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -889,6 +831,4 @@ module.exports = {
   getDepartments,
   getSopTrainingRecords,
   upsertSopTraining,
-  getPersonnelDocuments,
-  logPersonnelDocument,
 };

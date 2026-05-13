@@ -1,11 +1,29 @@
 'use strict';
 
-const express = require('express');
-const router  = express.Router();
+const express    = require('express');
+const router     = express.Router();
+const multer     = require('multer');
 
 const { authenticate }                    = require('../middleware/auth-middleware');
 const { requireHrAccess, requireHrAdmin } = require('../middleware/hr-middleware');
 const hrService                           = require('../services/hr-service');
+const hrDocService                        = require('../services/hr-document-service');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+    ];
+    allowed.includes(file.mimetype)
+      ? cb(null, true)
+      : cb(new Error('Only PDF, JPG, and PNG files are accepted for HR documents.'));
+  },
+});
 
 // Authenticate every HR request
 router.use(authenticate);
@@ -239,22 +257,114 @@ router.put('/employees/:userId/leave-balance', requireHrAdmin, async (req, res) 
 
 // ─── Personnel Documents ──────────────────────────────────────────────────────
 
+// GET — list documents (no file data)
 router.get('/employees/:userId/documents', requireHrAccess, async (req, res) => {
   try {
-    res.json(await hrService.getPersonnelDocuments(req.params.userId));
+    res.json(await hrDocService.getPersonnelDocuments(req.params.userId));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-router.post('/employees/:userId/documents', requireHrAdmin, async (req, res) => {
-  try {
-    res.status(201).json(
-      await hrService.logPersonnelDocument(req.params.userId, req.body, req.user.user_id)
-    );
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+// POST — upload a new document
+router.post(
+  '/employees/:userId/documents',
+  requireHrAccess,
+  upload.single('document_file'),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+
+      const meta = {
+        document_type:    req.body.document_type,
+        document_title:   req.body.document_title,
+        document_date:    req.body.document_date   || null,
+        version:          req.body.version         || '1.0',
+        notes:            req.body.notes           || null,
+        is_gate_document: req.body.is_gate_document === 'true',
+        gate_category:    req.body.gate_category   || null,
+      };
+
+      if (!meta.document_type) {
+        return res.status(400).json({ message: 'document_type is required.' });
+      }
+
+      const doc = await hrDocService.uploadPersonnelDocument(
+        req.params.userId,
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+        meta,
+        req.user.user_id
+      );
+
+      res.status(201).json(doc);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
   }
-});
+);
+
+// POST — manager sign-off on a document
+router.post(
+  '/documents/:documentId/sign-off',
+  requireHrAccess,
+  async (req, res) => {
+    try {
+      const { signature_password, sign_note } = req.body;
+      if (!signature_password) {
+        return res.status(400).json({ message: 'Digital signature (password) is required.' });
+      }
+      res.json(await hrDocService.managerSignOffDocument(
+        req.params.documentId,
+        req.user.user_id,
+        signature_password,
+        sign_note || null
+      ));
+    } catch (error) {
+      if (error.message.includes('Invalid digital signature')) {
+        return res.status(401).json({ message: error.message });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
+// GET — download a document file
+router.get(
+  '/documents/:documentId/download',
+  requireHrAccess,
+  async (req, res) => {
+    try {
+      const { fileBuffer, originalName, mimeType } =
+        await hrDocService.downloadPersonnelDocument(
+          req.params.documentId,
+          req.user.user_id
+        );
+      res.setHeader('Content-Disposition', `attachment; filename="${originalName}"`);
+      res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+      res.send(fileBuffer);
+    } catch (error) {
+      res.status(404).json({ message: error.message });
+    }
+  }
+);
+
+// GET — check gating status for a user
+router.get(
+  '/employees/:userId/gate-status/:category',
+  requireHrAccess,
+  async (req, res) => {
+    try {
+      const { category } = req.params;
+      if (!['onboarding', 'probation'].includes(category)) {
+        return res.status(400).json({ message: 'category must be onboarding or probation' });
+      }
+      res.json(await hrDocService.checkGatingDocuments(req.params.userId, category));
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
 
 module.exports = router;
