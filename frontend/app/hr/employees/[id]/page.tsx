@@ -7,6 +7,7 @@ import HRLayout from '@/components/hr/HRLayout';
 import {
   Loader2, AlertTriangle, ChevronLeft, Lock,
   CheckCircle2, XCircle, Clock, AlertOctagon, Save, Plus, X,
+  Download, Upload,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -15,7 +16,6 @@ const HR_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api')
 
 type Tab = 'overview' | 'onboarding' | 'reviews' | 'leave' | 'documents';
 
-// ── Formatters ────────────────────────────────────────────────────────────────
 function fmt(val: string | null | undefined) {
   return val ?? '—';
 }
@@ -97,19 +97,21 @@ const OUTCOME_BADGE: Record<string, string> = {
 };
 
 const DOC_TYPE_LABEL: Record<string, string> = {
-  employment_contract: 'Employment Contract',
-  day_30_review_form:  'Day 30 Review Form',
-  day_90_review_form:  'Day 90 Review Form',
-  confirmation_letter: 'Confirmation Letter',
-  pip_document:        'PIP Document',
-  written_warning:     'Written Warning',
-  phase_1_signoff:     'Phase 1 Sign-Off',
-  phase_2_signoff:     'Phase 2 Sign-Off',
-  module_signoff:      'Module Sign-Off',
-  sop_training_record: 'SOP Training Record',
-  offer_letter:        'Offer Letter',
-  nda:                 'NDA',
-  other:               'Other',
+  employment_contract:  'Employment Contract',
+  schedule_3_receipt:   'Document Receipt (Schedule 3)',
+  nrc_passport_copy:    'NRC / Passport Copy',
+  phase_1_signoff:      'Phase 1 Sign-Off',
+  phase_2_signoff:      'Phase 2 Sign-Off',
+  module_signoff:       'Module Sign-Off',
+  day_30_review_form:   'Day 30 Review Form',
+  day_90_review_form:   'Day 90 Review Form',
+  confirmation_letter:  'Confirmation Letter',
+  pip_document:         'PIP Document',
+  written_warning:      'Written Warning',
+  sop_training_record:  'SOP Training Record',
+  training_certificate: 'Training Certificate',
+  exit_documentation:   'Exit Documentation',
+  other:                'Other',
 };
 
 // ── Field row helper ──────────────────────────────────────────────────────────
@@ -324,11 +326,13 @@ function HRRecordForm({
 }
 
 // ── OnboardingUpdateModal ─────────────────────────────────────────────────────
-function OnboardingUpdateModal({ userId, token, modalData, onClose, onSaved }: {
+function OnboardingUpdateModal({ userId, token, modalData, onboardingGate, onClose, onSaved }: {
   userId: string;
   token: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modalData: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onboardingGate: any;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -342,15 +346,45 @@ function OnboardingUpdateModal({ userId, token, modalData, onClose, onSaved }: {
     assessment_score:    modalData?.assessment_score != null ? String(modalData.assessment_score) : '',
     notes:               modalData?.notes || '',
   });
-  const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState<string | null>(null);
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const [gateError, setGateError] = useState<string | null>(null);
 
   const update = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
+
+  const showGateWarning =
+    form.status === 'completed' &&
+    onboardingGate &&
+    !onboardingGate.gateOpen &&
+    modalData.module !== 'phase_2_gmp_safety';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
+    setGateError(null);
+
+    if (modalData.module === 'phase_2_gmp_safety' && form.status === 'completed') {
+      try {
+        const gateRes = await axios.get(
+          `${HR_BASE}/hr/employees/${userId}/gate-status/onboarding`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!gateRes.data.gateOpen) {
+          const missing = (gateRes.data.missing as string[])
+            .map(m => m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))
+            .join(', ');
+          setGateError(
+            `Cannot complete Phase 2 until all required onboarding documents are uploaded and signed off by a line manager. Missing: ${missing}`
+          );
+          setSaving(false);
+          return;
+        }
+      } catch {
+        // gate check failed — allow save to proceed
+      }
+    }
+
     try {
       await axios.put(
         `${HR_BASE}/hr/employees/${userId}/onboarding/${modalData.module}`,
@@ -387,6 +421,14 @@ function OnboardingUpdateModal({ userId, token, modalData, onClose, onSaved }: {
 
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
+        )}
+        {gateError && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{gateError}</div>
+        )}
+        {showGateWarning && (
+          <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded-lg px-4 py-3 text-sm">
+            ⚠ Onboarding documentation incomplete — ensure all gate documents are uploaded and signed off before marking onboarding as complete.
+          </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -476,8 +518,9 @@ function ReviewModal({ userId, token, onClose, onSaved }: {
     weighted_overall_score: '',
     confirmed_in_post:      false,
   });
-  const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState<string | null>(null);
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const [gateError, setGateError] = useState<string | null>(null);
 
   const update = (key: string, value: string | boolean) =>
     setForm(prev => ({ ...prev, [key]: value }));
@@ -486,6 +529,29 @@ function ReviewModal({ userId, token, onClose, onSaved }: {
     e.preventDefault();
     setSaving(true);
     setError(null);
+    setGateError(null);
+
+    if (form.review_type === 'day_90' && form.outcome === 'confirmed') {
+      try {
+        const gateRes = await axios.get(
+          `${HR_BASE}/hr/employees/${userId}/gate-status/probation`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!gateRes.data.gateOpen) {
+          const missing = (gateRes.data.missing as string[])
+            .map(m => m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))
+            .join(', ');
+          setGateError(
+            `Cannot confirm employment: required probation documents are missing or not signed off. Go to the Documents tab to resolve. Missing: ${missing}`
+          );
+          setSaving(false);
+          return;
+        }
+      } catch {
+        // gate check failed — allow save to proceed
+      }
+    }
+
     try {
       await axios.post(
         `${HR_BASE}/hr/employees/${userId}/reviews`,
@@ -521,6 +587,9 @@ function ReviewModal({ userId, token, onClose, onSaved }: {
 
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
+        )}
+        {gateError && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{gateError}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -605,50 +674,74 @@ function ReviewModal({ userId, token, onClose, onSaved }: {
   );
 }
 
-// ── DocLogModal ───────────────────────────────────────────────────────────────
-function DocLogModal({ userId, token, onClose, onSaved }: {
+// ── DocUploadModal ────────────────────────────────────────────────────────────
+function DocUploadModal({ userId, token, onClose, onSaved }: {
   userId: string;
   token: string;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const today = new Date().toISOString().split('T')[0];
   const [form, setForm] = useState({
-    document_type:  '',
-    document_title: '',
-    document_date:  '',
-    notes:          '',
-    is_filed:       false,
-    filed_date:     '',
-    storage_url:    '',
+    document_type:    '',
+    document_title:   '',
+    document_date:    today,
+    version:          '1.0',
+    notes:            '',
+    is_gate_document: false,
+    gate_category:    '',
   });
-  const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [saving, setSaving]             = useState(false);
+  const [error, setError]               = useState<string | null>(null);
 
   const update = (key: string, value: string | boolean) =>
     setForm(prev => ({ ...prev, [key]: value }));
 
+  const handleTypeChange = (val: string) => {
+    setForm(prev => ({
+      ...prev,
+      document_type:  val,
+      document_title: prev.document_title || (DOC_TYPE_LABEL[val] ?? ''),
+    }));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (file && file.size > 20 * 1024 * 1024) {
+      setError('File size must be under 20 MB.');
+      return;
+    }
+    setError(null);
+    setSelectedFile(file);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedFile) { setError('Please select a file to upload.'); return; }
+    if (!form.document_type) { setError('Document type is required.'); return; }
     setSaving(true);
     setError(null);
     try {
+      const formData = new FormData();
+      formData.append('document_file',    selectedFile);
+      formData.append('document_type',    form.document_type);
+      formData.append('document_title',   form.document_title);
+      formData.append('document_date',    form.document_date);
+      formData.append('version',          form.version);
+      formData.append('is_gate_document', String(form.is_gate_document));
+      formData.append('gate_category',    form.gate_category);
+      formData.append('notes',            form.notes);
+
       await axios.post(
         `${HR_BASE}/hr/employees/${userId}/documents`,
-        {
-          document_type:  form.document_type  || null,
-          document_title: form.document_title || null,
-          document_date:  form.document_date  || null,
-          notes:          form.notes          || null,
-          is_filed:       form.is_filed,
-          filed_date:     form.filed_date     || null,
-          storage_url:    form.storage_url    || null,
-        },
+        formData,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       await onSaved();
       onClose();
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to log document');
+      setError(err?.response?.data?.message || 'Failed to upload document');
     } finally {
       setSaving(false);
     }
@@ -658,7 +751,7 @@ function DocLogModal({ userId, token, onClose, onSaved }: {
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
       <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 w-full max-w-lg space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white">Log Document</h2>
+          <h2 className="text-sm font-bold text-white">Upload Document</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
             <X className="w-5 h-5" />
           </button>
@@ -670,9 +763,9 @@ function DocLogModal({ userId, token, onClose, onSaved }: {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Document Type</label>
-              <select value={form.document_type} onChange={e => update('document_type', e.target.value)}
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Document Type *</label>
+              <select value={form.document_type} onChange={e => handleTypeChange(e.target.value)}
                 className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
                 <option value="">— Select —</option>
                 {Object.entries(DOC_TYPE_LABEL).map(([k, v]) => (
@@ -680,27 +773,47 @@ function DocLogModal({ userId, token, onClose, onSaved }: {
                 ))}
               </select>
             </div>
+
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Document Title</label>
+              <input type="text" value={form.document_title}
+                onChange={e => update('document_title', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
+
             <div>
               <label className="block text-xs text-gray-400 mb-1">Document Date</label>
               <input type="date" value={form.document_date}
                 onChange={e => update('document_date', e.target.value)}
                 className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
             </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Version</label>
+              <input type="text" value={form.version}
+                onChange={e => update('version', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Title</label>
-            <input type="text" value={form.document_title}
-              onChange={e => update('document_title', e.target.value)}
-              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
-          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={form.is_gate_document}
+              onChange={e => update('is_gate_document', e.target.checked)}
+              className="accent-primary-500" />
+            Gate Document
+          </label>
 
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Storage URL</label>
-            <input type="text" value={form.storage_url} placeholder="https://..."
-              onChange={e => update('storage_url', e.target.value)}
-              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
-          </div>
+          {form.is_gate_document && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Gate Category</label>
+              <select value={form.gate_category} onChange={e => update('gate_category', e.target.value)}
+                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm">
+                <option value="">— Select —</option>
+                <option value="onboarding">Onboarding</option>
+                <option value="probation">Probation</option>
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs text-gray-400 mb-1">Notes</label>
@@ -708,21 +821,18 @@ function DocLogModal({ userId, token, onClose, onSaved }: {
               className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm resize-none" />
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-            <input type="checkbox" checked={form.is_filed}
-              onChange={e => update('is_filed', e.target.checked)}
-              className="accent-primary-500" />
-            Filed
-          </label>
-
-          {form.is_filed && (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Filed Date</label>
-              <input type="date" value={form.filed_date}
-                onChange={e => update('filed_date', e.target.value)}
-                className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
-            </div>
-          )}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">File * (PDF, JPG or PNG — max 20 MB)</label>
+            <input
+              type="file"
+              accept="application/pdf,image/jpeg,image/jpg,image/png"
+              onChange={handleFileChange}
+              className="w-full text-sm text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-primary-600/20 file:text-primary-400 hover:file:bg-primary-600/40 cursor-pointer"
+            />
+            {selectedFile && (
+              <p className="text-xs text-gray-500 mt-1">{selectedFile.name} ({(selectedFile.size / 1024).toFixed(0)} KB)</p>
+            )}
+          </div>
 
           <div className="flex justify-end gap-3">
             <button type="button" onClick={onClose}
@@ -731,8 +841,107 @@ function DocLogModal({ userId, token, onClose, onSaved }: {
             </button>
             <button type="submit" disabled={saving}
               className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60 transition-colors">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {saving ? 'Saving...' : 'Log Document'}
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {saving ? 'Uploading...' : 'Upload Document'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── SignOffModal ──────────────────────────────────────────────────────────────
+function SignOffModal({ documentId, documentTitle, token, onClose, onSaved }: {
+  documentId: string;
+  documentTitle: string;
+  token: string;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [signNote, setSignNote]   = useState('');
+  const [password, setPassword]   = useState('');
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!confirmed) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await axios.post(
+        `${HR_BASE}/hr/documents/${documentId}/sign-off`,
+        { signature_password: password, sign_note: signNote || null },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      await onSaved();
+      onClose();
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        setError('Invalid password. Please try again.');
+      } else {
+        setError(err?.response?.data?.message || 'Failed to sign off document');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 w-full max-w-md space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white">Manager Sign-Off</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="bg-dark-900 border border-dark-600 rounded-lg px-4 py-3 text-sm text-gray-300">
+          <p className="font-medium text-white mb-1">{documentTitle}</p>
+          <p className="text-xs text-gray-500">
+            Your digital sign-off constitutes a non-repudiation record verified by your system credentials.
+          </p>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <label className="flex items-start gap-2 text-sm text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={confirmed}
+              onChange={e => setConfirmed(e.target.checked)}
+              className="accent-primary-500 mt-0.5 flex-shrink-0" />
+            I confirm I have reviewed this document and it is complete and correct.
+          </label>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Sign-Off Note (optional)</label>
+            <textarea value={signNote} onChange={e => setSignNote(e.target.value)} rows={2}
+              placeholder="e.g. Original sighted in person"
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm resize-none" />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Digital Signature — Your Password *</label>
+            <input type="password" value={password} required
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Enter your system password"
+              className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm" />
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-dark-600 rounded-lg transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving || !confirmed}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-colors">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {saving ? 'Signing...' : 'Sign Off Document'}
             </button>
           </div>
         </form>
@@ -749,25 +958,37 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   const router = useRouter();
   const { token, user: currentUser } = useAuth();
   const [createModeRequested, setCreateModeRequested] = useState(false);
-  const [editHrMode, setEditHrMode]     = useState(false);
+  const [editHrMode, setEditHrMode]       = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [onboardingModal, setOnboardingModal] = useState<any>(null);
-  const [reviewModal, setReviewModal]   = useState(false);
-  const [docModal, setDocModal]         = useState(false);
+  const [reviewModal, setReviewModal]     = useState(false);
+  const [uploadModal, setUploadModal]     = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [signOffModal, setSignOffModal]   = useState<any>(null);
 
   const [tab, setTab]                 = useState<Tab>('overview');
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [profileData, setProfile]     = useState<any>(null);
   const [onboarding, setOnboarding]   = useState<any[]>([]);
   const [reviews, setReviews]         = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [leave, setLeave]             = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [documents, setDocuments]     = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [onboardingGate, setOnboardingGate] = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [probationGate, setProbationGate]   = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [departments, setDepartments] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [activeUsers, setActiveUsers] = useState<any[]>([]);
 
   const canSeeSalary      = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
   const canManageHrRecord = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+  const canUploadDoc      = canManageHrRecord || currentUser?.role === 'hr_manager';
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -807,6 +1028,8 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
         setReviews([]);
         setLeave(null);
         setDocuments([]);
+        setOnboardingGate(null);
+        setProbationGate(null);
         setTab('overview');
         return;
       }
@@ -821,6 +1044,13 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
       setReviews(revRes.data);
       setLeave(leaveRes.data);
       setDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
+
+      // Gate status fetches — fire-and-forget
+      axios.get(`${HR_BASE}/hr/employees/${userId}/gate-status/onboarding`, { headers })
+        .then(r => setOnboardingGate(r.data)).catch(() => {});
+      axios.get(`${HR_BASE}/hr/employees/${userId}/gate-status/probation`, { headers })
+        .then(r => setProbationGate(r.data)).catch(() => {});
+
     } catch (err: any) {
       if (err?.response?.status === 404) {
         setError('Employee not found.');
@@ -990,7 +1220,6 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                       } />
                       <Field label="Probation End" value={fmtDate(profile.effective_probation_end ?? profile.probation_end_date)} />
 
-                      {/* Only show probation countdown for employees still on probation */}
                       {['onboarding', 'probation'].includes(profile.hr_status ?? '') ? (
                         <Field label="Days to Prob. End" value={
                           profile.days_to_probation_end !== null && profile.days_to_probation_end !== undefined
@@ -1203,50 +1432,147 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
 
             {/* ── Tab: Documents ─────────────────────────────────────────────── */}
             {tab === 'documents' && (
-              <div className="space-y-3">
-                <div className="flex justify-end">
-                  {canManageHrRecord && token && (
-                    <button
-                      onClick={() => setDocModal(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg transition-colors"
-                    >
-                      <Plus className="w-4 h-4" /> Log Document
-                    </button>
-                  )}
-                </div>
-                <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
-                  {documents.length === 0 ? (
-                    <div className="p-10 text-center text-gray-500 text-sm">No documents logged yet.</div>
-                  ) : (
-                    <table className="w-full text-left">
-                      <thead className="bg-dark-900 border-b border-dark-700">
-                        <tr>
-                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
-                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Title</th>
-                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Date</th>
-                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Filed</th>
-                          <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase">Notes</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-dark-700">
-                        {documents.map((d, i) => (
-                          <tr key={i} className="hover:bg-dark-700/40 transition-colors">
-                            <td className="px-5 py-3 text-sm text-white">
-                              {DOC_TYPE_LABEL[d.document_type] ?? fmt(d.document_type)}
-                            </td>
-                            <td className="px-5 py-3 text-sm text-gray-300">{fmt(d.document_title)}</td>
-                            <td className="px-5 py-3 text-sm text-gray-400">{fmtDate(d.document_date)}</td>
-                            <td className="px-5 py-3 text-sm">
-                              {d.is_filed
-                                ? <CheckCircle2 className="w-4 h-4 text-green-400 inline" />
-                                : <XCircle className="w-4 h-4 text-gray-600 inline" />}
-                            </td>
-                            <td className="px-5 py-3 text-sm text-gray-400 max-w-[200px] truncate">{fmt(d.notes)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+              <div className="space-y-4">
+
+                {/* Section A: Gate status banners (admin/hr_admin only) */}
+                {canManageHrRecord && (onboardingGate || probationGate) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {onboardingGate && (
+                      <div className={`rounded-lg px-4 py-3 border text-sm ${
+                        onboardingGate.gateOpen
+                          ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                          : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                      }`}>
+                        <p className="font-semibold mb-1">Onboarding Gate</p>
+                        {onboardingGate.gateOpen ? (
+                          <span className="flex items-center gap-1.5 text-xs">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> All documents filed &amp; signed
+                          </span>
+                        ) : (
+                          <>
+                            <p className="text-xs">{onboardingGate.missing.length} document{onboardingGate.missing.length !== 1 ? 's' : ''} missing</p>
+                            <ul className="mt-1 text-xs opacity-80 list-disc list-inside space-y-0.5">
+                              {(onboardingGate.missing as string[]).map(m => (
+                                <li key={m}>{DOC_TYPE_LABEL[m] ?? m.replace(/_/g, ' ')}</li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {probationGate && (
+                      <div className={`rounded-lg px-4 py-3 border text-sm ${
+                        probationGate.gateOpen
+                          ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                          : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                      }`}>
+                        <p className="font-semibold mb-1">Probation Gate</p>
+                        {probationGate.gateOpen ? (
+                          <span className="flex items-center gap-1.5 text-xs">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> All documents filed &amp; signed
+                          </span>
+                        ) : (
+                          <>
+                            <p className="text-xs">{probationGate.missing.length} document{probationGate.missing.length !== 1 ? 's' : ''} missing</p>
+                            <ul className="mt-1 text-xs opacity-80 list-disc list-inside space-y-0.5">
+                              {(probationGate.missing as string[]).map(m => (
+                                <li key={m}>{DOC_TYPE_LABEL[m] ?? m.replace(/_/g, ' ')}</li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Section B+C: Document list + upload button */}
+                <div className="space-y-3">
+                  <div className="flex justify-end">
+                    {canUploadDoc && token && (
+                      <button
+                        onClick={() => setUploadModal(true)}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                      >
+                        <Upload className="w-4 h-4" /> Upload Document
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+                    {documents.length === 0 ? (
+                      <div className="p-10 text-center text-gray-500 text-sm">No documents uploaded yet.</div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead className="bg-dark-900 border-b border-dark-700">
+                            <tr>
+                              <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+                              <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Title</th>
+                              <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Date</th>
+                              <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">File</th>
+                              <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Sign-Off</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-dark-700">
+                            {documents.map((d, i) => (
+                              <tr key={i} className="hover:bg-dark-700/40 transition-colors">
+                                <td className="px-4 py-3 text-sm">
+                                  <div className="space-y-1">
+                                    <p className="text-white">{DOC_TYPE_LABEL[d.document_type] ?? fmt(d.document_type)}</p>
+                                    {d.is_gate_document && (
+                                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                        d.gate_category === 'probation'
+                                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                                          : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                      }`}>
+                                        {d.gate_category === 'probation' ? 'Probation Gate' : 'Onboarding Gate'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-300 max-w-[180px] truncate">{fmt(d.document_title)}</td>
+                                <td className="px-4 py-3 text-sm text-gray-400 whitespace-nowrap">{fmtDate(d.document_date)}</td>
+                                <td className="px-4 py-3 text-sm">
+                                  {d.file_original_name ? (
+                                    <button
+                                      onClick={() => window.open(`${HR_BASE}/hr/documents/${d.id}/download`, '_blank')}
+                                      className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 transition-colors"
+                                    >
+                                      <Download className="w-3.5 h-3.5 flex-shrink-0" />
+                                      <span className="text-xs truncate max-w-[110px]">{d.file_original_name}</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-600 text-xs">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-sm">
+                                  {d.manager_checked ? (
+                                    <div className="flex items-start gap-1.5 text-green-400">
+                                      <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                      <div>
+                                        <p className="text-xs font-semibold">Signed off</p>
+                                        <p className="text-[10px] text-gray-500">{fmtDate(d.manager_signed_at)}</p>
+                                      </div>
+                                    </div>
+                                  ) : canManageHrRecord ? (
+                                    <button
+                                      onClick={() => setSignOffModal(d)}
+                                      className="text-xs px-2 py-1 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded-lg hover:bg-yellow-500/20 transition-colors whitespace-nowrap"
+                                    >
+                                      Sign Off
+                                    </button>
+                                  ) : (
+                                    <span className="text-xs text-gray-500">Pending sign-off</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -1261,6 +1587,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
           userId={userId}
           token={token}
           modalData={onboardingModal}
+          onboardingGate={onboardingGate}
           onClose={() => setOnboardingModal(null)}
           onSaved={fetchAll}
         />
@@ -1275,11 +1602,21 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
         />
       )}
 
-      {docModal && token && (
-        <DocLogModal
+      {uploadModal && token && (
+        <DocUploadModal
           userId={userId}
           token={token}
-          onClose={() => setDocModal(false)}
+          onClose={() => setUploadModal(false)}
+          onSaved={fetchAll}
+        />
+      )}
+
+      {signOffModal && token && (
+        <SignOffModal
+          documentId={signOffModal.id}
+          documentTitle={signOffModal.document_title ?? 'Document'}
+          token={token}
+          onClose={() => setSignOffModal(null)}
           onSaved={fetchAll}
         />
       )}
