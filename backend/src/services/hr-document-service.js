@@ -87,11 +87,12 @@ const managerSignOffDocument = async (documentId, managerUserId, signaturePasswo
   try {
     const notificationService = require('./notification-service');
     const docRow = docRes.rows[0];
+    const hrAdminEmails = await notificationService.getEmailsByRole(['hr_admin', 'admin']);
     await notificationService.notifyHrDocumentSigned(
       docRow.employee_name,
       docRow.document_title,
       managerName,
-      managerUserId
+      hrAdminEmails
     );
   } catch (e) {
     console.warn('HR doc sign-off email failed (non-blocking):', e.message);

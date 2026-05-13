@@ -549,11 +549,173 @@ const notifyLabCertificateIssued = async (testNumber, certNumber, status, qaName
 };
 
 // ============================================================================
+// HR DOCUMENT NOTIFICATIONS
+// ============================================================================
+
+const notifyHrDocumentUploaded = async (
+  employeeName, documentTitle, documentType, uploaderName, managerEmail
+) => {
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
+                border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#7c3aed;padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">📋 HR Document Uploaded — Sign-Off Required</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
+          Vilagio ERP — Human Resources
+        </p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>Hello,</p>
+        <p>A personnel document has been uploaded to the HR system by
+           <strong>${uploaderName}</strong> and requires your review and
+           digital sign-off to confirm completeness.</p>
+        <div style="background-color:#f5f3ff;border:1px solid #c4b5fd;
+                    padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 8px 0;"><strong>Employee:</strong> ${employeeName}</p>
+          <p style="margin:0 0 8px 0;"><strong>Document:</strong> ${documentTitle}</p>
+          <p style="margin:0;"><strong>Type:</strong>
+             ${documentType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+          </p>
+        </div>
+        <div style="background-color:#fffbeb;border-left:4px solid #f59e0b;
+                    padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:20px;">
+          <p style="margin:0;color:#92400e;font-size:13px;">
+            <strong>Action required:</strong> Log in to the Vilagio ERP → HR Module →
+            Employee Profile → Documents tab → review the uploaded document and
+            provide your digital sign-off to confirm it is complete and correct.
+          </p>
+        </div>
+        <div style="text-align:center;margin-top:10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/hr/employees"
+             style="background-color:#7c3aed;color:white;padding:12px 28px;
+                    text-decoration:none;border-radius:6px;font-weight:bold;
+                    display:inline-block;">
+            Open HR Module
+          </a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;
+                  border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">
+          Vilagio Trading Limited · HR Management System · Chingola, Zambia
+        </p>
+      </div>
+    </div>`;
+  if (managerEmail) {
+    await sendEmail([managerEmail], `[HR] Sign-Off Required: ${documentTitle} — ${employeeName}`, html);
+  }
+};
+
+const notifyHrDocumentSigned = async (
+  employeeName, documentTitle, managerName, hrAdminEmails
+) => {
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
+                border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#059669;padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">✅ HR Document Signed Off</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
+          Vilagio ERP — Human Resources
+        </p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>This is a confirmation that the following personnel document has been
+           reviewed and digitally signed off as complete by a line manager.</p>
+        <div style="background-color:#f0fdf4;border:1px solid #bbf7d0;
+                    padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 8px 0;"><strong>Employee:</strong> ${employeeName}</p>
+          <p style="margin:0 0 8px 0;"><strong>Document:</strong> ${documentTitle}</p>
+          <p style="margin:0;"><strong>Signed Off By:</strong> ${managerName}</p>
+        </div>
+        <p style="font-size:13px;color:#64748b;">
+          This digital sign-off constitutes a non-repudiation record. The signing
+          manager's credentials were verified at the time of sign-off.
+        </p>
+        <div style="text-align:center;margin-top:10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/hr/employees"
+             style="background-color:#059669;color:white;padding:12px 28px;
+                    text-decoration:none;border-radius:6px;font-weight:bold;
+                    display:inline-block;">
+            View in HR Module
+          </a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;
+                  border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">
+          Vilagio Trading Limited · HR Management System · Chingola, Zambia
+        </p>
+      </div>
+    </div>`;
+  if (hrAdminEmails && hrAdminEmails.length > 0) {
+    await sendEmail(hrAdminEmails, `[HR] Document Signed Off: ${documentTitle} — ${employeeName}`, html);
+  }
+};
+
+const notifyHrGateBlocked = async (
+  employeeName, gateType, missingDocuments, hrAdminEmail
+) => {
+  const missingList = missingDocuments
+    .map(d => `<li style="margin:4px 0;">${d.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</li>`)
+    .join('');
+  const gateLabel = gateType === 'onboarding'
+    ? 'Onboarding Completion'
+    : 'Probation Confirmation';
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
+                border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+      <div style="background-color:#dc2626;padding:20px;text-align:center;color:white;">
+        <h2 style="margin:0;">⛔ HR Gate Blocked — Missing Documents</h2>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
+          ${gateLabel} cannot proceed
+        </p>
+      </div>
+      <div style="padding:24px 30px;color:#334155;">
+        <p>An attempt was made to complete <strong>${gateLabel}</strong> for
+           <strong>${employeeName}</strong>, but the following required documents
+           are missing or have not been signed off by a line manager:</p>
+        <div style="background-color:#fef2f2;border:1px solid #fca5a5;
+                    padding:15px;border-radius:6px;margin:20px 0;">
+          <p style="margin:0 0 10px 0;font-weight:bold;color:#b91c1c;">
+            Missing documents:
+          </p>
+          <ul style="margin:0;padding-left:20px;color:#334155;">
+            ${missingList}
+          </ul>
+        </div>
+        <p style="font-size:13px;color:#64748b;">
+          Upload all required documents and obtain line manager sign-off before
+          attempting to complete ${gateLabel}.
+        </p>
+        <div style="text-align:center;margin-top:10px;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/hr/employees"
+             style="background-color:#dc2626;color:white;padding:12px 28px;
+                    text-decoration:none;border-radius:6px;font-weight:bold;
+                    display:inline-block;">
+            Go to HR Module
+          </a>
+        </div>
+      </div>
+      <div style="background-color:#f1f5f9;padding:12px 30px;
+                  border-top:1px solid #e2e8f0;text-align:center;">
+        <p style="color:#94a3b8;font-size:11px;margin:0;">
+          Vilagio Trading Limited · HR Management System · Chingola, Zambia
+        </p>
+      </div>
+    </div>`;
+  if (hrAdminEmail) {
+    await sendEmail([hrAdminEmail],
+      `[HR] Gate Blocked: ${gateLabel} — Missing Documents for ${employeeName}`, html);
+  }
+};
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 
 module.exports = {
   sendEmail, // Exposed for custom dynamic emails from routes
+  getEmailsByRole,
   // CRM & Vendors
   notifyCustomerPendingApproval,
   notifyCustomerStatus,
@@ -578,4 +740,8 @@ module.exports = {
   notifyLabQAPendingReview,
   notifyLabTestRejected,
   notifyLabCertificateIssued,
+  // HR
+  notifyHrDocumentUploaded,
+  notifyHrDocumentSigned,
+  notifyHrGateBlocked,
 };
