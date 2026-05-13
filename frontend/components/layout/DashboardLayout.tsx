@@ -472,7 +472,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 I&apos;m Still Here — Continue
               </button>
               <button
-                onClick={expireSession}  {/* FIX: was logout() with no redirect */}
+                onClick={expireSession}
                 className="w-full px-6 py-3 bg-dark-900 hover:bg-dark-700 text-gray-400 hover:text-white rounded-lg transition-colors text-sm border border-dark-600"
               >
                 Log Out Now
