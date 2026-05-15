@@ -367,4 +367,16 @@ router.get(
   }
 );
 
+router.get('/probation-schedule', requireHrAccess, async (req, res) => {
+  try {
+    const { pool } = require('../services/auth-service');
+    const result = await pool.query(
+      `SELECT * FROM v_hr_probation_schedule ORDER BY start_date`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;
