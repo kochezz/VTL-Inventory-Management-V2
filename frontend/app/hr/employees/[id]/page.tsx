@@ -1577,9 +1577,29 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                                 <td className="px-4 py-3 text-sm">
                                   {d.file_original_name ? (
                                     <button
-                                      onClick={() => window.open(`${HR_BASE}/hr/documents/${d.id}/download`, '_blank')}
+                                    onClick={async () => {
+                                      try {
+                                      const res = await axios.get(
+                                      `${HR_BASE}/hr/documents/${d.id}/download`,
+                                        {
+                                          headers: { Authorization: `Bearer ${token}` },
+                                            responseType: 'blob',
+                                              }
+                                            );
+                                            const url  = URL.createObjectURL(res.data);
+                                            const link = document.createElement('a');
+                                            link.href  = url;
+                                            link.download = d.file_original_name || 'document';
+                                            document.body.appendChild(link);
+                                            link.click();
+                                            link.remove();
+                                            URL.revokeObjectURL(url);
+                                          } catch {
+                                          alert('Download failed. Please try again.');
+                                                }
+                                            }}
                                       className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 transition-colors"
-                                    >
+                                                >
                                       <Download className="w-3.5 h-3.5 flex-shrink-0" />
                                       <span className="text-xs truncate max-w-[110px]">{d.file_original_name}</span>
                                     </button>
