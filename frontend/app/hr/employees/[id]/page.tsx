@@ -1275,6 +1275,47 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
             {/* ── Tab: Onboarding ────────────────────────────────────────────── */}
             {tab === 'onboarding' && (
               <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+
+                {/* ── Computed progress summary ─────────────────────────── */}
+                {onboarding.length > 0 && (() => {
+                  const done = onboarding.filter(m =>
+                    m.status === 'completed' || m.status === 'not_applicable'
+                  ).length;
+                  const total = onboarding.length;
+                  const pct   = Math.round((done / total) * 100);
+                  const allDone = pct === 100;
+                  return (
+                    <div className={`px-5 py-3 border-b border-dark-700 flex items-center justify-between
+                      ${allDone ? 'bg-green-500/5' : 'bg-dark-900/60'}`}>
+                      <div className="flex items-center gap-3">
+                        {allDone
+                          ? <CheckCircle2 className="w-4 h-4 text-green-400" />
+                          : <Clock className="w-4 h-4 text-amber-400" />
+                        }
+                        <span className="text-sm font-semibold text-white">
+                          {allDone ? 'Onboarding Complete' : 'Onboarding In Progress'}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {done} of {total} modules done
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-32 bg-dark-950 rounded-full h-2 border border-dark-600">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              allDone ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className={`text-sm font-bold ${
+                          allDone ? 'text-green-400' : 'text-white'
+                        }`}>{pct}%</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {onboarding.length === 0 ? (
                   <div className="p-10 text-center text-gray-500 text-sm">No onboarding records yet.</div>
                 ) : (
