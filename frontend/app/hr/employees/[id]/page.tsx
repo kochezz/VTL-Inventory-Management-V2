@@ -175,6 +175,10 @@ function HRRecordForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+     if (!userId || userId.length < 10) {
+    setError('Invalid employee context. Please close and reopen this page.');
+    return;
+  }
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -1530,14 +1534,16 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                 {/* Section B+C: Document list + upload button */}
                 <div className="space-y-3">
                   <div className="flex justify-end">
-                    {canUploadDoc && token && (
-                      <button
-                        onClick={() => setUploadModal(true)}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold rounded-lg transition-colors"
-                      >
-                        <Upload className="w-4 h-4" /> Upload Document
-                      </button>
-                    )}
+                   {canUploadDoc && token && (
+  <button
+    onClick={() => setUploadModal(true)}
+    disabled={loading}   // ← prevents opening modal while userId may be stale
+    className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700
+               text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
+  >
+    <Upload className="w-4 h-4" /> Upload Document
+  </button>
+)}
                   </div>
 
                   <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
