@@ -27,8 +27,11 @@ import {
   Calendar,
   Network,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
-import useIdleTimeout from '@/hooks/useIdleTimeout';
+import { useEffect, useState } from 'react';
+
+// NOTE: Session idle timeout has been moved to SessionGuard (components/SessionGuard.tsx)
+// which is mounted once in the root layout (app/layout.tsx). This covers
+// DashboardLayout, HRLayout, and every other layout in the app universally.
 
 interface NavItem {
   name: string;
@@ -197,10 +200,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router   = useRouter();
   const pathname = usePathname();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showIdleWarning, setShowIdleWarning] = useState(false);
-  const [warningCountdown, setWarningCountdown] = useState(60);
 
-  // ── FIX: Robust path checking helpers to handle parent/child mismatches ──
+  // ── Path helpers ──────────────────────────────────────────────────────────
   const isActive = (href: string) =>
     pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
 
@@ -208,7 +209,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     isActive(item.href) ||
     (item.children?.some(c => isActive(c.href)) ?? false);
 
-  // ── Auto-expand logic using the robust helpers ──
+  // ── Auto-expand active nav groups ─────────────────────────────────────────
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     navigation.forEach(item => {
@@ -219,52 +220,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return init;
   });
 
-  // ── FIX: Self-contained session expiry — clears auth then redirects ──────
-  // logout() from useAuth clears Zustand state + localStorage but does NOT
-  // redirect. Without an explicit router.push('/login') the page stays
-  // mounted with no token, causing the "inactive crash" appearance.
-  // Using window.location.replace (not router.push) guarantees the redirect
-  // fires even if the component is mid-unmount and the router hook is stale.
-  const expireSession = useCallback(() => {
-    logout();
-    window.location.replace('/login');
-  }, [logout]);
-
-  // ── Session idle timeout ─────────────────────────────────────────────────
-  const handleIdle = useCallback(() => {
-    setShowIdleWarning(true);
-    setWarningCountdown(60);
-  }, []);
-
-  useIdleTimeout({ timeoutMs: 9 * 60 * 1000, onIdle: handleIdle });
-
-  useEffect(() => {
-    if (!showIdleWarning) return;
-
-    // Countdown reached zero — session has expired
-    if (warningCountdown <= 0) {
-      setShowIdleWarning(false);
-      expireSession();   // FIX: was logout() with no redirect
-      return;
-    }
-
-    const timer = setTimeout(
-      () => setWarningCountdown(c => c - 1),
-      1000
-    );
-    return () => clearTimeout(timer);
-  }, [showIdleWarning, warningCountdown, expireSession]);
-
-  const dismissIdleWarning = useCallback(() => {
-    setShowIdleWarning(false);
-    setWarningCountdown(60);
-  }, []);
-  // ── End session idle timeout ─────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!isAuthenticated) router.push('/login');
-  }, [isAuthenticated, router]);
-
   useEffect(() => {
     navigation.forEach(item => {
       if (item.children && isParentActive(item)) {
@@ -272,6 +227,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
     });
   }, [pathname]);
+
+  // ── Redirect to login if session ends ────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) router.push('/login');
+  }, [isAuthenticated, router]);
 
   const handleLogout = () => {
     logout();
@@ -327,9 +287,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {allowedNavItems.map((item) => {
 
               if (item.children) {
-                const parentActive = isParentActive(item);
-                const isOpen       = expanded[item.href] ?? false;
-
+                const parentActive    = isParentActive(item);
+                const isOpen          = expanded[item.href] ?? false;
                 const allowedChildren = item.children.filter(c =>
                   user?.role && c.roles.includes(user.role)
                 );
@@ -339,9 +298,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div key={item.href}>
                     <button
                       onClick={() => {
-                        if (!isParentActive(item)) {
-                          router.push(item.href);
-                        }
+                        if (!isParentActive(item)) router.push(item.href);
                         toggleGroup(item.href);
                       }}
                       className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
@@ -361,7 +318,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {isOpen && (
                       <div className="ml-4 mt-1 space-y-1 border-l border-dark-700 pl-3">
                         {allowedChildren.map(child => {
-                          const SubIcon = subIcons[child.href];
+                          const SubIcon     = subIcons[child.href];
                           const childActive = isActive(child.href);
                           return (
                             <button
@@ -438,49 +395,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
-
-      {/* ── Idle Session Warning Modal ───────────────────────────────────────── */}
-      {showIdleWarning && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center">
-          <div className="bg-dark-800 border border-amber-500/50 rounded-xl p-8 max-w-sm w-full mx-4 shadow-2xl text-center">
-            <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="w-8 h-8 text-amber-400"
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-              >
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-                />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-white mb-2">
-              Session About to Expire
-            </h2>
-            <p className="text-gray-400 text-sm mb-6">
-              You have been inactive for 9 minutes. For security, your session
-              will automatically log out in:
-            </p>
-            <div className="text-5xl font-bold text-amber-400 mb-6 font-mono">
-              {String(warningCountdown).padStart(2, '0')}s
-            </div>
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={dismissIdleWarning}
-                className="w-full px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-lg transition-colors"
-              >
-                I&apos;m Still Here — Continue
-              </button>
-              <button
-                onClick={expireSession}
-                className="w-full px-6 py-3 bg-dark-900 hover:bg-dark-700 text-gray-400 hover:text-white rounded-lg transition-colors text-sm border border-dark-600"
-              >
-                Log Out Now
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
