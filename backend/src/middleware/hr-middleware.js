@@ -1,6 +1,15 @@
 'use strict';
 
-const HR_ACCESS_ROLES = ['admin', 'hr_admin', 'hr_manager'];
+const HR_ACCESS_ROLES = [
+  'admin',
+  'hr_admin',
+  'hr_manager',
+  'manager',
+  'production_manager',
+  'warehouse_manager',
+  'ceo',
+  'cfo',
+];
 const HR_ADMIN_ROLES  = ['admin', 'hr_admin'];
 
 const requireHrAccess = (req, res, next) => {

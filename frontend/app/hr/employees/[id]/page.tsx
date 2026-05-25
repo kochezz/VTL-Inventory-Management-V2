@@ -990,8 +990,16 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [activeUsers, setActiveUsers] = useState<any[]>([]);
 
-  const canSeeSalary      = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
-  const canManageHrRecord = currentUser?.role === 'admin' || currentUser?.role === 'hr_admin';
+  const HR_ACCESS_ROLES = [
+    'admin', 'hr_admin', 'hr_manager',
+    'manager', 'production_manager', 'warehouse_manager', 'ceo', 'cfo',
+  ];
+
+  const HR_ADMIN_ROLES = ['admin', 'hr_admin'];
+
+  const canAccessHr       = HR_ACCESS_ROLES.includes(currentUser?.role ?? '');
+  const canManageHrRecord = HR_ADMIN_ROLES.includes(currentUser?.role ?? '');
+  const canSeeSalary      = HR_ADMIN_ROLES.includes(currentUser?.role ?? '');
   const canUploadDoc      = canManageHrRecord || currentUser?.role === 'hr_manager';
 
   useEffect(() => {
@@ -1351,8 +1359,7 @@ export default function EmployeeProfilePage({ params }: { params: Promise<{ id: 
                                 : '—'}
                             </td>
                             <td className="px-5 py-3 text-right">
-                              {m.module && (currentUser?.role === 'hr_admin' || currentUser?.role === 'admin' ||
-                                currentUser?.role === 'hr_manager') && (
+                              {m.module && canAccessHr && (
                                 <button
                                   onClick={() => setOnboardingModal(m)}
                                   className="text-xs px-3 py-1.5 bg-primary-600/20 hover:bg-primary-600/40 border border-primary-500/30 text-primary-400 rounded-lg transition-colors"
