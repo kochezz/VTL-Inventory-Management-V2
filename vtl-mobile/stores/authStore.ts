@@ -81,9 +81,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
-    await SecureStore.deleteItemAsync('vtl_token');
-    await SecureStore.deleteItemAsync('vtl_refresh');
-    await AsyncStorage.removeItem('vtl_user');
+    await SecureStore.deleteItemAsync('vtl_token').catch(() => {});
+    await SecureStore.deleteItemAsync('vtl_refresh').catch(() => {});
+    await AsyncStorage.removeItem('vtl_user').catch(() => {});
+    // Clear session-timeout background timestamp if it exists
+    await SecureStore.deleteItemAsync('vtl_background_at').catch(() => {});
     set({ user: null, token: null, isAuthenticated: false, isLoading: false });
   },
 }));

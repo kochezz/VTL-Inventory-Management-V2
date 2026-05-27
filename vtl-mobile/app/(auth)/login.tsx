@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import * as SecureStore from 'expo-secure-store';
 import {
   View,
   Text,
@@ -17,6 +18,11 @@ import { useRouter } from 'expo-router';
 export default function LoginScreen() {
   const router = useRouter();
   const { login } = useAuthStore();
+
+  // Clear any stale background-timeout timestamp left over from a previous session
+  useEffect(() => {
+    SecureStore.deleteItemAsync('vtl_background_at').catch(() => {});
+  }, []);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

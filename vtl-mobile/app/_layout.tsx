@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { hasMobileExecutiveAccess, useAuthStore } from '../stores/authStore';
+import { useSessionTimeout } from '../hooks/useSessionTimeout';
 
 // TODO Phase 5: Re-enable push notifications in EAS build
 // expo-notifications not supported in Expo Go SDK 53+
@@ -15,6 +16,9 @@ function RootLayoutNav() {
   const router = useRouter();
   const segments = useSegments();
   const { user, isAuthenticated, isLoading, initAuth } = useAuthStore();
+
+  // Activates background-timeout (15 min) and inactivity-timeout (30 min)
+  useSessionTimeout();
 
   useEffect(() => {
     initAuth();
