@@ -106,9 +106,9 @@ router.post('/check-availability', authorize(['admin', 'manager', 'staff', 'oper
   try {
     const { product_id, location_id, required_quantity } = req.body;
 
-    if (!product_id || !location_id || !required_quantity) {
-      return res.status(400).json({ 
-        message: 'Missing required fields: product_id, location_id, required_quantity' 
+    if (!product_id || !location_id || required_quantity == null) {
+      return res.status(400).json({
+        message: 'Missing required fields: product_id, location_id, required_quantity'
       });
     }
 
