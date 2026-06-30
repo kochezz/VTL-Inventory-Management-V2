@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/hooks/useAuth';
+import { useAuth, api } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { 
   User, Lock, Briefcase, Phone, CheckCircle, AlertCircle, Eye, EyeOff, Save, 
@@ -11,6 +11,7 @@ import {
 
 export default function MyProfilePage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState<any>(null);
@@ -26,6 +27,11 @@ export default function MyProfilePage() {
     preferred_name: '', personal_email: '', phone_number: '', home_address: ''
   });
 
+  // Attendance summary state (current month, fetched independently so errors don't block profile)
+  const [attendance, setAttendance]           = useState<{ normalHours: number; otHours: number; missing: number } | null>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
+  const [attendanceError,   setAttendanceError]   = useState('');
+
   // Holiday States
   const [holidayData, setHolidayData] = useState({ allowance: 15, used: 0, pending: 0, remaining: 15, history: [] });
   const [leaveStart, setLeaveStart] = useState('');
@@ -36,6 +42,24 @@ export default function MyProfilePage() {
   useEffect(() => {
     fetchProfileAndHolidays();
   }, []);
+
+  useEffect(() => {
+    if (!user?.user_id) return;
+    const now   = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    api.get(`/attendance/register/${user.user_id}?month=${month}`)
+      .then(r => {
+        const weeks  = r.data.weeks  ?? [];
+        const shifts = r.data.shifts ?? [];
+        setAttendance({
+          normalHours: weeks.reduce((s: number, w: any) => s + (w.normal_hours       ?? 0), 0),
+          otHours:     weeks.reduce((s: number, w: any) => s + (w.weekday_ot_hours   ?? 0) + (w.holiday_ot_hours ?? 0), 0),
+          missing:     shifts.filter((s: any) => s.status === 'missing_punch').length,
+        });
+      })
+      .catch(() => setAttendanceError('Could not load attendance data.'))
+      .finally(() => setAttendanceLoading(false));
+  }, [user?.user_id]);
 
   // Calculate working days automatically when dates change
   useEffect(() => {
@@ -322,6 +346,54 @@ export default function MyProfilePage() {
 
               </div>
             </div>
+
+            {/* ATTENDANCE SUMMARY CARD */}
+            <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl mt-8">
+              <div className="p-6 border-b border-dark-700 bg-dark-900/50">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Clock className="w-6 h-6 text-primary-500"/> My Attendance
+                </h3>
+                <p className="text-sm text-gray-400 mt-1">Current-month clock-in summary</p>
+              </div>
+              <div className="p-6">
+                {attendanceLoading ? (
+                  <p className="text-sm text-gray-500">Loading…</p>
+                ) : attendanceError ? (
+                  <p className="text-sm text-red-400">{attendanceError}</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                      <div className="bg-dark-950 border border-dark-700 rounded-lg p-4 text-center">
+                        <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">Normal h</p>
+                        <p className="text-2xl font-bold text-white font-mono">{attendance!.normalHours.toFixed(1)}</p>
+                      </div>
+                      <div className="bg-dark-950 border border-dark-700 rounded-lg p-4 text-center">
+                        <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">Overtime h</p>
+                        <p className={`text-2xl font-bold font-mono ${attendance!.otHours > 0 ? 'text-yellow-400' : 'text-white'}`}>
+                          {attendance!.otHours.toFixed(1)}
+                        </p>
+                      </div>
+                      <div className={`rounded-lg p-4 text-center ${attendance!.missing > 0 ? 'bg-red-500/10 border border-red-500/30' : 'bg-dark-950 border border-dark-700'}`}>
+                        <p className={`text-xs uppercase tracking-wider mb-1 ${attendance!.missing > 0 ? 'text-red-400' : 'text-gray-400'}`}>Missing</p>
+                        <p className={`text-2xl font-bold font-mono ${attendance!.missing > 0 ? 'text-red-400' : 'text-white'}`}>
+                          {attendance!.missing}
+                        </p>
+                      </div>
+                    </div>
+                    {attendance!.normalHours === 0 && attendance!.otHours === 0 && attendance!.missing === 0 && (
+                      <p className="text-sm text-gray-500 mb-4">No attendance recorded this month.</p>
+                    )}
+                    <button
+                      onClick={() => router.push('/attendance/my-register')}
+                      className="text-sm text-primary-400 hover:text-primary-300 font-medium transition-colors"
+                    >
+                      View Full Register →
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            {/* END ATTENDANCE SUMMARY CARD */}
 
           </div>
         </div>

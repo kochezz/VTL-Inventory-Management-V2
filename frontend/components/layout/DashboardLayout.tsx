@@ -179,6 +179,34 @@ const navigation: NavItem[] = [
     roles: ['admin', 'hr_admin', 'hr_manager', 'ceo', 'manager', 'production_manager', 'warehouse_manager']
   },
   {
+    name: 'Attendance',
+    href: '/attendance/my-register',
+    icon: Calendar,
+    roles: ['admin', 'hr_admin', 'hr_manager', 'manager', 'production_manager', 'warehouse_manager',
+            'ceo', 'cfo', 'staff', 'operator', 'engineering', 'qa', 'sales',
+            'viewer', 'super_viewer', 'warehouse'],
+    children: [
+      {
+        name: 'My Register',
+        href: '/attendance/my-register',
+        roles: ['admin', 'hr_admin', 'hr_manager', 'manager', 'production_manager', 'warehouse_manager',
+                'ceo', 'cfo', 'staff', 'operator', 'engineering', 'qa', 'sales',
+                'viewer', 'super_viewer', 'warehouse'],
+      },
+      {
+        name: 'Team Register',
+        href: '/attendance/team',
+        roles: ['admin', 'hr_admin', 'hr_manager', 'manager', 'production_manager',
+                'warehouse_manager', 'ceo', 'cfo'],
+      },
+      {
+        name: 'PIN Management',
+        href: '/attendance/admin',
+        roles: ['admin'],
+      },
+    ],
+  },
+  {
     name: 'Settings',
     href: '/settings',
     icon: Settings,
@@ -187,12 +215,15 @@ const navigation: NavItem[] = [
 ];
 
 const subIcons: Record<string, any> = {
-  '/qms/documents':       FolderTree,
-  '/qms/compliance':      BarChart3,
-  '/qms/review-calendar': Calendar,
-  '/qms/hierarchy':       Network,
-  '/analytics':           TrendingUp,
-  '/sales/analytics':     BarChart3,
+  '/qms/documents':          FolderTree,
+  '/qms/compliance':         BarChart3,
+  '/qms/review-calendar':    Calendar,
+  '/qms/hierarchy':          Network,
+  '/analytics':              TrendingUp,
+  '/sales/analytics':        BarChart3,
+  '/attendance/my-register': Calendar,
+  '/attendance/team':        Users,
+  '/attendance/admin':       ShieldCheck,
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

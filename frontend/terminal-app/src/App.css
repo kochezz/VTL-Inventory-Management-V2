@@ -1,0 +1,342 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #0f172a;
+  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 20px;
+  overflow: hidden;
+}
+
+.terminal-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 24px;
+  gap: 20px;
+  overflow-y: auto;
+}
+
+/* ── Sync banner ───────────────────────────────────────────────────────────── */
+.sync-banner {
+  background: #92400e;
+  color: #fef3c7;
+  text-align: center;
+  padding: 10px 16px;
+  font-size: 16px;
+  font-weight: 600;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+/* ── Typography ────────────────────────────────────────────────────────────── */
+.screen-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #f8fafc;
+  text-align: center;
+  margin: 0;
+}
+
+.screen-subtitle {
+  font-size: 18px;
+  color: #94a3b8;
+  text-align: center;
+  margin: 0;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  padding: 16px 32px;
+  border: none;
+  border-radius: 14px;
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  max-width: 360px;
+  letter-spacing: 0.03em;
+  transition: opacity 0.1s, transform 0.1s;
+}
+
+.btn:active  { opacity: 0.75; transform: scale(0.98); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+.btn-primary { background: #3b82f6; color: #fff; }
+.btn-green   { background: #16a34a; color: #fff; font-size: 26px; }
+.btn-red     { background: #dc2626; color: #fff; font-size: 26px; }
+.btn-ghost {
+  background: transparent;
+  color: #64748b;
+  border: 2px solid #1e293b;
+  font-size: 18px;
+  min-height: 56px;
+}
+
+/* ── Inputs ────────────────────────────────────────────────────────────────── */
+.input-field {
+  width: 100%;
+  max-width: 360px;
+  height: 72px;
+  background: #1e293b;
+  border: 2px solid #334155;
+  border-radius: 14px;
+  color: #f8fafc;
+  font-size: 24px;
+  padding: 0 20px;
+  outline: none;
+  text-align: center;
+  caret-color: #3b82f6;
+}
+
+.input-field:focus { border-color: #3b82f6; }
+
+/* ── Worker card ───────────────────────────────────────────────────────────── */
+.worker-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.worker-avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: #1e293b;
+  border: 3px solid #3b82f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  font-weight: 800;
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.worker-name {
+  font-size: 26px;
+  font-weight: 700;
+  color: #f8fafc;
+  text-align: center;
+}
+
+/* ── Error card ────────────────────────────────────────────────────────────── */
+.error-card {
+  background: #450a0a;
+  border: 2px solid #dc2626;
+  border-radius: 12px;
+  padding: 14px 22px;
+  color: #fca5a5;
+  text-align: center;
+  font-size: 17px;
+  max-width: 360px;
+  width: 100%;
+  line-height: 1.4;
+}
+
+/* ── PIN dots ──────────────────────────────────────────────────────────────── */
+.pin-dots {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.pin-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid #475569;
+  background: transparent;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.pin-dot.filled {
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+
+/* ── Camera viewfinder ─────────────────────────────────────────────────────── */
+.camera-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 340px;
+  aspect-ratio: 4 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 3px solid #3b82f6;
+  background: #000;
+  flex-shrink: 0;
+}
+
+.camera-wrap video,
+.camera-wrap canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.camera-wrap .hidden { display: none; }
+
+/* ── Countdown overlay ─────────────────────────────────────────────────────── */
+.countdown-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 96px;
+  font-weight: 900;
+  color: #fff;
+}
+
+/* ── Confirm screen ────────────────────────────────────────────────────────── */
+.confirm-icon {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: #14532d;
+  border: 4px solid #22c55e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  font-weight: 900;
+  color: #22c55e;
+}
+
+.confirm-action {
+  font-size: 36px;
+  font-weight: 900;
+  color: #22c55e;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.confirm-time {
+  font-size: 52px;
+  font-weight: 900;
+  color: #f8fafc;
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+.confirm-name {
+  font-size: 26px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.confirm-queued {
+  font-size: 15px;
+  color: #fbbf24;
+  text-align: center;
+  padding: 8px 16px;
+  background: #451a03;
+  border-radius: 8px;
+}
+
+/* ── Idle screen ───────────────────────────────────────────────────────────── */
+.idle-logo {
+  width: 110px;
+  opacity: 0.90;
+  flex-shrink: 0;
+}
+
+.idle-punch-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.idle-time {
+  font-size: 58px;
+  font-weight: 900;
+  color: #f8fafc;
+  letter-spacing: 3px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.idle-date {
+  font-size: 18px;
+  color: #64748b;
+  text-align: center;
+}
+
+/* ── Setup screen ──────────────────────────────────────────────────────────── */
+.setup-logo {
+  font-size: 64px;
+  text-align: center;
+  line-height: 1;
+}
+
+/* ── PinPad ────────────────────────────────────────────────────────────────── */
+.pinpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.pinpad-btn {
+  height: 80px;
+  background: #1e293b;
+  border: 2px solid #334155;
+  border-radius: 14px;
+  color: #f8fafc;
+  font-size: 28px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.08s, transform 0.08s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pinpad-btn:active        { background: #334155; transform: scale(0.94); }
+.pinpad-btn:disabled      { opacity: 0.3; cursor: not-allowed; }
+.pinpad-btn.empty         { background: transparent; border-color: transparent; cursor: default; }
+.pinpad-btn.empty:active  { transform: none; }
+.pinpad-btn.back          { font-size: 22px; color: #94a3b8; }
+
+/* ── Link-style button ─────────────────────────────────────────────────────── */
+.link-btn {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 8px 16px;
+  text-decoration: underline;
+  min-height: 44px;
+}

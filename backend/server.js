@@ -33,6 +33,7 @@ const salesAnalyticsRoutes    = require('./src/routes/sales-analytics-routes');
 const mobileRoutes            = require('./src/routes/mobile-routes');
 
 const hrRoutes                = require('./src/routes/hr-routes');
+const attendanceRoutes        = require('./src/routes/attendance-routes');
 
 // QMS Periodic Review Scheduler (Render-safe — uses setInterval, not cron)
 const qmsScheduler            = require('./src/services/qms-scheduler');
@@ -132,6 +133,7 @@ app.use('/api/sales-analytics',    salesAnalyticsRoutes);
 app.use('/api/mobile',             mobileRoutes);
 
 app.use('/hr',                     hrRoutes);
+app.use('/api/attendance',         attendanceRoutes);
 
 // ============================================================================
 // HEALTH CHECK
