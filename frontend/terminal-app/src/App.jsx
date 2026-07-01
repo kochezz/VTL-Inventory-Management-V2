@@ -95,6 +95,12 @@ export default function App() {
     <div className="terminal-root">
       <SyncBanner deviceCode={deviceCode} />
 
+      {screen !== 'SETUP' && (
+        <div className="terminal-header">
+          <img src="/logo-white.png" alt="Vilagio" className="terminal-logo" />
+        </div>
+      )}
+
       {screen === 'SETUP' && (
         <SetupScreen onSetup={handleSetup} />
       )}

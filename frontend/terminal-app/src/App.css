@@ -282,12 +282,21 @@ html, body, #root {
   border-radius: 8px;
 }
 
-/* ── Idle screen ───────────────────────────────────────────────────────────── */
-.idle-logo {
-  width: 110px;
-  opacity: 0.90;
+/* ── Persistent logo header (all flow screens except SETUP) ─────────────────── */
+.terminal-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 0 6px;
   flex-shrink: 0;
 }
+
+.terminal-logo {
+  width: 220px;
+  opacity: 0.90;
+}
+
+/* ── Idle screen ───────────────────────────────────────────────────────────── */
 
 .idle-punch-btns {
   display: flex;

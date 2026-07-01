@@ -17,7 +17,6 @@ export default function IdleScreen({ onPunchType }) {
 
   return (
     <div className="screen">
-      <img src="/logo-white.png" alt="Vilagio" className="idle-logo" />
       <div className="idle-time">{timeStr}</div>
       <div className="idle-date">{dateStr}</div>
 
