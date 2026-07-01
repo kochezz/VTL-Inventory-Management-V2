@@ -21,7 +21,7 @@ export default function IdleScreen({ onPunchType }) {
       <div className="idle-time">{timeStr}</div>
       <div className="idle-date">{dateStr}</div>
 
-      <div style={{ height: 24 }} />
+      <div style={{ height: 30 }} />
 
       <div className="idle-punch-btns">
         <button className="btn btn-green" onClick={() => onPunchType('clock_in')}>
