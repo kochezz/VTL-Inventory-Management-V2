@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { punch } from '../api.js';
 import { queuePunch } from '../db.js';
 
-// Business error codes that must route back to the PIN screen rather than
-// triggering the offline queue. Network failures and server 500s are queued.
-const BUSINESS_CODES = new Set(['INVALID_PIN', 'PIN_LOCKED', 'PIN_MUST_CHANGE']);
+// PIN/credential errors that must show a hard error instead of queuing.
+// Any structured backend error (err.code is set) is also never queued —
+// only a genuine network failure (fetch threw / no response) goes offline.
+const BUSINESS_CODES = new Set(['INVALID_PIN', 'PIN_LOCKED', 'PIN_MUST_CHANGE', 'PIN_NOT_SET']);
 const COUNTDOWN_SECS = 3;
 
 export default function PhotoScreen({ worker, punchType, pin, deviceCode, onResult, onBack }) {
@@ -86,10 +87,14 @@ export default function PhotoScreen({ worker, punchType, pin, deviceCode, onResu
       } catch (err) {
         if (!active) return;
         if (BUSINESS_CODES.has(err.code)) {
-          // PIN problem — let App route to PIN or CHANGE_PIN screen
+          // Known PIN/credential error — route back to PIN or CHANGE_PIN screen
+          onResult(null, err);
+        } else if (err.code) {
+          // Any other structured backend rejection (server returned a .code field)
+          // — never queue; show on PIN screen as an error
           onResult(null, err);
         } else {
-          // Network / server fault — queue offline; NEVER lose the punch
+          // True network failure: fetch threw with no response (ECONNREFUSED, offline)
           try {
             await queuePunch({
               ...payload,

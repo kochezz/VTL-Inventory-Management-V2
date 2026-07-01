@@ -489,6 +489,23 @@ async function syncPunches(punches_array) {
       results.push({ client_uuid: punch.client_uuid, status: 'error', message: `Invalid punch_type '${punch.punch_type}'` });
       continue;
     }
+
+    // ── Credential gate ────────────────────────────────────────────────────────
+    // The terminal cannot be trusted to self-classify errors; this is the server
+    // enforcement boundary. A user with no PIN ever issued was never a legitimate
+    // participant — reject regardless of how the punch was queued client-side.
+    // Client_uuid idempotency is preserved: the punch was never recorded, so
+    // re-syncing the same client_uuid also hits this check and is rejected again.
+    const cred = await _credByUserId(punch.user_id);
+    if (!cred || !cred.pin_hash) {
+      results.push({
+        client_uuid: punch.client_uuid,
+        status:      'rejected_no_credential',
+        message:     'User has no PIN credential — punch not recorded',
+      });
+      continue;
+    }
+
     try {
       const res = await recordPunch({ ...punch, source: 'synced_offline' });
       results.push({ client_uuid: punch.client_uuid, status: res.idempotent ? 'duplicate' : 'accepted', punch_id: res.punch_id });
