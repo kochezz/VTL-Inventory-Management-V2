@@ -16,7 +16,7 @@ export default function IdleScreen({ onPunchType }) {
   });
 
   return (
-    <div className="screen">
+    <div className="screen idle-screen">
       <div className="idle-time">{timeStr}</div>
       <div className="idle-date">{dateStr}</div>
 

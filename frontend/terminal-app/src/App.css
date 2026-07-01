@@ -297,6 +297,11 @@ html, body, #root {
 }
 
 /* ── Idle screen ───────────────────────────────────────────────────────────── */
+/* Pull clock/date/buttons up so they read as one cohesive group with the logo. */
+.idle-screen {
+  justify-content: flex-start;
+  padding-top: 40px;
+}
 
 .idle-punch-btns {
   display: flex;
