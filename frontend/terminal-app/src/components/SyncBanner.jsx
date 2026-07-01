@@ -13,7 +13,7 @@ export default function SyncBanner({ deviceCode }) {
   const sync = useCallback(async () => {
     if (syncing || !deviceCode || !navigator.onLine) return;
     const pending = await getPendingPunches();
-    if (!pending.length) return;
+    if (!pending.length) { await refreshCount(); return; }
     setSyncing(true);
     try {
       const res = await syncPunches({ device_code: deviceCode, punches: pending });
@@ -21,11 +21,12 @@ export default function SyncBanner({ deviceCode }) {
         if (r.status === 'accepted' || r.status === 'duplicate') {
           await markSynced(r.client_uuid);
         } else {
-          await markError(r.client_uuid, r.error || 'sync error');
+          // rejected_no_credential, error, etc. — mark as error so they leave pending count
+          await markError(r.client_uuid, r.message || 'sync rejected');
         }
       }
     } catch (_) {
-      // Still offline — will retry on the next 'online' event
+      // Network error — will retry on next timer tick or Sync Now press
     } finally {
       setSyncing(false);
       await refreshCount();
@@ -34,7 +35,10 @@ export default function SyncBanner({ deviceCode }) {
 
   useEffect(() => {
     refreshCount();
-    const tick = setInterval(refreshCount, 30_000);
+    // Timer now attempts a flush (not just a count refresh) so pending punches
+    // clear automatically once the backend is reachable, without needing an
+    // offline→online transition.
+    const tick = setInterval(sync, 30_000);
     window.addEventListener('online', sync);
     return () => {
       clearInterval(tick);
@@ -46,9 +50,16 @@ export default function SyncBanner({ deviceCode }) {
 
   return (
     <div className="sync-banner">
-      {syncing
-        ? 'Syncing offline punches...'
-        : `${count} punch${count !== 1 ? 'es' : ''} pending sync`}
+      {syncing ? (
+        'Syncing offline punches...'
+      ) : (
+        <>
+          {count} punch{count !== 1 ? 'es' : ''} pending sync
+          <button className="sync-now-btn" onClick={sync} disabled={syncing}>
+            Sync Now
+          </button>
+        </>
+      )}
     </div>
   );
 }

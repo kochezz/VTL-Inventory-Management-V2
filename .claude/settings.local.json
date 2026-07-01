@@ -18,7 +18,9 @@
       "Bash(curl -s http://localhost:3001/)",
       "PowerShell($pids = \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess | Select-Object -Unique; Write-Host \"PIDs on 3001: $pids\"; if \\($pids\\) { $pids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; Write-Host \"Killed $_\" } })",
       "PowerShell(Start-Sleep -Seconds 1; \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).Count)",
-      "PowerShell(Stop-Process -Id 19304 -Force; Start-Sleep -Seconds 1; \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).Count -eq 0)"
+      "PowerShell(Stop-Process -Id 19304 -Force; Start-Sleep -Seconds 1; \\(Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue\\).Count -eq 0)",
+      "PowerShell(node \"C:\\\\Users\\\\willi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-willi-GitHub-VTL-Inventory-MGTv2\\\\27650580-19fc-4256-8cab-4c521d5b9162\\\\scratchpad\\\\diag.js\" 2>&1)",
+      "PowerShell($env:NODE_PATH = \"C:\\\\Users\\\\willi\\\\GitHub\\\\VTL_Inventory_MGTv2\\\\backend\\\\node_modules\"; node --require \"C:\\\\Users\\\\willi\\\\GitHub\\\\VTL_Inventory_MGTv2\\\\backend\\\\node_modules\\\\dotenv\\\\config.js\" \"C:\\\\Users\\\\willi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-willi-GitHub-VTL-Inventory-MGTv2\\\\27650580-19fc-4256-8cab-4c521d5b9162\\\\scratchpad\\\\diag.js\" 2>&1)"
     ]
   }
 }
