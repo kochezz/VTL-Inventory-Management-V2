@@ -146,33 +146,79 @@ const QmsService = {
 
   // -- Stats -----------------------------------------------------------------
 
+  // ============================================================================
+  // CANONICAL DOCUMENT/COMPLIANCE COUNTS -- single source of truth
+  // ============================================================================
+  // getCompletionStats, getDashboardSummary, and getComplianceDashboard used to
+  // each run their own independent counting SQL and had drifted out of sync
+  // with each other (see docs/QMS_COMPLIANCE_DASHBOARD_AUDIT.md -- e.g. only
+  // this function's underlying query knew about REVIEW-status counts before
+  // the fix). All three now read from this one query and only add whatever
+  // extra, non-overlapping data their own callers need on top of it.
+  //
+  // The three original names and response shapes are kept as-is (not merged
+  // into one endpoint) because they have different external consumers with
+  // different expected shapes: qms-routes.js exposes all three as separate
+  // routes (/qms/stats, /qms/dashboard-summary, /qms/compliance), each read
+  // by a different frontend page, and mobile-service.js additionally calls
+  // getCompletionStats() directly for two different mobile endpoints. See the
+  // "Call sites" note at the bottom of this file for the full list.
+  async _getComplianceCounts() {
+    const result = await pool.query(`SELECT * FROM qms_compliance_summary`);
+    const s = result.rows[0];
+    const n = (v) => parseInt(v) || 0;
+    return {
+      total_docs: n(s.total_docs),
+      non_withdrawn_docs: n(s.total_docs) - n(s.withdrawn), // legacy getCompletionStats denominator (excludes WITHDRAWN only, unlike total_active which also excludes PLANNED)
+      released: n(s.released),
+      in_review: n(s.in_review),
+      draft: n(s.draft),
+      withdrawn: n(s.withdrawn),
+      planned: n(s.planned),
+      total_active: n(s.total_active),
+      overdue_review: n(s.overdue_review), // sourced from qms_review_calendar's urgency logic, not re-derived here
+      due_within_30d: n(s.due_within_30d), // same
+      ncr_open: n(s.ncr_open),
+      ncr_closed: n(s.ncr_closed),
+      ncr_aged_open: n(s.ncr_aged_open),   // sourced from qms_ncr_age_analysis's age_band logic
+      capa_open: n(s.capa_open),
+      capa_closed: n(s.capa_closed),
+      capa_overdue: n(s.capa_overdue),
+      training_pending: n(s.training_pending),
+      training_completed: n(s.training_completed),
+    };
+  },
+
+  // -- /qms/stats -- per-section document completion breakdown --------------
+  // Consumed by: frontend/app/qms/page.tsx (QMS home), and
+  // mobile-service.js getDashboardSummary() + getQualitySummary().
   async getCompletionStats() {
-    const query = `
-      SELECT 
-        s.section_id, s.section_code, s.section_name, s.color_code, s.sort_order,
-        COUNT(d.doc_id)                                                  AS total_docs,
-        COUNT(d.doc_id) FILTER (WHERE d.status = 'RELEASED')            AS released_docs,
-        COUNT(d.doc_id) FILTER (WHERE d.status = 'APPROVED')            AS approved_docs,
-        COUNT(d.doc_id) FILTER (WHERE d.status = 'REVIEW')              AS review_docs,
-        COUNT(d.doc_id) FILTER (WHERE d.status = 'DRAFT')               AS draft_docs
-      FROM qms_sections s
-      LEFT JOIN qms_documents d ON s.section_id = d.section_id AND d.status != 'WITHDRAWN'
-      GROUP BY s.section_id
-      ORDER BY s.sort_order ASC
-    `;
-    const result = await pool.query(query);
-    let totalDocs = 0, totalReleased = 0;
-    const sections = result.rows.map(row => {
+    const [counts, sectionsRes] = await Promise.all([
+      this._getComplianceCounts(),
+      pool.query(`
+        SELECT
+          s.section_id, s.section_code, s.section_name, s.color_code, s.sort_order,
+          COUNT(d.doc_id)                                                  AS total_docs,
+          COUNT(d.doc_id) FILTER (WHERE d.status = 'RELEASED')            AS released_docs,
+          COUNT(d.doc_id) FILTER (WHERE d.status = 'APPROVED')            AS approved_docs,
+          COUNT(d.doc_id) FILTER (WHERE d.status = 'REVIEW')              AS review_docs,
+          COUNT(d.doc_id) FILTER (WHERE d.status = 'DRAFT')               AS draft_docs
+        FROM qms_sections s
+        LEFT JOIN qms_documents d ON s.section_id = d.section_id AND d.status != 'WITHDRAWN'
+        GROUP BY s.section_id
+        ORDER BY s.sort_order ASC
+      `)
+    ]);
+    const sections = sectionsRes.rows.map(row => {
       const total = parseInt(row.total_docs);
       const released = parseInt(row.released_docs);
-      totalDocs += total;
-      totalReleased += released;
       return { ...row, completion_percentage: total > 0 ? Math.round((released / total) * 100) : 0 };
     });
     return {
-      overall_completion: totalDocs > 0 ? Math.round((totalReleased / totalDocs) * 100) : 0,
-      total_documents: totalDocs,
-      total_released: totalReleased,
+      overall_completion: counts.non_withdrawn_docs > 0
+        ? Math.round((counts.released / counts.non_withdrawn_docs) * 100) : 0,
+      total_documents: counts.non_withdrawn_docs,
+      total_released: counts.released,
       sections
     };
   },
@@ -1178,20 +1224,34 @@ const QmsService = {
   },
 
   // -- QMS dashboard stats (enhanced with task counts) ----------------------
+  // -- /qms/dashboard-summary -- flat KPI row for the QMS home page ---------
+  // Consumed by: frontend/app/qms/page.tsx.
+  // Note: review_tasks_open/overdue_count are a distinct concept from
+  // overdue_review/due_within_30d (qms_review_tasks is an internal workflow
+  // queue; overdue_review is about a RELEASED document's review_due_date
+  // passing -- see docs/QMS_COMPLIANCE_DASHBOARD_AUDIT.md addendum). Kept
+  // separate deliberately, not merged into _getComplianceCounts().
   async getDashboardSummary() {
-    const result = await pool.query(`
-      SELECT
-        (SELECT COUNT(*) FROM qms_documents WHERE status = 'RELEASED')                AS total_released,
-        (SELECT COUNT(*) FROM qms_documents WHERE status = 'REVIEW')                  AS total_in_review,
-        (SELECT COUNT(*) FROM qms_documents WHERE status = 'DRAFT')                   AS total_in_draft,
-        (SELECT COUNT(*) FROM qms_documents WHERE status NOT IN ('WITHDRAWN','PLANNED')) AS total_active,
-        (SELECT COUNT(*) FROM qms_review_tasks WHERE status = 'OPEN')                 AS review_tasks_open,
-        (SELECT COUNT(*) FROM qms_review_tasks WHERE status = 'OPEN' AND due_date < NOW()) AS overdue_count,
-        (SELECT COUNT(*) FROM qms_training_tasks WHERE status = 'PENDING')            AS training_pending,
-        (SELECT COUNT(*) FROM qms_ncr WHERE status = 'OPEN')                          AS ncr_open,
-        (SELECT COUNT(*) FROM qms_capa WHERE status = 'OPEN')                         AS capa_open
-    `);
-    return result.rows[0];
+    const [counts, reviewTasksRes] = await Promise.all([
+      this._getComplianceCounts(),
+      pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM qms_review_tasks WHERE status = 'OPEN')                    AS open,
+          (SELECT COUNT(*) FROM qms_review_tasks WHERE status = 'OPEN' AND due_date < NOW()) AS overdue
+      `)
+    ]);
+    const rt = reviewTasksRes.rows[0];
+    return {
+      total_released: counts.released,
+      total_in_review: counts.in_review,
+      total_in_draft: counts.draft,
+      total_active: counts.total_active,
+      review_tasks_open: parseInt(rt.open) || 0,
+      overdue_count: parseInt(rt.overdue) || 0,
+      training_pending: counts.training_pending,
+      ncr_open: counts.ncr_open,
+      capa_open: counts.capa_open
+    };
   },
 
   // -- Dismiss a periodic review task (snooze / not applicable) -------------
@@ -1721,9 +1781,11 @@ const QmsService = {
   // ── Combined compliance dashboard payload ─────────────────────────────────
   // Single endpoint that fetches everything the dashboard needs in parallel
 
+  // -- /qms/compliance -- Compliance Dashboard (single combined endpoint) ---
+  // Consumed by: frontend/app/qms/compliance/page.tsx.
   async getComplianceDashboard() {
-    const [summary, deptTraining, ncrAge, reviewCal] = await Promise.all([
-      pool.query(`SELECT * FROM qms_compliance_summary`),
+    const [counts, deptTraining, ncrAge, reviewCal] = await Promise.all([
+      this._getComplianceCounts(),
       pool.query(`SELECT * FROM qms_dept_training_compliance`),
       pool.query(`SELECT * FROM qms_ncr_age_analysis LIMIT 50`),
       pool.query(`SELECT * FROM qms_review_calendar`),
@@ -1745,13 +1807,13 @@ const QmsService = {
     reviewCal.rows.forEach(r => { if (urgencyCounts[r.urgency] !== undefined) urgencyCounts[r.urgency]++; });
 
     // CAPA closure rate (for trend gauge)
-    const capaTotal = parseInt(summary.rows[0].capa_open) + parseInt(summary.rows[0].capa_closed);
+    const capaTotal = counts.capa_open + counts.capa_closed;
     const capaClosureRate = capaTotal > 0
-      ? Math.round((parseInt(summary.rows[0].capa_closed) / capaTotal) * 100)
+      ? Math.round((counts.capa_closed / capaTotal) * 100)
       : 100;
 
     return {
-      summary:          summary.rows[0],
+      summary:          counts,
       dept_training:    deptTraining.rows,
       ncr_age_bands:    bands,
       ncr_records:      ncrAge.rows,
