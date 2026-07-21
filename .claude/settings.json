@@ -10,7 +10,16 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(node -e \"require\\('./src/services/mobile-service.js'\\)\")",
-      "Bash(node -e \"require\\('./src/services/mobile-service.js'\\); require\\('./src/routes/mobile-routes.js'\\)\")"
+      "Bash(node -e \"require\\('./src/services/mobile-service.js'\\); require\\('./src/routes/mobile-routes.js'\\)\")",
+      "Bash(node \"C:\\\\Users\\\\willi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-willi-GitHub-VTL-Inventory-MGTv2\\\\622f2eea-4c4c-46e5-828c-6b2b82870649\\\\scratchpad\\\\build_migration.js\")",
+      "Bash(node \"C:\\\\Users\\\\willi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-willi-GitHub-VTL-Inventory-MGTv2\\\\622f2eea-4c4c-46e5-828c-6b2b82870649\\\\scratchpad\\\\verify_migration.js\")",
+      "Bash(node _verify_corrected_view.js)",
+      "Bash(node _verify_service_functions.js)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(gh auth *)",
+      "Bash(gh api *)",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" https://vilagio-erp-api.onrender.com/health)"
     ]
   }
 }
