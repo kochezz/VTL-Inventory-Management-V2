@@ -17,7 +17,31 @@
 -- qms_dept_training_compliance's compliance_percentage/completion_pct name
 -- mismatch (the dashboard's department-training panel had the same bug).
 --
--- DESIGN NOTES
+-- WHY DROP + CREATE INSTEAD OF CREATE OR REPLACE VIEW
+-- A prior version of this migration used CREATE OR REPLACE VIEW for both
+-- statements and was proven, against the live database, to fail on both:
+--   ERROR: cannot change name of view column "active_docs" to "total_docs"
+--   ERROR: cannot change name of view column "compliance_percentage" to "completion_pct"
+-- Postgres only allows CREATE OR REPLACE VIEW to append brand-new columns
+-- at the end, while keeping every existing column at its original name and
+-- position. qms_compliance_summary needed new columns inserted before the
+-- old first column, and qms_dept_training_compliance needed an existing
+-- column renamed -- neither is possible without DROP + CREATE (or ALTER
+-- VIEW ... RENAME COLUMN, which doesn't cover the reordering case either).
+--
+-- Before writing this version, dependency and privilege safety was checked
+-- live against the database:
+--   * pg_depend: zero other views/rules depend on qms_compliance_summary or
+--     qms_dept_training_compliance (0 rows returned).
+--   * information_schema.table_privileges: only the owning role
+--     (neondb_owner) has any privileges on either view -- these are the
+--     implicit owner grants, not separate GRANTs that a DROP+CREATE (which
+--     produces a new object with fresh owner-default privileges) could lose.
+-- Both DROP+CREATE pairs are wrapped in a single BEGIN...COMMIT below, so
+-- either both views are replaced or neither is -- there is no window where
+-- one view is dropped and not yet recreated.
+--
+-- DESIGN NOTES (unchanged from the previous version of this migration)
 -- * overdue_review and due_within_30d deliberately do NOT re-derive the
 --   review-due-date bucket math. They are scalar subqueries against
 --   qms_review_calendar's already-correct, already-audited `urgency` CASE
@@ -43,24 +67,32 @@
 --   query in dashboard-service.js, NOT from this view. So renaming
 --   pending_training outright here would have been safe too, but it costs
 --   nothing to keep both names and it removes any doubt.
+-- * qms_dept_training_compliance: compliance_percentage -> completion_pct
+--   to match the sole consumer, frontend/app/qms/compliance/page.tsx:262
+--   (`dept.completion_pct`). A full-codebase grep confirmed nothing else
+--   reads "compliance_percentage" from this view, so this is a plain
+--   rename with no other consumer to preserve compatibility for. Logic is
+--   otherwise byte-identical to the previous definition.
 --
 -- VERIFICATION
--- Every column below was proven correct by running this exact SELECT body
--- as a plain read-only ad-hoc query (no CREATE) against the live database
--- on 2026-07-21 and cross-checking every value against independently
--- written ground-truth COUNT queries. See the QMS stats consolidation
--- report for the full actual-vs-expected table.
---
--- This migration was NOT run against the live database (per instruction:
--- schema changes go through a reviewed migration file, not ad-hoc DDL).
--- Only read-only SELECTs were used to derive and verify this definition.
+-- Every column in qms_compliance_summary was proven correct by running its
+-- SELECT body as a plain read-only ad-hoc query (no CREATE) against the
+-- live database on 2026-07-21 and cross-checking every value against
+-- independently written ground-truth COUNT queries, including a dedicated
+-- pass on ncr_closed and capa_overdue specifically. See
+-- docs/QMS_COMPLIANCE_DASHBOARD_AUDIT.md and the QMS stats consolidation
+-- report for the full actual-vs-expected tables.
 -- ============================================================================
+
+BEGIN;
 
 -- qms_compliance_summary: corrected -- adds every field the Compliance
 -- Dashboard (getComplianceDashboard() in qms-service.js) actually reads.
 -- See design notes above for overdue_review/due_within_30d/ncr_aged_open/
 -- capa_overdue sourcing and for why active_docs/pending_training are kept.
-CREATE OR REPLACE VIEW qms_compliance_summary AS
+DROP VIEW qms_compliance_summary;
+
+CREATE VIEW qms_compliance_summary AS
 SELECT
     (SELECT COUNT(*) FROM qms_documents)                                    AS total_docs,
     (SELECT COUNT(*) FROM qms_documents WHERE status = 'RELEASED')          AS released,
@@ -87,14 +119,11 @@ SELECT
     (SELECT COUNT(*) FROM qms_training_tasks WHERE status = 'COMPLETED')   AS training_completed;
 
 
--- qms_dept_training_compliance: rename compliance_percentage -> completion_pct
--- to match the sole consumer, frontend/app/qms/compliance/page.tsx:262
--- (`dept.completion_pct`). A full-codebase grep confirmed nothing else reads
--- "compliance_percentage" from this view (its only other appearances are the
--- view's own prior definition and audit-doc prose), so this is a plain
--- rename, not a new alias -- no other consumer to preserve compatibility for.
--- Logic is otherwise byte-identical to the previous definition.
-CREATE OR REPLACE VIEW qms_dept_training_compliance AS
+-- qms_dept_training_compliance: rename compliance_percentage -> completion_pct.
+-- See design notes above.
+DROP VIEW qms_dept_training_compliance;
+
+CREATE VIEW qms_dept_training_compliance AS
 SELECT u.department,
     count(tt.task_id) AS total_tasks,
     count(tt.task_id) FILTER (WHERE tt.status::text = 'COMPLETED'::text) AS completed_tasks,
@@ -104,3 +133,5 @@ SELECT u.department,
      LEFT JOIN qms_training_tasks tt ON u.user_id = tt.user_id
   WHERE u.is_active = true AND u.department IS NOT NULL
   GROUP BY u.department;
+
+COMMIT;
