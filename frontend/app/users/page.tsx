@@ -40,6 +40,7 @@ const ROLES = [
   { value: 'warehouse_manager',  label: 'Warehouse Manager',             group: 'Management' },
   { value: 'hr_admin',           label: 'HR Admin',                      group: 'Management' },
   { value: 'hr_manager',         label: 'HR Manager',                    group: 'Management' },
+  { value: 'engineering_manager', label: 'Engineering Manager',          group: 'Management' },
   // ── Operations
   { value: 'engineering',        label: 'Engineering',                   group: 'Operations' },
   { value: 'warehouse_staff',    label: 'Warehouse Staff',               group: 'Operations' },
@@ -56,7 +57,7 @@ const ROLES = [
 
 type RoleValue = typeof ROLES[number]['value'];
 
-// Role badge colours — covers all 16 roles
+// Role badge colours — covers all 17 roles
 const ROLE_BADGE: Record<string, string> = {
   admin:              'bg-red-500/10 text-red-400 border-red-500/20',
   ceo:                'bg-amber-500/10 text-amber-400 border-amber-500/20',
@@ -67,6 +68,7 @@ const ROLE_BADGE: Record<string, string> = {
   hr_admin:           'bg-violet-500/10 text-violet-400 border-violet-500/20',
   hr_manager:         'bg-purple-500/10 text-purple-400 border-purple-500/20',
   engineering:        'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+  engineering_manager: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
   warehouse_staff:    'bg-lime-500/10 text-lime-400 border-lime-500/20',
   operator:           'bg-orange-500/10 text-orange-400 border-orange-500/20',
   staff:              'bg-green-500/10 text-green-400 border-green-500/20',
@@ -507,6 +509,7 @@ export default function UsersPage() {
                         {formData.role === 'hr_admin'           && 'Full HR module access including salary data.'}
                         {formData.role === 'hr_manager'         && 'Onboarding updates for direct reports; view-only salary.'}
                         {formData.role === 'engineering'        && 'Engineering and maintenance module access.'}
+                        {formData.role === 'engineering_manager' && 'Approves work orders, PM plans, and asset changes.'}
                         {formData.role === 'warehouse_staff'    && 'Receive, issue, transfer, count — operational transactions.'}
                         {formData.role === 'operator'           && 'Production line operation and batch recording.'}
                         {formData.role === 'staff'              && 'Standard operational access.'}
