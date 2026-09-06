@@ -75,7 +75,7 @@ router.get('/work-orders/:id', requireEngineeringAccess, async (req, res) => {
   }
 });
 
-router.post('/work-orders', requireEngineeringAccess, async (req, res) => {
+router.post('/work-orders', requireEngineeringManager, async (req, res) => {
   try {
     res.status(201).json(await engineeringService.createWorkOrder({
       ...req.body,

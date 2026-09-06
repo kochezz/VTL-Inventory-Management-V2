@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { ClipboardList, Search, MapPin, AlertCircle } from 'lucide-react';
+import { ClipboardList, Search, MapPin, AlertCircle, Plus, X } from 'lucide-react';
 
 interface WorkOrder {
   work_order_id: string;
@@ -16,6 +16,18 @@ interface WorkOrder {
   equipment_name: string | null;
   floc_name: string | null;
   created_at: string;
+}
+
+interface Equipment {
+  equipment_id: string;
+  equipment_code: string;
+  name: string;
+}
+
+interface FunctionalLocation {
+  floc_id: string;
+  floc_code: string;
+  name: string;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -35,20 +47,44 @@ const PRIORITY_STYLES: Record<string, string> = {
   CRITICAL: 'bg-red-500/20 text-red-400 border-red-500/30',
 };
 
+const CAN_MANAGE = ['admin', 'engineering_manager'];
+
 export default function WorkOrdersPage() {
   const router = useRouter();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const canManage = user?.role && CAN_MANAGE.includes(user.role);
 
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [equipment, setEquipment] = useState<Equipment[]>([]);
+  const [locations, setLocations] = useState<FunctionalLocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  // New Work Order modal (manager only)
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [assetMode, setAssetMode] = useState<'equipment' | 'location'>('equipment');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [formData, setFormData] = useState({
+    order_type: 'PREVENTIVE',
+    priority: 'MEDIUM',
+    equipment_id: '',
+    floc_id: '',
+    short_description: '',
+  });
+
   useEffect(() => {
-    if (isAuthenticated) fetchWorkOrders();
-  }, [isAuthenticated]);
+    if (isAuthenticated) {
+      fetchWorkOrders();
+      if (canManage) {
+        fetchEquipment();
+        fetchLocations();
+      }
+    }
+  }, [isAuthenticated, canManage]);
 
   const fetchWorkOrders = async () => {
     try {
@@ -60,6 +96,69 @@ export default function WorkOrdersPage() {
       setError(err.response?.data?.message || 'Failed to load work orders.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchEquipment = async () => {
+    try {
+      const res = await api.get('/engineering/assets/equipment');
+      setEquipment(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchLocations = async () => {
+    try {
+      const res = await api.get('/engineering/assets/locations');
+      setLocations(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      order_type: 'PREVENTIVE',
+      priority: 'MEDIUM',
+      equipment_id: '',
+      floc_id: '',
+      short_description: '',
+    });
+    setAssetMode('equipment');
+    setFormError('');
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError('');
+
+    if (assetMode === 'equipment' && !formData.equipment_id) {
+      return setFormError('Select the piece of equipment this relates to.');
+    }
+    if (assetMode === 'location' && !formData.floc_id) {
+      return setFormError('Select the location this relates to.');
+    }
+    if (!formData.short_description.trim()) {
+      return setFormError('Enter a description.');
+    }
+
+    setSaving(true);
+    try {
+      const res = await api.post('/engineering/work-orders', {
+        order_type: formData.order_type,
+        priority: formData.priority,
+        short_description: formData.short_description,
+        equipment_id: assetMode === 'equipment' ? formData.equipment_id : null,
+        floc_id: assetMode === 'location' ? formData.floc_id : null,
+      });
+      setShowNewModal(false);
+      resetForm();
+      router.push(`/engineering/work-orders/${res.data.work_order_id}`);
+    } catch (err: any) {
+      setFormError(err.response?.data?.message || 'Failed to create the work order.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -93,6 +192,14 @@ export default function WorkOrdersPage() {
             </h1>
             <p className="text-gray-400 mt-1">Maintenance work order lifecycle</p>
           </div>
+          {canManage && (
+            <button
+              onClick={() => setShowNewModal(true)}
+              className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg shadow-cyan-500/20"
+            >
+              <Plus className="w-5 h-5" /> New Work Order
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -235,6 +342,121 @@ export default function WorkOrdersPage() {
           </>
         )}
       </div>
+
+      {/* New Work Order modal (manager only — button is already gated, this is defense in depth) */}
+      {canManage && showNewModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-dark-700">
+              <h2 className="text-lg font-bold text-white">New Work Order</h2>
+              <button onClick={() => { setShowNewModal(false); resetForm(); }} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCreate} className="p-5 space-y-4">
+              {formError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm">
+                  {formError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Order Type</label>
+                <select
+                  value={formData.order_type}
+                  onChange={(e) => setFormData({ ...formData, order_type: e.target.value })}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  <option value="PREVENTIVE">Preventive</option>
+                  <option value="CORRECTIVE">Corrective</option>
+                  <option value="EMERGENCY_BREAKDOWN">Emergency Breakdown</option>
+                  <option value="CALIBRATION">Calibration</option>
+                  <option value="CIP_ASSIST">CIP Assist</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Priority</label>
+                <select
+                  value={formData.priority}
+                  onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  <option value="LOW">Low</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HIGH">High</option>
+                  <option value="CRITICAL">Critical</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Relates To</label>
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setAssetMode('equipment')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold border ${assetMode === 'equipment' ? 'bg-cyan-600 border-cyan-600 text-white' : 'bg-dark-900 border-dark-700 text-gray-400'}`}
+                  >
+                    Equipment
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssetMode('location')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold border ${assetMode === 'location' ? 'bg-cyan-600 border-cyan-600 text-white' : 'bg-dark-900 border-dark-700 text-gray-400'}`}
+                  >
+                    Location
+                  </button>
+                </div>
+                {assetMode === 'equipment' ? (
+                  <select
+                    value={formData.equipment_id}
+                    onChange={(e) => setFormData({ ...formData, equipment_id: e.target.value })}
+                    className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="">Select equipment...</option>
+                    {equipment.map((eq) => (
+                      <option key={eq.equipment_id} value={eq.equipment_id}>
+                        {eq.equipment_code} — {eq.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    value={formData.floc_id}
+                    onChange={(e) => setFormData({ ...formData, floc_id: e.target.value })}
+                    className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="">Select location...</option>
+                    {locations.map((fl) => (
+                      <option key={fl.floc_id} value={fl.floc_id}>
+                        {fl.floc_code} — {fl.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Description</label>
+                <textarea
+                  value={formData.short_description}
+                  onChange={(e) => setFormData({ ...formData, short_description: e.target.value })}
+                  rows={3}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg font-bold transition-colors"
+              >
+                {saving ? 'Creating...' : 'Create Work Order'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

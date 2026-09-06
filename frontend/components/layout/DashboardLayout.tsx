@@ -143,6 +143,7 @@ const navigation: NavItem[] = [
     icon: Wrench,
     roles: ['admin', 'engineering', 'engineering_manager'],
     children: [
+      { name: 'Notifications', href: '/engineering/notifications', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'Work Orders', href: '/engineering/work-orders', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'Asset Register', href: '/engineering/assets', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'PM Schedule', href: '/engineering/pm-schedule', roles: ['admin', 'engineering', 'engineering_manager'] },
