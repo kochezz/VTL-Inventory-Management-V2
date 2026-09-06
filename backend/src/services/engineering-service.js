@@ -86,7 +86,17 @@ const createWorkOrder = async ({
 
 const getWorkOrder = async (workOrderId) => {
   const result = await pool.query(
-    `SELECT * FROM work_orders WHERE work_order_id = $1`,
+    `SELECT wo.*,
+            e.name AS equipment_name, e.equipment_code,
+            fl.name AS floc_name, fl.floc_code,
+            u.full_name AS created_by_name,
+            cu.full_name AS cleared_by_name
+     FROM work_orders wo
+     LEFT JOIN equipment e ON e.equipment_id = wo.equipment_id
+     LEFT JOIN functional_locations fl ON fl.floc_id = wo.floc_id
+     LEFT JOIN users u ON u.user_id = wo.created_by
+     LEFT JOIN users cu ON cu.user_id = wo.cleared_by
+     WHERE wo.work_order_id = $1`,
     [workOrderId]
   );
   return result.rows[0] || null;
@@ -97,15 +107,22 @@ const listWorkOrders = async ({ status, equipment_id } = {}) => {
   const params = [];
   if (status) {
     params.push(status);
-    conditions.push(`status = $${params.length}`);
+    conditions.push(`wo.status = $${params.length}`);
   }
   if (equipment_id) {
     params.push(equipment_id);
-    conditions.push(`equipment_id = $${params.length}`);
+    conditions.push(`wo.equipment_id = $${params.length}`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const result = await pool.query(
-    `SELECT * FROM work_orders ${where} ORDER BY created_at DESC`,
+    `SELECT wo.*,
+            e.name AS equipment_name, e.equipment_code,
+            fl.name AS floc_name
+     FROM work_orders wo
+     LEFT JOIN equipment e ON e.equipment_id = wo.equipment_id
+     LEFT JOIN functional_locations fl ON fl.floc_id = wo.floc_id
+     ${where}
+     ORDER BY wo.created_at DESC`,
     params
   );
   return result.rows;
