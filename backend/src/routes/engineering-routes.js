@@ -167,6 +167,30 @@ router.post('/parts/:allocationId/issue', requireEngineeringAccess, async (req, 
   }
 });
 
+router.get('/parts/catalog', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listSpareParts());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/parts/storage-locations', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listEngineeringStorageLocations());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/work-orders/:id/parts', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.getPartAllocations(req.params.id));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ─── Checklist ────────────────────────────────────────────────────────────────
 
 router.post('/work-orders/:id/checklist', requireEngineeringManager, async (req, res) => {

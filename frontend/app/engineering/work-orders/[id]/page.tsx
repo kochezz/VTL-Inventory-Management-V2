@@ -6,7 +6,7 @@ import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import {
   ArrowLeft, ClipboardList, MapPin, Calendar, User, ShieldCheck,
-  Plus, X, CheckCircle2, XCircle, MinusCircle, Clock
+  Plus, X, CheckCircle2, XCircle, MinusCircle, Clock, Package, ArrowDownToLine
 } from 'lucide-react';
 
 interface WorkOrderDetail {
@@ -46,6 +46,28 @@ interface TimeConfirmation {
   work_notes: string | null;
 }
 
+interface PartAllocation {
+  allocation_id: string;
+  sku: string;
+  product_name: string;
+  quantity_planned: number;
+  quantity_issued: number;
+  is_issued: boolean;
+  issued_from_location_code: string | null;
+}
+
+interface SparePart {
+  product_id: string;
+  sku: string;
+  product_name: string;
+}
+
+interface StorageBin {
+  location_id: string;
+  location_code: string;
+  location_name: string;
+}
+
 const CAN_MANAGE = ['admin', 'engineering_manager'];
 
 const NEXT_STATUS: Record<string, { label: string; status: string }[]> = {
@@ -80,6 +102,23 @@ export default function WorkOrderDetailPage() {
   const [loggingTime, setLoggingTime] = useState(false);
   const [timeError, setTimeError] = useState('');
 
+  const [parts, setParts] = useState<PartAllocation[]>([]);
+  const [sparePartsCatalog, setSparePartsCatalog] = useState<SparePart[]>([]);
+  const [storageBins, setStorageBins] = useState<StorageBin[]>([]);
+
+  // Allocate Part modal
+  const [showAllocateModal, setShowAllocateModal] = useState(false);
+  const [partSearch, setPartSearch] = useState('');
+  const [allocateForm, setAllocateForm] = useState({ product_id: '', quantity_planned: '1' });
+  const [allocating, setAllocating] = useState(false);
+  const [allocateError, setAllocateError] = useState('');
+
+  // Issue Part modal
+  const [issuingAllocation, setIssuingAllocation] = useState<PartAllocation | null>(null);
+  const [issueForm, setIssueForm] = useState({ quantity: '', from_location_id: '' });
+  const [issuing, setIssuing] = useState(false);
+  const [issueError, setIssueError] = useState('');
+
   useEffect(() => {
     if (isAuthenticated && params.id) fetchAll();
   }, [isAuthenticated, params.id]);
@@ -88,14 +127,20 @@ export default function WorkOrderDetailPage() {
     try {
       setLoading(true);
       setError('');
-      const [woRes, checklistRes, timeRes] = await Promise.all([
+      const [woRes, checklistRes, timeRes, partsRes, catalogRes, binsRes] = await Promise.all([
         api.get(`/engineering/work-orders/${params.id}`),
         api.get(`/engineering/work-orders/${params.id}/checklist`),
         api.get(`/engineering/work-orders/${params.id}/time`),
+        api.get(`/engineering/work-orders/${params.id}/parts`),
+        api.get('/engineering/parts/catalog'),
+        api.get('/engineering/parts/storage-locations'),
       ]);
       setWorkOrder(woRes.data);
       setChecklist(checklistRes.data);
       setTimeEntries(timeRes.data);
+      setParts(partsRes.data);
+      setSparePartsCatalog(catalogRes.data);
+      setStorageBins(binsRes.data);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to load this work order.');
     } finally {
@@ -162,6 +207,69 @@ export default function WorkOrderDetailPage() {
       setLoggingTime(false);
     }
   };
+
+  const handleAllocatePart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!allocateForm.product_id) return setAllocateError('Select a spare part.');
+    const qty = Number(allocateForm.quantity_planned);
+    if (!qty || qty <= 0) return setAllocateError('Enter a quantity greater than zero.');
+    setAllocating(true);
+    setAllocateError('');
+    try {
+      await api.post(`/engineering/work-orders/${params.id}/parts`, {
+        product_id: allocateForm.product_id,
+        quantity_planned: qty,
+      });
+      setShowAllocateModal(false);
+      setAllocateForm({ product_id: '', quantity_planned: '1' });
+      setPartSearch('');
+      await fetchAll();
+    } catch (err: any) {
+      setAllocateError(err.response?.data?.message || 'Failed to allocate this part.');
+    } finally {
+      setAllocating(false);
+    }
+  };
+
+  const handleIssuePart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!issuingAllocation) return;
+    const qty = Number(issueForm.quantity);
+    if (!qty || qty <= 0) return setIssueError('Enter a quantity greater than zero.');
+    if (!issueForm.from_location_id) return setIssueError('Select which bin to issue from.');
+    setIssuing(true);
+    setIssueError('');
+    try {
+      await api.post(`/engineering/parts/${issuingAllocation.allocation_id}/issue`, {
+        quantity: qty,
+        from_location_id: issueForm.from_location_id,
+      });
+      setIssuingAllocation(null);
+      setIssueForm({ quantity: '', from_location_id: '' });
+      await fetchAll();
+    } catch (err: any) {
+      // Surface the backend's actual message — e.g. insufficient stock —
+      // rather than a generic failure string, since the real reason
+      // matters here (this moves real inventory).
+      setIssueError(err.response?.data?.message || 'Failed to issue this part.');
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const openIssueModal = (allocation: PartAllocation) => {
+    setIssuingAllocation(allocation);
+    setIssueForm({
+      quantity: String(allocation.quantity_planned - allocation.quantity_issued),
+      from_location_id: storageBins[0]?.location_id || '',
+    });
+    setIssueError('');
+  };
+
+  const filteredCatalog = sparePartsCatalog.filter((p) => {
+    const q = partSearch.toLowerCase();
+    return p.sku.toLowerCase().includes(q) || p.product_name.toLowerCase().includes(q);
+  });
 
   if (!isAuthenticated) return null;
 
@@ -355,6 +463,52 @@ export default function WorkOrderDetailPage() {
                 </div>
               )}
             </div>
+
+            {/* Parts */}
+            <div className="bg-dark-800 border border-dark-700 rounded-xl p-5 sm:p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Package className="w-5 h-5 text-cyan-500" /> Parts
+                </h2>
+                <button
+                  onClick={() => setShowAllocateModal(true)}
+                  className="flex items-center gap-1.5 text-sm text-cyan-400 hover:text-cyan-300 font-semibold"
+                >
+                  <Plus className="w-4 h-4" /> Allocate Part
+                </button>
+              </div>
+
+              {parts.length === 0 ? (
+                <p className="text-gray-500 text-sm">No spare parts have been allocated to this work order yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {parts.map((part) => (
+                    <div key={part.allocation_id} className="bg-dark-900/50 border border-dark-700 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="text-white font-semibold">{part.product_name}</p>
+                        <p className="text-gray-500 text-xs font-mono">{part.sku}</p>
+                        <p className="text-gray-400 text-sm mt-1">
+                          Planned: {part.quantity_planned} · Issued: {part.quantity_issued}
+                          {part.issued_from_location_code && ` · from ${part.issued_from_location_code}`}
+                        </p>
+                      </div>
+                      {part.is_issued ? (
+                        <span className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500/20 text-green-400 border border-green-500/30 self-start sm:self-auto">
+                          Issued
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => openIssueModal(part)}
+                          className="min-h-[44px] px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 shrink-0"
+                        >
+                          <ArrowDownToLine className="w-4 h-4" /> Issue
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         ) : null}
       </div>
@@ -457,6 +611,123 @@ export default function WorkOrderDetailPage() {
                 className="w-full min-h-[48px] bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg font-bold transition-colors"
               >
                 {loggingTime ? 'Saving...' : 'Log Time'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Allocate Part modal */}
+      {showAllocateModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-dark-700">
+              <h2 className="text-lg font-bold text-white">Allocate Part</h2>
+              <button onClick={() => { setShowAllocateModal(false); setPartSearch(''); }} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleAllocatePart} className="p-5 space-y-4">
+              {allocateError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm">
+                  {allocateError}
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Search Spare Parts</label>
+                <input
+                  type="text"
+                  value={partSearch}
+                  onChange={(e) => setPartSearch(e.target.value)}
+                  placeholder="Search by SKU or name..."
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 mb-2"
+                />
+                <select
+                  value={allocateForm.product_id}
+                  onChange={(e) => setAllocateForm({ ...allocateForm, product_id: e.target.value })}
+                  size={6}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  {filteredCatalog.map((p) => (
+                    <option key={p.product_id} value={p.product_id}>
+                      {p.sku} — {p.product_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Quantity Planned</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={allocateForm.quantity_planned}
+                  onChange={(e) => setAllocateForm({ ...allocateForm, quantity_planned: e.target.value })}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={allocating}
+                className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg font-bold transition-colors"
+              >
+                {allocating ? 'Allocating...' : 'Allocate Part'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Issue Part modal */}
+      {issuingAllocation && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-dark-700">
+              <h2 className="text-lg font-bold text-white">Issue Part</h2>
+              <button onClick={() => setIssuingAllocation(null)} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleIssuePart} className="p-5 space-y-4">
+              {issueError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm">
+                  {issueError}
+                </div>
+              )}
+              <p className="text-white font-semibold">{issuingAllocation.product_name}</p>
+              <p className="text-gray-500 text-xs font-mono -mt-3">{issuingAllocation.sku}</p>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Quantity to Issue</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={issueForm.quantity}
+                  onChange={(e) => setIssueForm({ ...issueForm, quantity: e.target.value })}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Issue From</label>
+                <select
+                  value={issueForm.from_location_id}
+                  onChange={(e) => setIssueForm({ ...issueForm, from_location_id: e.target.value })}
+                  className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                >
+                  {storageBins.map((bin) => (
+                    <option key={bin.location_id} value={bin.location_id}>
+                      {bin.location_code} — {bin.location_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={issuing}
+                className="w-full min-h-[48px] bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg font-bold transition-colors"
+              >
+                {issuing ? 'Issuing...' : 'Issue Part'}
               </button>
             </form>
           </div>

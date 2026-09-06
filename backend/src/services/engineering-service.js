@@ -250,7 +250,7 @@ const issuePart = async ({
       inventory_transaction_id = $3
      WHERE allocation_id = $4
      RETURNING *`,
-    [quantity, performed_by, transaction.transaction_id, allocation_id]
+    [quantity, performed_by, transaction.transaction.transaction_id, allocation_id]
   );
 
   return updated.rows[0];
@@ -357,6 +357,51 @@ const getTimeConfirmations = async (workOrderId) => {
   return result.rows;
 };
 
+// ─── Parts Catalog / Storage / Allocations (read) ────────────────────────────
+
+// Scoped to SPARE_% categories only — this is deliberately NOT a general
+// product browser. A work-order parts picker showing raw materials or
+// finished goods would be a real usability problem, not just noise.
+const listSpareParts = async () => {
+  const result = await pool.query(
+    `SELECT p.product_id, p.sku, p.product_name, pc.category_code, pc.category_name
+     FROM products p
+     JOIN product_categories pc ON pc.category_id = p.category_id
+     WHERE pc.category_code LIKE 'SPARE_%'
+     ORDER BY p.product_name`
+  );
+  return result.rows;
+};
+
+// warehouse_locations, NOT functional_locations — this is physical
+// storage (where spares actually sit), a different table from the asset
+// hierarchy used elsewhere in this module. Scoped to the 'E-' zone's bins
+// specifically (E-01-BIN-01, E-01-BIN-02), not the whole warehouse.
+const listEngineeringStorageLocations = async () => {
+  const result = await pool.query(
+    `SELECT location_id, location_code, location_name
+     FROM warehouse_locations
+     WHERE location_code LIKE 'E-%' AND location_type = 'bin'
+     ORDER BY location_code`
+  );
+  return result.rows;
+};
+
+const getPartAllocations = async (workOrderId) => {
+  const result = await pool.query(
+    `SELECT wopa.*, p.sku, p.product_name,
+            wl.location_code AS issued_from_location_code
+     FROM work_order_part_allocations wopa
+     JOIN products p ON p.product_id = wopa.product_id
+     LEFT JOIN inventory_transactions it ON it.transaction_id = wopa.inventory_transaction_id
+     LEFT JOIN warehouse_locations wl ON wl.location_id = it.from_location_id
+     WHERE wopa.work_order_id = $1
+     ORDER BY wopa.created_at`,
+    [workOrderId]
+  );
+  return result.rows;
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -373,5 +418,8 @@ module.exports = {
   listFunctionalLocations,
   listEquipment,
   getChecklistItems,
-  getTimeConfirmations
+  getTimeConfirmations,
+  listSpareParts,
+  listEngineeringStorageLocations,
+  getPartAllocations
 };
