@@ -411,6 +411,49 @@ const listFailureCatalogs = async () => {
   return result.rows;
 };
 
+// ─── Asset Register (write) ───────────────────────────────────────────────────
+
+const createFunctionalLocation = async ({ floc_code, name, parent_floc_id, criticality }) => {
+  try {
+    const result = await pool.query(
+      `INSERT INTO functional_locations (floc_code, name, parent_floc_id, criticality)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [floc_code, name, parent_floc_id || null, criticality || 'MEDIUM']
+    );
+    return result.rows[0];
+  } catch (error) {
+    if (error.code === '23505') {
+      throw new Error(`A functional location with code "${floc_code}" already exists.`);
+    }
+    throw error;
+  }
+};
+
+const createEquipment = async ({
+  equipment_code, name, model_number, manufacturer, floc_id,
+  parent_equipment_id, installation_date, food_contact_surface, status
+}) => {
+  try {
+    const result = await pool.query(
+      `INSERT INTO equipment (
+        equipment_code, name, model_number, manufacturer, floc_id,
+        parent_equipment_id, installation_date, food_contact_surface, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *`,
+      [equipment_code, name, model_number || null, manufacturer || null,
+       floc_id || null, parent_equipment_id || null, installation_date || null,
+       food_contact_surface || false, status || 'OPERATIONAL']
+    );
+    return result.rows[0];
+  } catch (error) {
+    if (error.code === '23505') {
+      throw new Error(`Equipment with code "${equipment_code}" already exists.`);
+    }
+    throw error;
+  }
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -431,5 +474,7 @@ module.exports = {
   listSpareParts,
   listEngineeringStorageLocations,
   getPartAllocations,
-  listFailureCatalogs
+  listFailureCatalogs,
+  createFunctionalLocation,
+  createEquipment
 };
