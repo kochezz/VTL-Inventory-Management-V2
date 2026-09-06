@@ -91,6 +91,9 @@ router.post('/work-orders', requireEngineeringManager, async (req, res) => {
 // a manager action, handled separately below.
 router.patch('/work-orders/:id/status', requireEngineeringAccess, async (req, res) => {
   try {
+    if (req.body.status === 'APPROVED' && !['admin', 'engineering_manager'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Access denied. Approving a work order requires the engineering manager role.' });
+    }
     res.json(await engineeringService.updateWorkOrderStatus(req.params.id, req.body.status, req.user.user_id));
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -120,6 +123,22 @@ router.post('/work-orders/:id/time', requireEngineeringAccess, async (req, res) 
     }));
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+router.get('/work-orders/:id/checklist', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.getChecklistItems(req.params.id));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/work-orders/:id/time', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.getTimeConfirmations(req.params.id));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 });
 
