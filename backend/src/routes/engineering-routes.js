@@ -31,6 +31,27 @@ router.post('/notifications', requireEngineeringAccess, async (req, res) => {
   }
 });
 
+// ─── Asset Register ──────────────────────────────────────────────────────────
+
+router.get('/assets/locations', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listFunctionalLocations());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/assets/equipment', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listEquipment({
+      floc_id: req.query.floc_id,
+      status: req.query.status
+    }));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ─── Work Orders ─────────────────────────────────────────────────────────────
 
 router.get('/work-orders', requireEngineeringAccess, async (req, res) => {

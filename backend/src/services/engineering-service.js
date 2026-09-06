@@ -279,6 +279,41 @@ const addChecklistItems = async (workOrderId, items) => {
   }
 };
 
+// ─── Asset Register ──────────────────────────────────────────────────────────
+
+const listFunctionalLocations = async () => {
+  const result = await pool.query(
+    `SELECT fl.*, parent.name AS parent_name
+     FROM functional_locations fl
+     LEFT JOIN functional_locations parent ON parent.floc_id = fl.parent_floc_id
+     ORDER BY fl.floc_code`
+  );
+  return result.rows;
+};
+
+const listEquipment = async ({ floc_id, status } = {}) => {
+  const conditions = [];
+  const params = [];
+  if (floc_id) {
+    params.push(floc_id);
+    conditions.push(`e.floc_id = $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    conditions.push(`e.status = $${params.length}`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await pool.query(
+    `SELECT e.*, fl.name AS floc_name, fl.floc_code
+     FROM equipment e
+     LEFT JOIN functional_locations fl ON fl.floc_id = e.floc_id
+     ${where}
+     ORDER BY e.equipment_code`,
+    params
+  );
+  return result.rows;
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -291,5 +326,7 @@ module.exports = {
   allocatePart,
   issuePart,
   updateChecklistItem,
-  addChecklistItems
+  addChecklistItems,
+  listFunctionalLocations,
+  listEquipment
 };
