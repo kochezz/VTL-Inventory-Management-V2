@@ -143,7 +143,7 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-6 text-center text-xs text-gray-600">
-          <p>Version 1.0.0 • Phase 3 - Week 7</p>
+          <p>Version 2.1.1 • VTL - Production</p>
           <p className="mt-1">© 2026 Vilagio Technologies Ltd.</p>
         </div>
       </div>

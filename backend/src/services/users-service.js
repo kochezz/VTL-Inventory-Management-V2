@@ -16,6 +16,7 @@ const VALID_ROLES = [
   'ceo',
   'cfo',
   'engineering',
+  'engineering_manager',
   'operator',
   'sales',
   'staff',
