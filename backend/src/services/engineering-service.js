@@ -331,6 +331,32 @@ const listEquipment = async ({ floc_id, status } = {}) => {
   return result.rows;
 };
 
+// ─── Work Order Checklist / Time (read) ──────────────────────────────────────
+
+const getChecklistItems = async (workOrderId) => {
+  const result = await pool.query(
+    `SELECT ci.*, u.full_name AS performed_by_name
+     FROM work_order_checklist_items ci
+     LEFT JOIN users u ON u.user_id = ci.performed_by
+     WHERE ci.work_order_id = $1
+     ORDER BY ci.step_sequence`,
+    [workOrderId]
+  );
+  return result.rows;
+};
+
+const getTimeConfirmations = async (workOrderId) => {
+  const result = await pool.query(
+    `SELECT tc.*, u.full_name AS technician_name
+     FROM work_order_time_confirmations tc
+     LEFT JOIN users u ON u.user_id = tc.technician_user_id
+     WHERE tc.work_order_id = $1
+     ORDER BY tc.start_time DESC`,
+    [workOrderId]
+  );
+  return result.rows;
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -345,5 +371,7 @@ module.exports = {
   updateChecklistItem,
   addChecklistItems,
   listFunctionalLocations,
-  listEquipment
+  listEquipment,
+  getChecklistItems,
+  getTimeConfirmations
 };
