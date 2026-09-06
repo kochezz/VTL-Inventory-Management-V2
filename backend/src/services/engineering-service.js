@@ -402,6 +402,15 @@ const getPartAllocations = async (workOrderId) => {
   return result.rows;
 };
 
+// ─── Failure Catalogs (read) ──────────────────────────────────────────────────
+
+const listFailureCatalogs = async () => {
+  const result = await pool.query(
+    `SELECT * FROM failure_catalogs ORDER BY catalog_type, code_name`
+  );
+  return result.rows;
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -421,5 +430,6 @@ module.exports = {
   getTimeConfirmations,
   listSpareParts,
   listEngineeringStorageLocations,
-  getPartAllocations
+  getPartAllocations,
+  listFailureCatalogs
 };
