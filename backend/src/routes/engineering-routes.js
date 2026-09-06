@@ -52,6 +52,16 @@ router.get('/assets/equipment', requireEngineeringAccess, async (req, res) => {
   }
 });
 
+// ─── Failure Catalogs ────────────────────────────────────────────────────────
+
+router.get('/failure-catalogs', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listFailureCatalogs());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ─── Work Orders ─────────────────────────────────────────────────────────────
 
 router.get('/work-orders', requireEngineeringAccess, async (req, res) => {

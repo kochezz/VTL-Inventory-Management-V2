@@ -6,7 +6,8 @@ import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import {
   ArrowLeft, ClipboardList, MapPin, Calendar, User, ShieldCheck,
-  Plus, X, CheckCircle2, XCircle, MinusCircle, Clock, Package, ArrowDownToLine
+  Plus, X, CheckCircle2, XCircle, MinusCircle, Clock, Package,
+  ArrowDownToLine, Lock
 } from 'lucide-react';
 
 interface WorkOrderDetail {
@@ -68,6 +69,13 @@ interface StorageBin {
   location_name: string;
 }
 
+interface FailureCode {
+  code_id: string;
+  catalog_type: string;
+  code_name: string;
+  description: string | null;
+}
+
 const CAN_MANAGE = ['admin', 'engineering_manager'];
 
 const NEXT_STATUS: Record<string, { label: string; status: string }[]> = {
@@ -119,6 +127,16 @@ export default function WorkOrderDetailPage() {
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState('');
 
+  const [failureCatalogs, setFailureCatalogs] = useState<FailureCode[]>([]);
+
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeForm, setCloseForm] = useState({
+    part_code_id: '', damage_code_id: '', cause_code_id: '', remedy_code_id: '',
+    food_safety_cleared: false,
+  });
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState('');
+
   useEffect(() => {
     if (isAuthenticated && params.id) fetchAll();
   }, [isAuthenticated, params.id]);
@@ -127,13 +145,14 @@ export default function WorkOrderDetailPage() {
     try {
       setLoading(true);
       setError('');
-      const [woRes, checklistRes, timeRes, partsRes, catalogRes, binsRes] = await Promise.all([
+      const [woRes, checklistRes, timeRes, partsRes, catalogRes, binsRes, failureCatRes] = await Promise.all([
         api.get(`/engineering/work-orders/${params.id}`),
         api.get(`/engineering/work-orders/${params.id}/checklist`),
         api.get(`/engineering/work-orders/${params.id}/time`),
         api.get(`/engineering/work-orders/${params.id}/parts`),
         api.get('/engineering/parts/catalog'),
         api.get('/engineering/parts/storage-locations'),
+        api.get('/engineering/failure-catalogs'),
       ]);
       setWorkOrder(woRes.data);
       setChecklist(checklistRes.data);
@@ -141,6 +160,7 @@ export default function WorkOrderDetailPage() {
       setParts(partsRes.data);
       setSparePartsCatalog(catalogRes.data);
       setStorageBins(binsRes.data);
+      setFailureCatalogs(failureCatRes.data);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to load this work order.');
     } finally {
@@ -271,6 +291,25 @@ export default function WorkOrderDetailPage() {
     return p.sku.toLowerCase().includes(q) || p.product_name.toLowerCase().includes(q);
   });
 
+  const handleClose = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { part_code_id, damage_code_id, cause_code_id, remedy_code_id } = closeForm;
+    if (!part_code_id || !damage_code_id || !cause_code_id || !remedy_code_id) {
+      return setCloseError('All four codes (part, damage, cause, remedy) are required to close a work order.');
+    }
+    setClosing(true);
+    setCloseError('');
+    try {
+      await api.post(`/engineering/work-orders/${params.id}/close`, closeForm);
+      setShowCloseModal(false);
+      await fetchAll();
+    } catch (err: any) {
+      setCloseError(err.response?.data?.message || 'Failed to close this work order.');
+    } finally {
+      setClosing(false);
+    }
+  };
+
   if (!isAuthenticated) return null;
 
   const nextActions = workOrder
@@ -278,6 +317,9 @@ export default function WorkOrderDetailPage() {
         (action) => action.status !== 'APPROVED' || canManage
       )
     : [];
+
+  const isLocked = workOrder ? ['CLOSED', 'CANCELLED'].includes(workOrder.status) : false;
+  const canClose = canManage && workOrder?.status === 'TECO_COMPLETE';
 
   return (
     <DashboardLayout>
@@ -315,7 +357,7 @@ export default function WorkOrderDetailPage() {
               </div>
 
               {/* Status action buttons — large tap targets for mobile */}
-              {nextActions.length > 0 && (
+              {(nextActions.length > 0 || canClose) && (
                 <div className="flex flex-wrap gap-3 mt-5 pt-5 border-t border-dark-700">
                   {nextActions.map((action) => (
                     <button
@@ -327,6 +369,14 @@ export default function WorkOrderDetailPage() {
                       {statusUpdating ? 'Updating...' : action.label}
                     </button>
                   ))}
+                  {canClose && (
+                    <button
+                      onClick={() => setShowCloseModal(true)}
+                      className="min-h-[48px] px-6 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition-colors"
+                    >
+                      Close Work Order
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -369,7 +419,7 @@ export default function WorkOrderDetailPage() {
             <div className="bg-dark-800 border border-dark-700 rounded-xl p-5 sm:p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-bold text-white">Checklist</h2>
-                {canManage && (
+                {canManage && !isLocked && (
                   <button
                     onClick={() => setShowAddChecklist(true)}
                     className="flex items-center gap-1.5 text-sm text-cyan-400 hover:text-cyan-300 font-semibold"
@@ -387,38 +437,42 @@ export default function WorkOrderDetailPage() {
                     <div key={item.item_id} className="bg-dark-900/50 border border-dark-700 rounded-lg p-4">
                       <p className="text-white mb-3">{item.step_sequence}. {item.instruction}</p>
                       {/* Large tap targets — this is executed on a phone on the plant floor */}
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleChecklistStatus(item.item_id, 'PASS')}
-                          className={`flex-1 min-h-[44px] rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors ${
-                            item.status === 'PASS'
-                              ? 'bg-green-600 text-white'
-                              : 'bg-dark-700 text-gray-400 hover:bg-green-600/20 hover:text-green-400'
-                          }`}
-                        >
-                          <CheckCircle2 className="w-4 h-4" /> Pass
-                        </button>
-                        <button
-                          onClick={() => handleChecklistStatus(item.item_id, 'FAIL')}
-                          className={`flex-1 min-h-[44px] rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors ${
-                            item.status === 'FAIL'
-                              ? 'bg-red-600 text-white'
-                              : 'bg-dark-700 text-gray-400 hover:bg-red-600/20 hover:text-red-400'
-                          }`}
-                        >
-                          <XCircle className="w-4 h-4" /> Fail
-                        </button>
-                        <button
-                          onClick={() => handleChecklistStatus(item.item_id, 'NOT_APPLICABLE')}
-                          className={`flex-1 min-h-[44px] rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors ${
-                            item.status === 'NOT_APPLICABLE'
-                              ? 'bg-gray-600 text-white'
-                              : 'bg-dark-700 text-gray-400 hover:bg-gray-600/40'
-                          }`}
-                        >
-                          <MinusCircle className="w-4 h-4" /> N/A
-                        </button>
-                      </div>
+                      {!isLocked ? (
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleChecklistStatus(item.item_id, 'PASS')}
+                            className={`flex-1 min-h-[44px] rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors ${
+                              item.status === 'PASS'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-dark-700 text-gray-400 hover:bg-green-600/20 hover:text-green-400'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-4 h-4" /> Pass
+                          </button>
+                          <button
+                            onClick={() => handleChecklistStatus(item.item_id, 'FAIL')}
+                            className={`flex-1 min-h-[44px] rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors ${
+                              item.status === 'FAIL'
+                                ? 'bg-red-600 text-white'
+                                : 'bg-dark-700 text-gray-400 hover:bg-red-600/20 hover:text-red-400'
+                            }`}
+                          >
+                            <XCircle className="w-4 h-4" /> Fail
+                          </button>
+                          <button
+                            onClick={() => handleChecklistStatus(item.item_id, 'NOT_APPLICABLE')}
+                            className={`flex-1 min-h-[44px] rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors ${
+                              item.status === 'NOT_APPLICABLE'
+                                ? 'bg-gray-600 text-white'
+                                : 'bg-dark-700 text-gray-400 hover:bg-gray-600/40'
+                            }`}
+                          >
+                            <MinusCircle className="w-4 h-4" /> N/A
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 text-xs italic">Locked</p>
+                      )}
                       {item.performed_by_name && (
                         <p className="text-gray-500 text-xs mt-2">
                           {item.performed_by_name} · {formatDate(item.inspected_at)}
@@ -436,12 +490,14 @@ export default function WorkOrderDetailPage() {
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Clock className="w-5 h-5 text-cyan-500" /> Time Logged
                 </h2>
-                <button
-                  onClick={() => setShowLogTime(true)}
-                  className="flex items-center gap-1.5 text-sm text-cyan-400 hover:text-cyan-300 font-semibold"
-                >
-                  <Plus className="w-4 h-4" /> Log Time
-                </button>
+                {!isLocked && (
+                  <button
+                    onClick={() => setShowLogTime(true)}
+                    className="flex items-center gap-1.5 text-sm text-cyan-400 hover:text-cyan-300 font-semibold"
+                  >
+                    <Plus className="w-4 h-4" /> Log Time
+                  </button>
+                )}
               </div>
 
               {timeEntries.length === 0 ? (
@@ -470,12 +526,14 @@ export default function WorkOrderDetailPage() {
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Package className="w-5 h-5 text-cyan-500" /> Parts
                 </h2>
-                <button
-                  onClick={() => setShowAllocateModal(true)}
-                  className="flex items-center gap-1.5 text-sm text-cyan-400 hover:text-cyan-300 font-semibold"
-                >
-                  <Plus className="w-4 h-4" /> Allocate Part
-                </button>
+                {!isLocked && (
+                  <button
+                    onClick={() => setShowAllocateModal(true)}
+                    className="flex items-center gap-1.5 text-sm text-cyan-400 hover:text-cyan-300 font-semibold"
+                  >
+                    <Plus className="w-4 h-4" /> Allocate Part
+                  </button>
+                )}
               </div>
 
               {parts.length === 0 ? (
@@ -497,12 +555,14 @@ export default function WorkOrderDetailPage() {
                           Issued
                         </span>
                       ) : (
-                        <button
-                          onClick={() => openIssueModal(part)}
-                          className="min-h-[44px] px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 shrink-0"
-                        >
-                          <ArrowDownToLine className="w-4 h-4" /> Issue
-                        </button>
+                        !isLocked && (
+                          <button
+                            onClick={() => openIssueModal(part)}
+                            className="min-h-[44px] px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-1.5 shrink-0"
+                          >
+                            <ArrowDownToLine className="w-4 h-4" /> Issue
+                          </button>
+                        )
                       )}
                     </div>
                   ))}
@@ -728,6 +788,71 @@ export default function WorkOrderDetailPage() {
                 className="w-full min-h-[48px] bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg font-bold transition-colors"
               >
                 {issuing ? 'Issuing...' : 'Issue Part'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Close Work Order modal */}
+      {showCloseModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-dark-700">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Lock className="w-5 h-5" /> Close Work Order
+              </h2>
+              <button onClick={() => setShowCloseModal(false)} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleClose} className="p-5 space-y-4">
+              {closeError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-sm">
+                  {closeError}
+                </div>
+              )}
+              <p className="text-gray-400 text-sm">
+                All four failure codes are required to close a work order, per ISO 14224 defect coding.
+              </p>
+
+              {([
+                ['part_code_id', 'PART', 'Object Part'],
+                ['damage_code_id', 'DAMAGE', 'Damage Code'],
+                ['cause_code_id', 'CAUSE', 'Cause Code'],
+                ['remedy_code_id', 'REMEDY', 'Remedy Code'],
+              ] as const).map(([field, type, label]) => (
+                <div key={field}>
+                  <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">{label}</label>
+                  <select
+                    value={(closeForm as any)[field]}
+                    onChange={(e) => setCloseForm({ ...closeForm, [field]: e.target.value })}
+                    className="w-full bg-dark-900 border border-dark-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="">Select...</option>
+                    {failureCatalogs.filter((c) => c.catalog_type === type).map((c) => (
+                      <option key={c.code_id} value={c.code_id}>{c.code_name}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+
+              <label className="flex items-center gap-2 text-sm text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={closeForm.food_safety_cleared}
+                  onChange={(e) => setCloseForm({ ...closeForm, food_safety_cleared: e.target.checked })}
+                  className="rounded border-dark-600"
+                />
+                Food safety / sanitation cleared for this closeout
+              </label>
+
+              <button
+                type="submit"
+                disabled={closing}
+                className="w-full min-h-[48px] bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg font-bold transition-colors"
+              >
+                {closing ? 'Closing...' : 'Close Work Order'}
               </button>
             </form>
           </div>
