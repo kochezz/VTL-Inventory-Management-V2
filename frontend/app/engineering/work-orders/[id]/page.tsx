@@ -165,7 +165,11 @@ export default function WorkOrderDetailPage() {
 
   if (!isAuthenticated) return null;
 
-  const nextActions = workOrder ? NEXT_STATUS[workOrder.status] || [] : [];
+  const nextActions = workOrder
+    ? (NEXT_STATUS[workOrder.status] || []).filter(
+        (action) => action.status !== 'APPROVED' || canManage
+      )
+    : [];
 
   return (
     <DashboardLayout>
