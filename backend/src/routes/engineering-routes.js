@@ -52,6 +52,22 @@ router.get('/assets/equipment', requireEngineeringAccess, async (req, res) => {
   }
 });
 
+router.post('/assets/locations', requireEngineeringManager, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.createFunctionalLocation(req.body));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.post('/assets/equipment', requireEngineeringManager, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.createEquipment(req.body));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // ─── Failure Catalogs ────────────────────────────────────────────────────────
 
 router.get('/failure-catalogs', requireEngineeringAccess, async (req, res) => {
