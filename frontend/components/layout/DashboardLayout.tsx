@@ -147,6 +147,7 @@ const navigation: NavItem[] = [
       { name: 'Work Orders', href: '/engineering/work-orders', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'Asset Register', href: '/engineering/assets', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'PM Schedule', href: '/engineering/pm-schedule', roles: ['admin', 'engineering', 'engineering_manager'] },
+      { name: 'Task Lists', href: '/engineering/task-lists', roles: ['admin', 'engineering', 'engineering_manager'] },
     ],
   },
   {

@@ -68,6 +68,34 @@ router.post('/assets/equipment', requireEngineeringManager, async (req, res) => 
   }
 });
 
+// ─── Task Lists ──────────────────────────────────────────────────────────────
+
+router.get('/task-lists', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listTaskLists());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/task-lists/:id', requireEngineeringAccess, async (req, res) => {
+  try {
+    const taskList = await engineeringService.getTaskList(req.params.id);
+    if (!taskList) return res.status(404).json({ message: 'Task list not found' });
+    res.json(taskList);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/task-lists', requireEngineeringManager, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.createTaskList(req.body));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // ─── Failure Catalogs ────────────────────────────────────────────────────────
 
 router.get('/failure-catalogs', requireEngineeringAccess, async (req, res) => {

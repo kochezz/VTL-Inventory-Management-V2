@@ -454,6 +454,68 @@ const createEquipment = async ({
   }
 };
 
+// ─── Task Lists ────────────────────────────────────────────────────────────────
+
+const createTaskList = async ({
+  title, craft, estimated_duration_minutes, requires_line_shutdown,
+  requires_cip_sanitation, operations
+}) => {
+  if (!Array.isArray(operations) || operations.length === 0) {
+    throw new Error('A task list needs at least one operation/step.');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const tlResult = await client.query(
+      `INSERT INTO task_lists (title, craft, estimated_duration_minutes, requires_line_shutdown, requires_cip_sanitation)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [title, craft, estimated_duration_minutes,
+       requires_line_shutdown ?? true, requires_cip_sanitation ?? false]
+    );
+    const taskList = tlResult.rows[0];
+
+    for (let i = 0; i < operations.length; i++) {
+      await client.query(
+        `INSERT INTO task_list_operations (task_list_id, step_sequence, instruction_text, expected_qualitative_result, requires_signoff)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [taskList.task_list_id, i + 1, operations[i].instruction_text,
+         operations[i].expected_qualitative_result || null, operations[i].requires_signoff || false]
+      );
+    }
+
+    await client.query('COMMIT');
+    return taskList;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const listTaskLists = async () => {
+  const result = await pool.query(
+    `SELECT tl.*, COUNT(tlo.operation_id)::int AS step_count
+     FROM task_lists tl
+     LEFT JOIN task_list_operations tlo ON tlo.task_list_id = tl.task_list_id
+     GROUP BY tl.task_list_id
+     ORDER BY tl.title`
+  );
+  return result.rows;
+};
+
+const getTaskList = async (taskListId) => {
+  const tlResult = await pool.query(`SELECT * FROM task_lists WHERE task_list_id = $1`, [taskListId]);
+  if (tlResult.rows.length === 0) return null;
+  const opsResult = await pool.query(
+    `SELECT * FROM task_list_operations WHERE task_list_id = $1 ORDER BY step_sequence`,
+    [taskListId]
+  );
+  return { ...tlResult.rows[0], operations: opsResult.rows };
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -476,5 +538,8 @@ module.exports = {
   getPartAllocations,
   listFailureCatalogs,
   createFunctionalLocation,
-  createEquipment
+  createEquipment,
+  createTaskList,
+  listTaskLists,
+  getTaskList
 };
