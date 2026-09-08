@@ -516,6 +516,155 @@ const getTaskList = async (taskListId) => {
   return { ...tlResult.rows[0], operations: opsResult.rows };
 };
 
+// ─── Measuring Points & PM Plans ─────────────────────────────────────────────
+
+const listMeasuringPointsForEquipment = async (equipmentId) => {
+  const result = await pool.query(
+    `SELECT * FROM measuring_points WHERE equipment_id = $1 ORDER BY name`,
+    [equipmentId]
+  );
+  return result.rows;
+};
+
+const createMeasuringPoint = async ({ equipment_id, name, metric_type, unit_of_measure, current_value }) => {
+  const result = await pool.query(
+    `INSERT INTO measuring_points (equipment_id, name, metric_type, unit_of_measure, current_value)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [equipment_id, name, metric_type, unit_of_measure, current_value || 0]
+  );
+  return result.rows[0];
+};
+
+const recordMeasuringReading = async ({ point_id, reading_value, recorded_by, source }) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO measuring_readings (point_id, reading_value, recorded_by, source)
+       VALUES ($1, $2, $3, $4)`,
+      [point_id, reading_value, recorded_by, source || 'MANUAL']
+    );
+    const result = await client.query(
+      `UPDATE measuring_points SET current_value = $1, last_reading_at = CURRENT_TIMESTAMP
+       WHERE point_id = $2
+       RETURNING *`,
+      [reading_value, point_id]
+    );
+    if (result.rows.length === 0) throw new Error('Measuring point not found.');
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+// Creates a PM plan. If the trigger is counter-based (COUNTER or
+// BOTH_FIRST_DUE) and no existing counter_point_id is given, a new
+// measuring point is created in the SAME transaction using
+// new_measuring_point — so a mid-way failure never leaves an orphaned
+// measuring point with no plan attached, or a plan referencing nothing.
+const createPMPlan = async ({
+  title, equipment_id, task_list_id, trigger_type,
+  calendar_interval_days, counter_interval_units,
+  counter_point_id, new_measuring_point
+}) => {
+  const needsCounter = trigger_type === 'COUNTER' || trigger_type === 'BOTH_FIRST_DUE';
+  const needsCalendar = trigger_type === 'CALENDAR' || trigger_type === 'BOTH_FIRST_DUE';
+
+  if (needsCalendar && !calendar_interval_days) {
+    throw new Error('Calendar interval (days) is required for a calendar-based plan.');
+  }
+  if (needsCounter && !counter_point_id && !new_measuring_point) {
+    throw new Error('A counter-based plan needs either an existing measuring point or a new one to be defined.');
+  }
+  if (needsCounter && !counter_interval_units) {
+    throw new Error('Counter interval (units) is required for a counter-based plan.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    let resolvedCounterPointId = counter_point_id || null;
+    let currentCounterValue = null;
+
+    if (needsCounter) {
+      if (!resolvedCounterPointId) {
+        const mpResult = await client.query(
+          `INSERT INTO measuring_points (equipment_id, name, metric_type, unit_of_measure, current_value)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [equipment_id, new_measuring_point.name, new_measuring_point.metric_type,
+           new_measuring_point.unit_of_measure, new_measuring_point.initial_value || 0]
+        );
+        resolvedCounterPointId = mpResult.rows[0].point_id;
+        currentCounterValue = Number(mpResult.rows[0].current_value);
+      } else {
+        const mpResult = await client.query(
+          `SELECT current_value FROM measuring_points WHERE point_id = $1`,
+          [resolvedCounterPointId]
+        );
+        if (mpResult.rows.length === 0) throw new Error('Selected measuring point not found.');
+        currentCounterValue = Number(mpResult.rows[0].current_value);
+      }
+    }
+
+    // Compute in JS — no CASE/IN logic in the SQL, no reused parameters.
+    let nextDueDate = null;
+    if (needsCalendar) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + Number(calendar_interval_days));
+      nextDueDate = d.toISOString().split('T')[0]; // YYYY-MM-DD, plain date
+    }
+
+    let nextDueCounter = null;
+    if (needsCounter) {
+      nextDueCounter = currentCounterValue + Number(counter_interval_units);
+    }
+
+    const result = await client.query(
+      `INSERT INTO pm_plans (
+        title, equipment_id, task_list_id, trigger_type,
+        calendar_interval_days, counter_point_id, counter_interval_units,
+        next_due_date, next_due_counter, is_active
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *`,
+      [
+        title, equipment_id, task_list_id, trigger_type,
+        calendar_interval_days || null, resolvedCounterPointId, counter_interval_units || null,
+        nextDueDate, nextDueCounter, true
+      ]
+    );
+
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const listPMPlans = async () => {
+  const result = await pool.query(
+    `SELECT pp.*,
+            e.name AS equipment_name, e.equipment_code,
+            tl.title AS task_list_title,
+            mp.name AS counter_point_name, mp.current_value AS counter_current_value, mp.unit_of_measure AS counter_unit
+     FROM pm_plans pp
+     LEFT JOIN equipment e ON e.equipment_id = pp.equipment_id
+     LEFT JOIN task_lists tl ON tl.task_list_id = pp.task_list_id
+     LEFT JOIN measuring_points mp ON mp.point_id = pp.counter_point_id
+     ORDER BY pp.next_due_date NULLS LAST, pp.title`
+  );
+  return result.rows;
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -541,5 +690,10 @@ module.exports = {
   createEquipment,
   createTaskList,
   listTaskLists,
-  getTaskList
+  getTaskList,
+  listMeasuringPointsForEquipment,
+  createMeasuringPoint,
+  recordMeasuringReading,
+  createPMPlan,
+  listPMPlans
 };

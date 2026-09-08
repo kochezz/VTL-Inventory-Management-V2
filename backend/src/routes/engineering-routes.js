@@ -96,6 +96,55 @@ router.post('/task-lists', requireEngineeringManager, async (req, res) => {
   }
 });
 
+// ─── Measuring Points & PM Plans ──────────────────────────────────────────────
+
+router.get('/equipment/:equipmentId/measuring-points', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listMeasuringPointsForEquipment(req.params.equipmentId));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/equipment/:equipmentId/measuring-points', requireEngineeringManager, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.createMeasuringPoint({
+      ...req.body,
+      equipment_id: req.params.equipmentId
+    }));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.post('/measuring-points/:pointId/readings', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.recordMeasuringReading({
+      ...req.body,
+      point_id: req.params.pointId,
+      recorded_by: req.user.user_id
+    }));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.get('/pm-plans', requireEngineeringAccess, async (req, res) => {
+  try {
+    res.json(await engineeringService.listPMPlans());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/pm-plans', requireEngineeringManager, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.createPMPlan(req.body));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // ─── Failure Catalogs ────────────────────────────────────────────────────────
 
 router.get('/failure-catalogs', requireEngineeringAccess, async (req, res) => {
