@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { CalendarClock, Plus, X, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { CalendarClock, Plus, X, Gauge, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
 
 interface PMPlan {
   pm_plan_id: string;
@@ -21,6 +22,7 @@ interface PMPlan {
   counter_unit: string | null;
   counter_point_id: string | null;
   is_active: boolean;
+  open_work_order_id: string | null;
 }
 
 interface Equipment { equipment_id: string; equipment_code: string; name: string; }
@@ -30,6 +32,7 @@ interface MeasuringPoint { point_id: string; name: string; current_value: number
 const CAN_MANAGE = ['admin', 'engineering_manager'];
 
 export default function PMSchedulePage() {
+  const router = useRouter();
   const { isAuthenticated, user } = useAuth();
   const canManage = user?.role && CAN_MANAGE.includes(user.role);
 
@@ -168,6 +171,21 @@ export default function PMSchedulePage() {
     }
   };
 
+  const [generating, setGenerating] = useState<string | null>(null); // holds pm_plan_id currently generating
+
+  const handleGenerate = async (plan: PMPlan) => {
+    setGenerating(plan.pm_plan_id);
+    setError('');
+    try {
+      const res = await api.post(`/engineering/pm-plans/${plan.pm_plan_id}/generate-work-order`);
+      router.push(`/engineering/work-orders/${res.data.work_order_id}`);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to generate a work order from this plan.');
+    } finally {
+      setGenerating(null);
+    }
+  };
+
   const getDueStatus = (plan: PMPlan) => {
     const today = new Date();
     let overdue = false, dueSoon = false;
@@ -250,14 +268,32 @@ export default function PMSchedulePage() {
                         )}
                       </div>
                     </div>
-                    {plan.counter_point_id && (
-                      <button
-                        onClick={() => { setReadingPlan(plan); setReadingValue(String(plan.counter_current_value ?? '')); setReadingError(''); }}
-                        className="min-h-[40px] px-4 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5 shrink-0"
-                      >
-                        <Gauge className="w-4 h-4" /> Log Reading
-                      </button>
-                    )}
+                    <div className="flex gap-2 shrink-0">
+                      {plan.counter_point_id && (
+                        <button
+                          onClick={() => { setReadingPlan(plan); setReadingValue(String(plan.counter_current_value ?? '')); setReadingError(''); }}
+                          className="min-h-[40px] px-4 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5"
+                        >
+                          <Gauge className="w-4 h-4" /> Log Reading
+                        </button>
+                      )}
+                      {plan.open_work_order_id ? (
+                        <button
+                          onClick={() => router.push(`/engineering/work-orders/${plan.open_work_order_id}`)}
+                          className="min-h-[40px] px-4 bg-dark-700 hover:bg-dark-600 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5"
+                        >
+                          View Work Order <ArrowRight className="w-4 h-4" />
+                        </button>
+                      ) : canManage && (
+                        <button
+                          onClick={() => handleGenerate(plan)}
+                          disabled={generating === plan.pm_plan_id}
+                          className="min-h-[40px] px-4 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5"
+                        >
+                          {generating === plan.pm_plan_id ? 'Generating...' : 'Generate Work Order'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

@@ -655,7 +655,10 @@ const listPMPlans = async () => {
     `SELECT pp.*,
             e.name AS equipment_name, e.equipment_code,
             tl.title AS task_list_title,
-            mp.name AS counter_point_name, mp.current_value AS counter_current_value, mp.unit_of_measure AS counter_unit
+            mp.name AS counter_point_name, mp.current_value AS counter_current_value, mp.unit_of_measure AS counter_unit,
+            (SELECT wo.work_order_id FROM work_orders wo
+             WHERE wo.pm_plan_id = pp.pm_plan_id AND wo.status NOT IN ('CLOSED', 'CANCELLED')
+             ORDER BY wo.created_at DESC LIMIT 1) AS open_work_order_id
      FROM pm_plans pp
      LEFT JOIN equipment e ON e.equipment_id = pp.equipment_id
      LEFT JOIN task_lists tl ON tl.task_list_id = pp.task_list_id
@@ -663,6 +666,94 @@ const listPMPlans = async () => {
      ORDER BY pp.next_due_date NULLS LAST, pp.title`
   );
   return result.rows;
+};
+
+const generateWorkOrderFromPMPlan = async (pmPlanId, createdBy) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const planResult = await client.query(`SELECT * FROM pm_plans WHERE pm_plan_id = $1`, [pmPlanId]);
+    if (planResult.rows.length === 0) throw new Error('PM plan not found.');
+    const plan = planResult.rows[0];
+    if (!plan.is_active) throw new Error('This PM plan is not active.');
+
+    // Idempotency guard — the same protection the eventual background
+    // scheduler will rely on. A manager double-clicking this button, or
+    // the scheduler running twice before a status changes, must not
+    // create a second work order for the same plan.
+    const existingResult = await client.query(
+      `SELECT work_order_id FROM work_orders
+       WHERE pm_plan_id = $1 AND status NOT IN ('CLOSED', 'CANCELLED')
+       LIMIT 1`,
+      [pmPlanId]
+    );
+    if (existingResult.rows.length > 0) {
+      throw new Error(`An open work order already exists for this PM plan (${existingResult.rows[0].work_order_id}). Close or cancel it before generating another.`);
+    }
+
+    const taskListResult = await client.query(`SELECT * FROM task_lists WHERE task_list_id = $1`, [plan.task_list_id]);
+    if (taskListResult.rows.length === 0) throw new Error('The task list linked to this PM plan no longer exists.');
+    const taskList = taskListResult.rows[0];
+
+    const opsResult = await client.query(
+      `SELECT * FROM task_list_operations WHERE task_list_id = $1 ORDER BY step_sequence`,
+      [plan.task_list_id]
+    );
+
+    const woResult = await client.query(
+      `INSERT INTO work_orders (
+        order_type, equipment_id, pm_plan_id, priority, short_description, created_by
+      ) VALUES ('PREVENTIVE', $1, $2, 'MEDIUM', $3, $4)
+      RETURNING *`,
+      [plan.equipment_id, pmPlanId, `Preventive maintenance: ${plan.title} (${taskList.title})`, createdBy]
+    );
+    const workOrder = woResult.rows[0];
+
+    for (const op of opsResult.rows) {
+      await client.query(
+        `INSERT INTO work_order_checklist_items (work_order_id, step_sequence, instruction)
+         VALUES ($1, $2, $3)`,
+        [workOrder.work_order_id, op.step_sequence, op.instruction_text]
+      );
+    }
+
+    // Advance the plan — computed in JS, single-use parameters only,
+    // same discipline as the Stage B fix. No CASE/IN reuse in the SQL.
+    let newNextDueDate = plan.next_due_date;
+    if (plan.trigger_type === 'CALENDAR' || plan.trigger_type === 'BOTH_FIRST_DUE') {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + Number(plan.calendar_interval_days));
+      newNextDueDate = d.toISOString().split('T')[0];
+    }
+
+    let newNextDueCounter = plan.next_due_counter;
+    let newLastExecutedCounter = plan.last_executed_counter;
+    if (plan.trigger_type === 'COUNTER' || plan.trigger_type === 'BOTH_FIRST_DUE') {
+      const mpResult = await client.query(`SELECT current_value FROM measuring_points WHERE point_id = $1`, [plan.counter_point_id]);
+      const currentValue = mpResult.rows.length > 0 ? Number(mpResult.rows[0].current_value) : 0;
+      newLastExecutedCounter = currentValue;
+      newNextDueCounter = currentValue + Number(plan.counter_interval_units);
+    }
+
+    await client.query(
+      `UPDATE pm_plans SET
+        last_executed_at = CURRENT_TIMESTAMP,
+        last_executed_counter = $1,
+        next_due_date = $2,
+        next_due_counter = $3
+       WHERE pm_plan_id = $4`,
+      [newLastExecutedCounter, newNextDueDate, newNextDueCounter, pmPlanId]
+    );
+
+    await client.query('COMMIT');
+    return workOrder;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 module.exports = {
@@ -695,5 +786,6 @@ module.exports = {
   createMeasuringPoint,
   recordMeasuringReading,
   createPMPlan,
-  listPMPlans
+  listPMPlans,
+  generateWorkOrderFromPMPlan
 };
