@@ -145,6 +145,14 @@ router.post('/pm-plans', requireEngineeringManager, async (req, res) => {
   }
 });
 
+router.post('/pm-plans/:id/generate-work-order', requireEngineeringManager, async (req, res) => {
+  try {
+    res.status(201).json(await engineeringService.generateWorkOrderFromPMPlan(req.params.id, req.user.user_id));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // ─── Failure Catalogs ────────────────────────────────────────────────────────
 
 router.get('/failure-catalogs', requireEngineeringAccess, async (req, res) => {
