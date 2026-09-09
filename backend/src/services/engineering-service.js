@@ -756,6 +756,15 @@ const generateWorkOrderFromPMPlan = async (pmPlanId, createdBy) => {
   }
 };
 
+const updatePMPlanActive = async (pmPlanId, isActive) => {
+  const result = await pool.query(
+    `UPDATE pm_plans SET is_active = $1 WHERE pm_plan_id = $2 RETURNING *`,
+    [isActive, pmPlanId]
+  );
+  if (result.rows.length === 0) throw new Error('PM plan not found.');
+  return result.rows[0];
+};
+
 module.exports = {
   createNotification,
   listNotifications,
@@ -787,5 +796,6 @@ module.exports = {
   recordMeasuringReading,
   createPMPlan,
   listPMPlans,
-  generateWorkOrderFromPMPlan
+  generateWorkOrderFromPMPlan,
+  updatePMPlanActive
 };

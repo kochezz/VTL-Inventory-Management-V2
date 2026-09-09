@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { CalendarClock, Plus, X, Gauge, AlertTriangle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { CalendarClock, Plus, X, Gauge, AlertTriangle, CheckCircle2, ArrowRight, Pause, Play } from 'lucide-react';
 
 interface PMPlan {
   pm_plan_id: string;
@@ -186,6 +186,21 @@ export default function PMSchedulePage() {
     }
   };
 
+  const [togglingPlan, setTogglingPlan] = useState<string | null>(null);
+
+  const handleToggleActive = async (plan: PMPlan) => {
+    setTogglingPlan(plan.pm_plan_id);
+    setError('');
+    try {
+      await api.patch(`/engineering/pm-plans/${plan.pm_plan_id}`, { is_active: !plan.is_active });
+      await fetchAll();
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to update this plan.');
+    } finally {
+      setTogglingPlan(null);
+    }
+  };
+
   const getDueStatus = (plan: PMPlan) => {
     const today = new Date();
     let overdue = false, dueSoon = false;
@@ -249,6 +264,11 @@ export default function PMSchedulePage() {
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
+                        {!plan.is_active && (
+                          <span className="px-2 py-0.5 rounded text-xs font-bold border bg-gray-500/20 text-gray-400 border-gray-500/30">
+                            Paused
+                          </span>
+                        )}
                         <span className={`px-2 py-0.5 rounded text-xs font-bold border ${status.className}`}>{status.label}</span>
                         <span className="text-xs text-gray-500">{plan.trigger_type.replace('_', ' ')}</span>
                       </div>
@@ -269,6 +289,16 @@ export default function PMSchedulePage() {
                       </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
+                      {canManage && (
+                        <button
+                          onClick={() => handleToggleActive(plan)}
+                          disabled={togglingPlan === plan.pm_plan_id}
+                          className="min-h-[40px] px-4 bg-dark-700 hover:bg-dark-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5"
+                          title={plan.is_active ? 'Pause this PM plan — it will stop being generated automatically' : 'Resume this PM plan'}
+                        >
+                          {plan.is_active ? <><Pause className="w-4 h-4" /> Pause</> : <><Play className="w-4 h-4" /> Resume</>}
+                        </button>
+                      )}
                       {plan.counter_point_id && (
                         <button
                           onClick={() => { setReadingPlan(plan); setReadingValue(String(plan.counter_current_value ?? '')); setReadingError(''); }}
@@ -284,7 +314,7 @@ export default function PMSchedulePage() {
                         >
                           View Work Order <ArrowRight className="w-4 h-4" />
                         </button>
-                      ) : canManage && (
+                      ) : canManage && plan.is_active && (
                         <button
                           onClick={() => handleGenerate(plan)}
                           disabled={generating === plan.pm_plan_id}
