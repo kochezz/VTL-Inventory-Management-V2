@@ -153,6 +153,17 @@ router.post('/pm-plans/:id/generate-work-order', requireEngineeringManager, asyn
   }
 });
 
+router.patch('/pm-plans/:id', requireEngineeringManager, async (req, res) => {
+  try {
+    if (typeof req.body.is_active !== 'boolean') {
+      return res.status(400).json({ message: 'is_active must be a boolean.' });
+    }
+    res.json(await engineeringService.updatePMPlanActive(req.params.id, req.body.is_active));
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // ─── Failure Catalogs ────────────────────────────────────────────────────────
 
 router.get('/failure-catalogs', requireEngineeringAccess, async (req, res) => {
