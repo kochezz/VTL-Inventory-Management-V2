@@ -38,6 +38,7 @@ const engineeringRoutes       = require('./src/routes/engineering-routes');
 
 // QMS Periodic Review Scheduler (Render-safe — uses setInterval, not cron)
 const qmsScheduler            = require('./src/services/qms-scheduler');
+const pmScheduler             = require('./src/services/pm-scheduler');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -181,6 +182,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // Runs an initial check 10 seconds after startup (to let the DB pool warm up),
   // then repeats every 24 hours. Safe on Render — no cron process required.
   qmsScheduler.start();
+  pmScheduler.start();
 
   // Keep Neon connection alive — ping every 4 minutes.
   // Neon drops idle connections after ~5 minutes on the free tier.
