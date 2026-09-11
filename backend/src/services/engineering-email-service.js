@@ -1,17 +1,10 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { pool } = require('./auth-service');
 
-// Same transporter setup as supplier-email-service.js / po-email-service.js —
-// reusing the existing SMTP config, not introducing a second email system.
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// Uses Resend HTTP API (HTTPS port 443) instead of SMTP (port 587) —
+// same pattern as notification-service.js. Render blocks outbound SMTP
+// (ETIMEDOUT on port 587); Resend's HTTP API uses port 443, always open.
+const resend = new Resend(process.env.SMTP_PASS); // Reuses existing SMTP_PASS env var (Resend API key)
 
 // Same dark-theme wrapper styling as the existing email templates —
 // matches the app's own visual identity, not a new look.
@@ -61,14 +54,20 @@ class EngineeringEmailService {
         <p>Please log in to the Vilagio ERP Engineering module to review and convert this into a work order.</p>
       `;
 
-      await transporter.sendMail({
-        from: process.env.EMAIL_FROM,
-        to: recipients.join(','),
+      const { data, error } = await resend.emails.send({
+        from: process.env.EMAIL_FROM
+          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
+          : 'Vilagio ERP <noreply@vilag.io>',
+        to: recipients,
         subject: `🚨 Breakdown Reported: ${assetLabel} — ${notification.notification_number}`,
         html: wrapEmail('Breakdown Reported', '#f87171', body),
       });
 
-      console.log(`✅ [Engineering Email] Breakdown alert sent for ${notification.notification_number} to: ${recipients.join(',')}`);
+      if (error) {
+        console.error('❌ [Engineering Email] Failed to send breakdown alert:', error);
+      } else {
+        console.log(`✅ [Engineering Email] Breakdown alert sent for ${notification.notification_number} to: ${recipients.join(',')} [id: ${data?.id}]`);
+      }
     } catch (error) {
       console.error('❌ [Engineering Email] Failed to send breakdown alert:', error);
     }
@@ -134,14 +133,20 @@ class EngineeringEmailService {
         <p style="margin-top:16px;">Please log in to the Vilagio ERP Engineering module to review and act on these.</p>
       `;
 
-      await transporter.sendMail({
-        from: process.env.EMAIL_FROM,
-        to: recipients.join(','),
+      const { data, error } = await resend.emails.send({
+        from: process.env.EMAIL_FROM
+          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
+          : 'Vilagio ERP <noreply@vilag.io>',
+        to: recipients,
         subject: `Engineering Daily Digest — ${openResult.rows.length} open notification${openResult.rows.length !== 1 ? 's' : ''}`,
         html: wrapEmail('Engineering Daily Digest', '#60a5fa', body),
       });
 
-      console.log(`✅ [Engineering Email] Daily digest sent (${openResult.rows.length} open) to: ${recipients.join(',')}`);
+      if (error) {
+        console.error('❌ [Engineering Email] Failed to send daily digest:', error);
+      } else {
+        console.log(`✅ [Engineering Email] Daily digest sent (${openResult.rows.length} open) to: ${recipients.join(',')} [id: ${data?.id}]`);
+      }
     } catch (error) {
       console.error('❌ [Engineering Email] Failed to send daily digest:', error);
     }
