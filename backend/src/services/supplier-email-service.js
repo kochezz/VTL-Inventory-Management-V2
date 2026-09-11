@@ -1,16 +1,10 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { pool } = require('./auth-service'); // Need DB access to look up user emails
 
-// Initialize the mailer using your existing Resend .env credentials
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// Uses Resend HTTP API (HTTPS port 443) instead of SMTP (port 587) —
+// same pattern as notification-service.js. Render blocks outbound SMTP
+// (ETIMEDOUT on port 587); Resend's HTTP API uses port 443, always open.
+const resend = new Resend(process.env.SMTP_PASS); // Reuses existing SMTP_PASS env var (Resend API key)
 
 class SupplierEmailService {
   
@@ -28,9 +22,11 @@ class SupplierEmailService {
       // Extract emails into a comma-separated list
       const qaEmails = qaUsers.rows.map(u => u.email).join(',');
 
-      const mailOptions = {
-        from: process.env.EMAIL_FROM,
-        to: qaEmails,
+      const { data, error } = await resend.emails.send({
+        from: process.env.EMAIL_FROM
+          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
+          : 'Vilagio ERP <noreply@vilag.io>',
+        to: qaUsers.rows.map(u => u.email),
         subject: `Action Required: New Supplier Awaiting QA - ${vendor.legal_name}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; background-color: #0f172a; color: #f8fafc;">
@@ -43,10 +39,13 @@ class SupplierEmailService {
             <p style="font-size: 12px; color: #94a3b8;">This is an automated notification from the Vilagio Vendor Management System.</p>
           </div>
         `
-      };
+      });
 
-      await transporter.sendMail(mailOptions);
-      console.log(`✅ QA Notification emailed successfully to: ${qaEmails}`);
+      if (error) {
+        console.error('❌ Failed to send QA notification email:', error);
+      } else {
+        console.log(`✅ QA Notification emailed successfully to: ${qaEmails} [id: ${data?.id}]`);
+      }
     } catch (error) {
       console.error('❌ Failed to send QA notification email:', error);
     }
@@ -64,9 +63,11 @@ class SupplierEmailService {
       const isApproved = action === 'APPROVED' || action === 'CONDITIONALLY_APPROVED';
       const statusColor = isApproved ? '#4ade80' : '#fb923c'; // Green or Orange
 
-      const mailOptions = {
-        from: process.env.EMAIL_FROM,
-        to: salesEmail,
+      const { data, error } = await resend.emails.send({
+        from: process.env.EMAIL_FROM
+          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
+          : 'Vilagio ERP <noreply@vilag.io>',
+        to: [salesEmail],
         subject: `Supplier Assessment ${isApproved ? 'Approved' : 'Rejected'} - ${vendor.legal_name}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; background-color: #0f172a; color: #f8fafc;">
@@ -75,23 +76,26 @@ class SupplierEmailService {
             </h2>
             <p>Hello ${creator.rows[0].full_name},</p>
             <p>The supplier registration for <strong>${vendor.legal_name}</strong> has been <strong>${action.replace('_', ' ')}</strong> by the QA team.</p>
-            
-            ${isApproved 
+
+            ${isApproved
               ? `<p><strong>VTL Supplier ID:</strong> <span style="color: #60a5fa; font-family: monospace; font-size: 16px;">${vendor.vtl_supplier_id}</span></p>
-                 <p>This vendor is now active on the Approved Vendor List (AVL) and is eligible for Purchase Orders.</p>` 
+                 <p>This vendor is now active on the Approved Vendor List (AVL) and is eligible for Purchase Orders.</p>`
               : `<p style="color: #fb923c;"><strong>Action Required:</strong> Please review the QA notes below, make the necessary corrections, and resubmit the vendor.</p>`
             }
-            
+
             ${vendor.qa_notes ? `<div style="background-color: #1e293b; padding: 15px; border-left: 4px solid ${statusColor}; margin-top: 15px;"><strong>QA Notes:</strong><br/>${vendor.qa_notes}</div>` : ''}
-            
+
             <hr style="border-color: #334155; margin: 20px 0;" />
             <p style="font-size: 12px; color: #94a3b8;">This is an automated notification from the Vilagio Vendor Management System.</p>
           </div>
         `
-      };
+      });
 
-      await transporter.sendMail(mailOptions);
-      console.log(`✅ Sales Notification emailed successfully to: ${salesEmail}`);
+      if (error) {
+        console.error('❌ Failed to send Sales notification email:', error);
+      } else {
+        console.log(`✅ Sales Notification emailed successfully to: ${salesEmail} [id: ${data?.id}]`);
+      }
     } catch (error) {
       console.error('❌ Failed to send Sales notification email:', error);
     }
