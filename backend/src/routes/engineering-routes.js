@@ -27,9 +27,7 @@ router.post('/notifications', requireEngineeringAccess, async (req, res) => {
       ...req.body,
       reported_by: req.user.user_id
     });
-    if (notification.notification_type === 'BREAKDOWN') {
-      EngineeringEmailService.notifyBreakdown(notification).catch(console.error);
-    }
+    EngineeringEmailService.notifyNewIssue(notification).catch(console.error);
     res.status(201).json(notification);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -204,10 +202,12 @@ router.get('/work-orders/:id', requireEngineeringAccess, async (req, res) => {
 
 router.post('/work-orders', requireEngineeringManager, async (req, res) => {
   try {
-    res.status(201).json(await engineeringService.createWorkOrder({
+    const workOrder = await engineeringService.createWorkOrder({
       ...req.body,
       created_by: req.user.user_id
-    }));
+    });
+    EngineeringEmailService.notifyWorkOrderCreated(workOrder).catch(console.error);
+    res.status(201).json(workOrder);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -221,7 +221,11 @@ router.patch('/work-orders/:id/status', requireEngineeringAccess, async (req, re
     if (req.body.status === 'APPROVED' && !['admin', 'engineering_manager'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied. Approving a work order requires the engineering manager role.' });
     }
-    res.json(await engineeringService.updateWorkOrderStatus(req.params.id, req.body.status, req.user.user_id));
+    const updated = await engineeringService.updateWorkOrderStatus(req.params.id, req.body.status, req.user.user_id);
+    if (req.body.status === 'APPROVED') {
+      EngineeringEmailService.notifyWorkOrderApproved(updated).catch(console.error);
+    }
+    res.json(updated);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

@@ -1,13 +1,15 @@
 const { Resend } = require('resend');
 const { pool } = require('./auth-service');
 
-// Uses Resend HTTP API (HTTPS port 443) instead of SMTP (port 587) —
-// same pattern as notification-service.js. Render blocks outbound SMTP
-// (ETIMEDOUT on port 587); Resend's HTTP API uses port 443, always open.
-const resend = new Resend(process.env.SMTP_PASS); // Reuses existing SMTP_PASS env var (Resend API key)
+// Resend HTTP API — matches notification-service.js's proven pattern.
+// Render blocks outbound SMTP (ETIMEDOUT on port 587); Resend uses
+// HTTPS port 443, which is always open. Do NOT revert to nodemailer.
+const resend = new Resend(process.env.SMTP_PASS);
 
-// Same dark-theme wrapper styling as the existing email templates —
-// matches the app's own visual identity, not a new look.
+const FROM_ADDRESS = process.env.EMAIL_FROM
+  ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
+  : 'Vilagio ERP <noreply@vilag.io>';
+
 const wrapEmail = (title, titleColor, bodyHtml) => `
   <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; background-color: #0f172a; color: #f8fafc;">
     <h2 style="color: ${titleColor}; border-bottom: 1px solid #334155; padding-bottom: 10px;">${title}</h2>
@@ -24,59 +26,135 @@ async function getRecipients() {
   return result.rows.map((r) => r.email);
 }
 
-class EngineeringEmailService {
-  // Immediate alert — BREAKDOWN notifications only. Called without await
-  // from the route handler, same fire-and-forget pattern as
-  // SupplierEmailService.notifyQAPending — an email failure must never
-  // fail or delay the actual notification-creation response.
-  static async notifyBreakdown(notification) {
-    try {
-      const recipients = await getRecipients();
-      if (recipients.length === 0) {
-        console.log('⚠️ [Engineering Email] No active engineering/admin users to notify.');
-        return;
-      }
+// Shared by every function below — resolves an equipment_id/floc_id pair
+// into a human-readable label. Was duplicated inline before; now one
+// place to get it right.
+async function resolveAssetLabel(equipmentId, flocId) {
+  if (equipmentId) {
+    const eq = await pool.query(`SELECT name, equipment_code FROM equipment WHERE equipment_id = $1`, [equipmentId]);
+    if (eq.rows.length > 0) return `${eq.rows[0].equipment_code} — ${eq.rows[0].name}`;
+  } else if (flocId) {
+    const fl = await pool.query(`SELECT name, floc_code FROM functional_locations WHERE floc_id = $1`, [flocId]);
+    if (fl.rows.length > 0) return `${fl.rows[0].floc_code} — ${fl.rows[0].name}`;
+  }
+  return 'Unspecified asset';
+}
 
-      let assetLabel = 'Unspecified asset';
-      if (notification.equipment_id) {
-        const eq = await pool.query(`SELECT name, equipment_code FROM equipment WHERE equipment_id = $1`, [notification.equipment_id]);
-        if (eq.rows.length > 0) assetLabel = `${eq.rows[0].equipment_code} — ${eq.rows[0].name}`;
-      } else if (notification.floc_id) {
-        const fl = await pool.query(`SELECT name, floc_code FROM functional_locations WHERE floc_id = $1`, [notification.floc_id]);
-        if (fl.rows.length > 0) assetLabel = `${fl.rows[0].floc_code} — ${fl.rows[0].name}`;
-      }
-
-      const body = `
-        <p><strong>${notification.notification_number}</strong> — a breakdown has just been reported.</p>
-        <p><strong>Asset/Location:</strong> ${assetLabel}</p>
-        <p><strong>Description:</strong> ${notification.short_description}</p>
-        ${notification.caused_unplanned_downtime ? '<p style="color:#f87171;"><strong>This has caused unplanned downtime.</strong></p>' : ''}
-        <p>Please log in to the Vilagio ERP Engineering module to review and convert this into a work order.</p>
-      `;
-
-      const { data, error } = await resend.emails.send({
-        from: process.env.EMAIL_FROM
-          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
-          : 'Vilagio ERP <noreply@vilag.io>',
-        to: recipients,
-        subject: `🚨 Breakdown Reported: ${assetLabel} — ${notification.notification_number}`,
-        html: wrapEmail('Breakdown Reported', '#f87171', body),
-      });
-
-      if (error) {
-        console.error('❌ [Engineering Email] Failed to send breakdown alert:', error);
-      } else {
-        console.log(`✅ [Engineering Email] Breakdown alert sent for ${notification.notification_number} to: ${recipients.join(',')} [id: ${data?.id}]`);
-      }
-    } catch (error) {
-      console.error('❌ [Engineering Email] Failed to send breakdown alert:', error);
+async function send({ subject, title, titleColor, bodyHtml, recipients, logLabel }) {
+  if (recipients.length === 0) {
+    console.log(`⚠️ [Engineering Email] No active engineering/admin users to notify for ${logLabel}.`);
+    return;
+  }
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: recipients,
+      subject,
+      html: wrapEmail(title, titleColor, bodyHtml),
+    });
+    if (error) {
+      console.error(`❌ [Engineering Email] Failed to send ${logLabel}:`, error);
+    } else {
+      console.log(`✅ [Engineering Email] ${logLabel} sent to: ${recipients.join(',')} [id: ${data?.id}]`);
     }
+  } catch (error) {
+    console.error(`❌ [Engineering Email] Failed to send ${logLabel}:`, error);
+  }
+}
+
+class EngineeringEmailService {
+  // Instant alert for EVERY new notification — Breakdown AND Maintenance
+  // Request both fire immediately now. Styling/urgency differs by type;
+  // the trigger no longer does.
+  static async notifyNewIssue(notification) {
+    const recipients = await getRecipients();
+    const assetLabel = await resolveAssetLabel(notification.equipment_id, notification.floc_id);
+    const isBreakdown = notification.notification_type === 'BREAKDOWN';
+
+    let reporterName = 'Unknown';
+    if (notification.reported_by) {
+      const u = await pool.query(`SELECT full_name FROM users WHERE user_id = $1`, [notification.reported_by]);
+      if (u.rows.length > 0) reporterName = u.rows[0].full_name;
+    }
+
+    const body = `
+      <p><strong>${notification.notification_number}</strong> — ${isBreakdown ? 'a breakdown' : 'a maintenance request'} has just been reported by ${reporterName}.</p>
+      <p><strong>Asset/Location:</strong> ${assetLabel}</p>
+      <p><strong>Description:</strong> ${notification.short_description}</p>
+      ${notification.caused_unplanned_downtime ? '<p style="color:#f87171;"><strong>This has caused unplanned downtime.</strong></p>' : ''}
+      <p>Please log in to the Vilagio ERP Engineering module to review and convert this into a work order.</p>
+    `;
+
+    await send({
+      subject: isBreakdown
+        ? `🚨 Breakdown Reported: ${assetLabel} — ${notification.notification_number}`
+        : `Maintenance Request: ${assetLabel} — ${notification.notification_number}`,
+      title: isBreakdown ? 'Breakdown Reported' : 'Maintenance Request Reported',
+      titleColor: isBreakdown ? '#f87171' : '#60a5fa',
+      bodyHtml: body,
+      recipients,
+      logLabel: `new-issue alert for ${notification.notification_number}`,
+    });
   }
 
-  // Daily digest — every notification still OPEN (not yet converted,
-  // closed, or rejected). Skips sending entirely if there's nothing open,
-  // matching how pm-scheduler.js logs "nothing due" and returns rather
-  // than sending an empty notice.
+  // Fires when ANY work order is created — whether raised directly or
+  // converted from a notification (both paths go through the same
+  // createWorkOrder() call, so one trigger point covers both).
+  static async notifyWorkOrderCreated(workOrder) {
+    const recipients = await getRecipients();
+    const assetLabel = await resolveAssetLabel(workOrder.equipment_id, workOrder.floc_id);
+
+    let createdByName = 'Unknown';
+    if (workOrder.created_by) {
+      const u = await pool.query(`SELECT full_name FROM users WHERE user_id = $1`, [workOrder.created_by]);
+      if (u.rows.length > 0) createdByName = u.rows[0].full_name;
+    }
+
+    const body = `
+      <p><strong>${workOrder.wo_number}</strong> has been raised by ${createdByName}.</p>
+      <p><strong>Type:</strong> ${workOrder.order_type.replace('_', ' ')} &nbsp; <strong>Priority:</strong> ${workOrder.priority}</p>
+      <p><strong>Asset/Location:</strong> ${assetLabel}</p>
+      <p><strong>Description:</strong> ${workOrder.short_description}</p>
+      <p>Currently in <strong>${workOrder.status}</strong> status. Log in to the Vilagio ERP Engineering module to review.</p>
+    `;
+
+    await send({
+      subject: `New Work Order: ${workOrder.wo_number} — ${assetLabel}`,
+      title: 'New Work Order Raised',
+      titleColor: '#60a5fa',
+      bodyHtml: body,
+      recipients,
+      logLabel: `work order created alert for ${workOrder.wo_number}`,
+    });
+  }
+
+  // Fires specifically when a work order's status transitions to
+  // APPROVED (the manager-only-gated transition).
+  static async notifyWorkOrderApproved(workOrder) {
+    const recipients = await getRecipients();
+    const assetLabel = await resolveAssetLabel(workOrder.equipment_id, workOrder.floc_id);
+
+    const body = `
+      <p><strong>${workOrder.wo_number}</strong> has been approved and is ready to be scheduled and executed.</p>
+      <p><strong>Asset/Location:</strong> ${assetLabel}</p>
+      <p><strong>Description:</strong> ${workOrder.short_description}</p>
+      <p>Log in to the Vilagio ERP Engineering module to schedule and begin work.</p>
+    `;
+
+    await send({
+      subject: `Work Order Approved: ${workOrder.wo_number} — ${assetLabel}`,
+      title: 'Work Order Approved',
+      titleColor: '#4ade80',
+      bodyHtml: body,
+      recipients,
+      logLabel: `work order approved alert for ${workOrder.wo_number}`,
+    });
+  }
+
+  // Unchanged — daily digest of everything still OPEN, regardless of
+  // whether it already triggered an instant alert. This remains a
+  // useful reminder for anything not yet acted on, not just a fallback
+  // for types that lacked an instant alert.
   static async sendDailyDigest() {
     try {
       const openResult = await pool.query(`
@@ -134,9 +212,7 @@ class EngineeringEmailService {
       `;
 
       const { data, error } = await resend.emails.send({
-        from: process.env.EMAIL_FROM
-          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
-          : 'Vilagio ERP <noreply@vilag.io>',
+        from: FROM_ADDRESS,
         to: recipients,
         subject: `Engineering Daily Digest — ${openResult.rows.length} open notification${openResult.rows.length !== 1 ? 's' : ''}`,
         html: wrapEmail('Engineering Daily Digest', '#60a5fa', body),
