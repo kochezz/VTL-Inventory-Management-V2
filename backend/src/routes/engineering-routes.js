@@ -6,6 +6,7 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth-middleware');
 const { requireEngineeringAccess, requireEngineeringManager } = require('../middleware/engineering-middleware');
 const engineeringService = require('../services/engineering-service');
+const EngineeringEmailService = require('../services/engineering-email-service');
 
 // Authenticate every Engineering request
 router.use(authenticate);
@@ -22,10 +23,14 @@ router.get('/notifications', requireEngineeringAccess, async (req, res) => {
 
 router.post('/notifications', requireEngineeringAccess, async (req, res) => {
   try {
-    res.status(201).json(await engineeringService.createNotification({
+    const notification = await engineeringService.createNotification({
       ...req.body,
       reported_by: req.user.user_id
-    }));
+    });
+    if (notification.notification_type === 'BREAKDOWN') {
+      EngineeringEmailService.notifyBreakdown(notification).catch(console.error);
+    }
+    res.status(201).json(notification);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
