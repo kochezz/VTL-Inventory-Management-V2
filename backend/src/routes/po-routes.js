@@ -21,7 +21,7 @@ router.get('/exchange-rate', authenticate, async (req, res) => {
 // ============================================================================
 // 1. CREATE PURCHASE ORDER
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {
+router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo', 'engineering', 'engineering_manager']), async (req, res) => {
   try {
     const userId = req.user.user_id;
     const poData = req.body;

@@ -53,25 +53,25 @@ const navigation: NavItem[] = [
     name: 'Products',
     href: '/products',
     icon: Package,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
   },
   {
     name: 'Inventory',
     href: '/inventory',
     icon: MapPin,
-    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
   },
   {
     name: 'Production',
     href: '/production',
     icon: Factory,
-    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo']
+    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo', 'engineering', 'engineering_manager']
   },
   {
     name: 'Vendor Management',
     href: '/vendor-management/suppliers',
     icon: Building2,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
   },
   {
     name: 'Customers (CRM)',
@@ -83,13 +83,13 @@ const navigation: NavItem[] = [
     name: 'Purchase Orders',
     href: '/vendor-management/purchase-orders',
     icon: ShoppingCart,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
   },
   {
     name: 'Goods Receipts',
     href: '/vendor-management/goods-receipts',
     icon: PackageCheck,
-    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
   },
   {
     name: 'QC Lab',
@@ -172,7 +172,7 @@ const navigation: NavItem[] = [
     name: 'Reports',
     href: '/reports',
     icon: FileText,
-    roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'sales']
+    roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
   },
   {
     name: 'Production Reports',
