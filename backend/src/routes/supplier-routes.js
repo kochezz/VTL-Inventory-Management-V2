@@ -10,7 +10,7 @@ const SupplierEmailService = require('../services/supplier-email-service');
 // 1. CREATE VENDOR DRAFT
 // Roles Allowed: Sales, Admin, Manager, CEO, CFO
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
+router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager']), async (req, res) => {
   try {
     const userId = req.user.user_id; 
     const vendorData = req.body;
@@ -27,7 +27,7 @@ router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'c
 // 1.5 UPDATE VENDOR DRAFT (EDIT)
 // Roles Allowed: Sales, Admin, Manager, CEO, CFO
 // ============================================================================
-router.put('/:id', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
+router.put('/:id', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager']), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const userId = req.user.user_id;
@@ -80,7 +80,7 @@ router.get('/:id', authenticate, async (req, res) => {
 // 4. SUBMIT FOR QA REVIEW
 // Roles Allowed: Sales, Admin, Manager, CEO, CFO
 // ============================================================================
-router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo']), async (req, res) => {
+router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager']), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const updatedVendor = await SupplierService.submitForQA(vendorId);
