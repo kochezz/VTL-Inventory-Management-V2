@@ -186,6 +186,28 @@ const updateUserStatus = async (userId, isActive) => {
   } catch (error) { throw error; }
 };
 
+// Sets a temporary password directly (admin action), fully decoupled from
+// the general profile-edit path -- touches only password_hash and
+// requires_password_change, nothing else, so it can never carry role (or
+// any other field) along with it by accident.
+const setUserPassword = async (userId, temporaryPassword, forcePasswordChange) => {
+  try {
+    if (!temporaryPassword || temporaryPassword.length < 8) {
+      throw new Error('Password must be at least 8 characters long');
+    }
+
+    const password_hash = await bcrypt.hash(temporaryPassword, 10);
+
+    const result = await pool.query(
+      `UPDATE users SET password_hash = $1, requires_password_change = $2 WHERE user_id = $3 RETURNING user_id`,
+      [password_hash, !!forcePasswordChange, userId]
+    );
+    if (result.rows.length === 0) throw new Error('User not found');
+
+    return { message: 'Password updated successfully' };
+  } catch (error) { throw error; }
+};
+
 const initiatePasswordReset = async (userId) => {
   try {
     const userQuery = await pool.query('SELECT email, full_name FROM users WHERE user_id = $1 AND is_active = true', [userId]);
@@ -362,8 +384,9 @@ module.exports = {
   createUser, 
   updateUser, 
   deleteUser, 
-  updateUserStatus, 
-  initiatePasswordReset, 
+  updateUserStatus,
+  setUserPassword,
+  initiatePasswordReset,
   getUserStats,
   getHolidayData, 
   submitHolidayRequest,
