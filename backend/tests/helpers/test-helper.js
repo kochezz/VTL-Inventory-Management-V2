@@ -119,14 +119,27 @@ async function getUserRow(userId) {
 // not a mock) for a matching sent email, since these are fire-and-forget
 // sends from the route handler and the HTTP response returns before the
 // send necessarily completes. Retries briefly to absorb that race.
-async function waitForResendEmail({ subject, sentAfter, timeoutMs = 8000, intervalMs = 1000 }) {
+//
+// resend.emails.list() caps at 20 items per page with no way to widen it
+// (a `limit` query param is silently ignored) -- this account has enough
+// accumulated volume from months of ad hoc verification work that a
+// genuinely-just-sent email can already be past page 1 by the time this
+// polls. Pages forward with the `after` cursor (confirmed to work) rather
+// than trusting page 1 alone.
+async function waitForResendEmail({ subject, sentAfter, timeoutMs = 20000, intervalMs = 1500, maxPages = 5 }) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const { data } = await resend.emails.list();
-    const match = (data?.data || []).find(
-      (e) => e.subject === subject && new Date(e.created_at) >= sentAfter
-    );
-    if (match) return match;
+    let cursor;
+    for (let page = 0; page < maxPages; page++) {
+      const { data } = cursor
+        ? await resend.emails.list({ query: { after: cursor } })
+        : await resend.emails.list();
+      const items = data?.data || [];
+      const match = items.find((e) => e.subject === subject && new Date(e.created_at) >= sentAfter);
+      if (match) return match;
+      if (!data?.has_more || items.length === 0) break;
+      cursor = items[items.length - 1].id;
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   return null;

@@ -49,6 +49,30 @@ test('junior_accountant is rejected (403) on a cfo/ceo/admin-only route', async 
   );
 });
 
+test('junior_accountant can reach dashboard and mobile ping (Phase 1.5 exception), but retains no cfo-only access', async (t) => {
+  // Phase 1.5 deliberately added junior_accountant to dashboard-routes.js's
+  // authorize() arrays and mobile-routes.js's MOBILE_ALLOWED_ROLES as an
+  // explicit exception -- but NOT to mobile-routes.js's APPROVERS array
+  // (QMS NCR/CAPA/document approval), which was left untouched on purpose.
+  await t.test('dashboard/stats is reachable (200)', async () => {
+    const res = await axios.get(`${BASE_URL}/api/dashboard/stats`, jrHeaders);
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('mobile/ping is reachable (200)', async () => {
+    const res = await axios.get(`${BASE_URL}/api/mobile/ping`, jrHeaders);
+    assert.equal(res.status, 200);
+    assert.equal(res.data.ok, true);
+  });
+
+  await t.test('still has no cfo-only access (products pricing stays 403)', async () => {
+    await assert.rejects(
+      () => axios.put(`${BASE_URL}/api/products/pricing`, { updates: [] }, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+});
+
 test('a manager gets 403 on PATCH /api/users/:id/password', async () => {
   // The route is nested under router.use(authorize('admin')) in
   // users-routes.js -- strictly admin-only, not admin+cfo+ceo. Target user
