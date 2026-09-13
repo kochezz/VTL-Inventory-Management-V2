@@ -23,7 +23,9 @@ const VALID_ROLES = [
   'super_viewer',
   // HR module roles
   'hr_admin',
-  'hr_manager'
+  'hr_manager',
+  // Compliance module role (Phase 1)
+  'junior_accountant'
 ];
 
 const getAllUsers = async () => {
