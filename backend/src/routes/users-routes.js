@@ -105,8 +105,24 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 router.post('/:id/reset-password', async (req, res) => {
-  try { res.json(await usersService.initiatePasswordReset(req.params.id)); } 
+  try { res.json(await usersService.initiatePasswordReset(req.params.id)); }
   catch (error) { res.status(400).json({ message: error.message }); }
+});
+
+// Decoupled from the general profile-edit form (PUT /:id) on purpose --
+// sets ONLY password_hash + requires_password_change, never touches role
+// or any other field, so setting a password can never silently revert
+// something else in the same request.
+router.patch('/:id/password', async (req, res) => {
+  try {
+    const { temporaryPassword, forcePasswordChange } = req.body;
+    await usersService.setUserPassword(req.params.id, temporaryPassword, forcePasswordChange);
+    res.status(200).json({ message: 'Password updated successfully' });
+  } catch (error) {
+    if (error.message.includes('not found')) return res.status(404).json({ message: error.message });
+    if (error.message.includes('at least 8 characters')) return res.status(400).json({ message: error.message });
+    res.status(400).json({ message: error.message });
+  }
 });
 
 router.get('/stats/summary', async (req, res) => {

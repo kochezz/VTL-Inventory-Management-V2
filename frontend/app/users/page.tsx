@@ -28,7 +28,7 @@ const DEPARTMENTS = [
 // Canonical source of truth — must match:
 //   · users_role_check constraint in PostgreSQL
 //   · VALID_ROLES in users-service.js
-// Groups: Executive | Management | Operations | Quality | Commercial | Access
+// Groups: Executive | Management | Finance | Operations | Quality | Commercial | Access
 const ROLES = [
   // ── Executive
   { value: 'admin',              label: 'Administrator (Full Access)',   group: 'Executive' },
@@ -41,6 +41,8 @@ const ROLES = [
   { value: 'hr_admin',           label: 'HR Admin',                      group: 'Management' },
   { value: 'hr_manager',         label: 'HR Manager',                    group: 'Management' },
   { value: 'engineering_manager', label: 'Engineering Manager',          group: 'Management' },
+  // ── Finance
+  { value: 'junior_accountant',  label: 'Junior Accountant (Finance)',   group: 'Finance' },
   // ── Operations
   { value: 'engineering',        label: 'Engineering',                   group: 'Operations' },
   { value: 'warehouse_staff',    label: 'Warehouse Staff',               group: 'Operations' },
@@ -57,7 +59,7 @@ const ROLES = [
 
 type RoleValue = typeof ROLES[number]['value'];
 
-// Role badge colours — covers all 17 roles
+// Role badge colours — covers all 18 roles
 const ROLE_BADGE: Record<string, string> = {
   admin:              'bg-red-500/10 text-red-400 border-red-500/20',
   ceo:                'bg-amber-500/10 text-amber-400 border-amber-500/20',
@@ -67,8 +69,9 @@ const ROLE_BADGE: Record<string, string> = {
   warehouse_manager:  'bg-teal-500/10 text-teal-400 border-teal-500/20',
   hr_admin:           'bg-violet-500/10 text-violet-400 border-violet-500/20',
   hr_manager:         'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  engineering:        'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   engineering_manager: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  junior_accountant:  'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+  engineering:        'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   warehouse_staff:    'bg-lime-500/10 text-lime-400 border-lime-500/20',
   operator:           'bg-orange-500/10 text-orange-400 border-orange-500/20',
   staff:              'bg-green-500/10 text-green-400 border-green-500/20',
@@ -89,7 +92,10 @@ const FORM_DEFAULT = {
   emergency_contacts: [] as { name: string; relationship: string; phone: string }[],
   employee_number: '', job_title: '', department: '', reports_to: '',
   employment_date: '', employment_status: 'Full-time', employment_type: 'Salaried',
-  requires_password_change: true, is_active: true, is_verified: true
+  requires_password_change: true, is_active: true, is_verified: true,
+  // Edit-modal-only fields for the decoupled "Set Password" action — never
+  // sent as part of the main profile save (see handleEditUser).
+  tempPassword: '', forcePasswordChange: true
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +117,9 @@ export default function UsersPage() {
   const [formData, setFormData] = useState<any>({ ...FORM_DEFAULT });
   const [showPassword, setShowPassword] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
 
   useEffect(() => {
     if (!isAuthenticated) router.push('/login');
@@ -198,8 +207,14 @@ export default function UsersPage() {
     if (!selectedUser) return;
     setFormLoading(true); setError(''); setSuccess('');
     try {
+      // Password changes are handled entirely by "Set Password" (see
+      // handleSetPassword) — strip every password-related field here so
+      // this submission can never touch password_hash, even incidentally.
       const payload = { ...formData };
-      if (!payload.password) delete payload.password;
+      delete payload.password;
+      delete payload.requires_password_change;
+      delete payload.tempPassword;
+      delete payload.forcePasswordChange;
       const response = await axios.put(
         `${process.env.NEXT_PUBLIC_API_URL}/users/${selectedUser.user_id}`,
         payload,
@@ -214,6 +229,32 @@ export default function UsersPage() {
       setError(err.response?.data?.message || 'Failed to update user');
     } finally {
       setFormLoading(false);
+    }
+  };
+
+  // Fully decoupled from handleEditUser — sends ONLY temporaryPassword and
+  // forcePasswordChange to the dedicated password endpoint, never role or
+  // any other profile field, and never closes the modal or triggers a
+  // profile save.
+  const handleSetPassword = async () => {
+    if (!selectedUser) return;
+    setPasswordLoading(true); setPasswordError(''); setPasswordSuccess('');
+    try {
+      await axios.patch(
+        `${process.env.NEXT_PUBLIC_API_URL}/users/${selectedUser.user_id}/password`,
+        {
+          temporaryPassword: formData.tempPassword,
+          forcePasswordChange: formData.forcePasswordChange
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setPasswordSuccess('Password updated successfully!');
+      setFormData((f: any) => ({ ...f, tempPassword: '' }));
+      setTimeout(() => setPasswordSuccess(''), 3000);
+    } catch (err: any) {
+      setPasswordError(err.response?.data?.message || 'Failed to update password');
+    } finally {
+      setPasswordLoading(false);
     }
   };
 
@@ -232,9 +273,12 @@ export default function UsersPage() {
 
   const openEditModal = (user: any) => {
     setSelectedUser(user);
+    setPasswordError(''); setPasswordSuccess('');
     setFormData({
       ...user,
       password: '',
+      tempPassword: '',
+      forcePasswordChange: true,
       preferred_name:    user.preferred_name    || '',
       gender:            user.gender            || '',
       nationality:       user.nationality       || '',
@@ -265,6 +309,7 @@ export default function UsersPage() {
   const closeModal = () => {
     setShowAddModal(false);
     setShowEditModal(false);
+    setPasswordError(''); setPasswordSuccess('');
     resetForm();
   };
 
@@ -490,7 +535,7 @@ export default function UsersPage() {
                     />
                   </div>
 
-                  {/* ── Role select — all 16 roles, grouped ─────────────────── */}
+                  {/* ── Role select — all 18 roles, grouped ─────────────────── */}
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">System Role *</label>
                     <RoleSelect
@@ -510,6 +555,7 @@ export default function UsersPage() {
                         {formData.role === 'hr_manager'         && 'Onboarding updates for direct reports; view-only salary.'}
                         {formData.role === 'engineering'        && 'Engineering and maintenance module access.'}
                         {formData.role === 'engineering_manager' && 'Approves work orders, PM plans, and asset changes.'}
+                        {formData.role === 'junior_accountant'  && 'Finance data entry and compliance record creation; no approval authority.'}
                         {formData.role === 'warehouse_staff'    && 'Receive, issue, transfer, count — operational transactions.'}
                         {formData.role === 'operator'           && 'Production line operation and batch recording.'}
                         {formData.role === 'staff'              && 'Standard operational access.'}
@@ -521,38 +567,88 @@ export default function UsersPage() {
                     )}
                   </div>
 
-                  {/* Password */}
-                  <div className="col-span-2 bg-dark-900 p-4 border border-dark-600 rounded-lg">
-                    <div className="flex justify-between items-center mb-2">
-                      <label className="block text-xs font-bold text-white">Temporary Password</label>
-                      <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                  {/* Password — Add mode: part of the main create-user submit.
+                      Edit mode: fully decoupled, its own "Set Password" action
+                      (see handleSetPassword) that never touches the profile save. */}
+                  {showAddModal ? (
+                    <div className="col-span-2 bg-dark-900 p-4 border border-dark-600 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-xs font-bold text-white">Temporary Password</label>
+                        <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.requires_password_change}
+                            onChange={e => setFormData((f: any) => ({ ...f, requires_password_change: e.target.checked }))}
+                            className="rounded text-primary-500 bg-dark-800 border-dark-600"
+                          />
+                          Force user to set new password on next login
+                        </label>
+                      </div>
+                      <div className="relative">
                         <input
-                          type="checkbox"
-                          checked={formData.requires_password_change}
-                          onChange={e => setFormData((f: any) => ({ ...f, requires_password_change: e.target.checked }))}
-                          className="rounded text-primary-500 bg-dark-800 border-dark-600"
+                          type={showPassword ? 'text' : 'password'}
+                          value={formData.password}
+                          onChange={e => setFormData((f: any) => ({ ...f, password: e.target.value }))}
+                          required
+                          placeholder="Enter temporary password..."
+                          className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white pr-10"
                         />
-                        Force user to set new password on next login
-                      </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(p => !p)}
+                          className="absolute right-3 top-2 text-gray-500 hover:text-white"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={formData.password}
-                        onChange={e => setFormData((f: any) => ({ ...f, password: e.target.value }))}
-                        required={showAddModal}
-                        placeholder={showAddModal ? 'Enter temporary password...' : 'Leave blank to keep current password'}
-                        className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white pr-10"
-                      />
+                  ) : (
+                    <div className="col-span-2 bg-dark-900 p-4 border border-dark-600 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-xs font-bold text-white">Set Password</label>
+                        <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.forcePasswordChange}
+                            onChange={e => setFormData((f: any) => ({ ...f, forcePasswordChange: e.target.checked }))}
+                            className="rounded text-primary-500 bg-dark-800 border-dark-600"
+                          />
+                          Force user to set new password on next login
+                        </label>
+                      </div>
+                      <div className="relative mb-2">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={formData.tempPassword}
+                          onChange={e => setFormData((f: any) => ({ ...f, tempPassword: e.target.value }))}
+                          placeholder="Enter new temporary password (min. 8 characters)..."
+                          className="w-full px-3 py-2 bg-dark-950 border border-dark-600 rounded text-white pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(p => !p)}
+                          className="absolute right-3 top-2 text-gray-500 hover:text-white"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => setShowPassword(p => !p)}
-                        className="absolute right-3 top-2 text-gray-500 hover:text-white"
+                        disabled={passwordLoading || !formData.tempPassword}
+                        onClick={handleSetPassword}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded flex items-center gap-2"
                       >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        {passwordLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                        Set Password
                       </button>
+                      {passwordError && (
+                        <p className="text-xs text-red-400 mt-2">{passwordError}</p>
+                      )}
+                      {passwordSuccess && (
+                        <p className="text-xs text-green-400 mt-2">{passwordSuccess}</p>
+                      )}
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
