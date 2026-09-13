@@ -10,7 +10,7 @@ const mobileService = require('../services/mobile-service');
 const qmsService    = require('../services/qms-service');
 const { getSalesAnalytics } = require('../services/sales-analytics-service');
 
-const MOBILE_ALLOWED_ROLES = ['admin', 'system_admin', 'ceo', 'cfo', 'manager'];
+const MOBILE_ALLOWED_ROLES = ['admin', 'system_admin', 'ceo', 'cfo', 'manager', 'junior_accountant'];
 
 function requireMobileExecutiveAccess(req, res, next) {
   const role = String(req.user?.role ?? '').toLowerCase();
