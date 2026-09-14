@@ -10,7 +10,7 @@ const { authenticate, authorize } = require('../middleware/auth-middleware');
 // 1. CREATE CUSTOMER (ONBOARDING)
 // Roles Allowed: Sales, Manager, Admin, CEO, CFO
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo']), async (req, res) => {
+router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'cfo', 'junior_accountant']), async (req, res) => {
   try {
     const userId = req.user.user_id;
     const customerData = req.body;
@@ -30,7 +30,7 @@ router.post('/', authenticate, authorize(['sales', 'manager', 'admin', 'ceo', 'c
 // Triggered from POS or CRM when a prospect is not yet registered
 // Roles Allowed: Sales, Staff, Manager, Admin, CEO
 // ============================================================================
-router.post('/onboarding-request', authenticate, authorize(['sales', 'staff', 'manager', 'admin', 'ceo']), async (req, res) => {
+router.post('/onboarding-request', authenticate, authorize(['sales', 'staff', 'manager', 'admin', 'ceo', 'junior_accountant']), async (req, res) => {
   try {
     const { to_email, email_html, email_subject } = req.body;
     

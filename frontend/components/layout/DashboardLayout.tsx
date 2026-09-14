@@ -59,7 +59,7 @@ const navigation: NavItem[] = [
     name: 'Inventory',
     href: '/inventory',
     icon: MapPin,
-    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    roles: ['admin', 'manager', 'qa', 'staff', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'Production',
@@ -71,25 +71,25 @@ const navigation: NavItem[] = [
     name: 'Vendor Management',
     href: '/vendor-management/suppliers',
     icon: Building2,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'Customers (CRM)',
     href: '/vendor-management/customers',
     icon: Users,
-    roles: ['admin', 'manager', 'sales', 'staff', 'ceo', 'cfo']
+    roles: ['admin', 'manager', 'sales', 'staff', 'ceo', 'cfo', 'junior_accountant']
   },
   {
     name: 'Purchase Orders',
     href: '/vendor-management/purchase-orders',
     icon: ShoppingCart,
-    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    roles: ['admin', 'manager', 'qa', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'Goods Receipts',
     href: '/vendor-management/goods-receipts',
     icon: PackageCheck,
-    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    roles: ['admin', 'manager', 'warehouse', 'staff', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'QC Lab',
@@ -101,7 +101,7 @@ const navigation: NavItem[] = [
     name: 'Sales / POS',
     href: '/sales/pos',
     icon: ShoppingBag,
-    roles: ['admin', 'manager', 'sales', 'staff']
+    roles: ['admin', 'manager', 'sales', 'staff', 'junior_accountant']
   },
   {
     name: 'Global Pricing',
@@ -113,27 +113,27 @@ const navigation: NavItem[] = [
     name: 'Quality (QMS)',
     href: '/qms',
     icon: ShieldCheck,
-    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales', 'staff', 'super_viewer'],
+    roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales', 'staff', 'super_viewer', 'junior_accountant'],
     children: [
       {
         name: 'Document Register',
         href: '/qms/documents',
-        roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales', 'staff', 'super_viewer'],
+        roles: ['admin', 'manager', 'qa', 'engineering', 'operator', 'ceo', 'cfo', 'sales', 'staff', 'super_viewer', 'junior_accountant'],
       },
       {
         name: 'Compliance Dashboard',
         href: '/qms/compliance',
-        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo'],
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'junior_accountant'],
       },
       {
         name: 'Review Calendar',
         href: '/qms/review-calendar',
-        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering'],
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering', 'junior_accountant'],
       },
       {
         name: 'Document Hierarchy',
         href: '/qms/hierarchy',
-        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering'],
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering', 'junior_accountant'],
       },
     ],
   },
@@ -172,7 +172,7 @@ const navigation: NavItem[] = [
     name: 'Reports',
     href: '/reports',
     icon: FileText,
-    roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'Production Reports',
@@ -198,14 +198,14 @@ const navigation: NavItem[] = [
     icon: Calendar,
     roles: ['admin', 'hr_admin', 'hr_manager', 'manager', 'production_manager', 'warehouse_manager',
             'ceo', 'cfo', 'staff', 'operator', 'engineering', 'qa', 'sales',
-            'viewer', 'super_viewer', 'warehouse'],
+            'viewer', 'super_viewer', 'warehouse', 'junior_accountant'],
     children: [
       {
         name: 'My Register',
         href: '/attendance/my-register',
         roles: ['admin', 'hr_admin', 'hr_manager', 'manager', 'production_manager', 'warehouse_manager',
                 'ceo', 'cfo', 'staff', 'operator', 'engineering', 'qa', 'sales',
-                'viewer', 'super_viewer', 'warehouse'],
+                'viewer', 'super_viewer', 'warehouse', 'junior_accountant'],
       },
       {
         name: 'Team Register',

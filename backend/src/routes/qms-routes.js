@@ -128,7 +128,7 @@ router.get('/my-tasks', async (req, res) => {
 
 // ── 4B — Compliance dashboard (single combined endpoint) ─────────────────────
 router.get('/compliance',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
   async (req, res) => {
     try {
       res.json(await qmsService.getComplianceDashboard());
@@ -177,7 +177,7 @@ router.get('/documents', async (req, res) => {
 
 // MUST be before /documents/:id
 router.get('/documents/next-code',
-  authorize(['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering']),
+  authorize(['admin', 'manager', 'qa', 'ceo', 'cfo', 'engineering', 'junior_accountant']),
   async (req, res) => {
     try {
       const { section_id, doc_type } = req.query;
@@ -243,7 +243,7 @@ router.get('/documents/:id/audit-trail', async (req, res) => {
 // ── Inspector view (internal — authenticated) ─────────────────────────────────
 
 router.get('/documents/:id/inspector',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
   async (req, res) => {
     try { res.json(await qmsService.getInspectorPack(req.params.id)); }
     catch (e) { res.status(500).json({ error: e.message }); }
@@ -252,7 +252,7 @@ router.get('/documents/:id/inspector',
 
 // ── 4A — PDF audit pack download (internal) ───────────────────────────────────
 router.get('/documents/:id/pdf',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
   async (req, res) => {
     try {
       const mode = req.query.mode === 'full' ? 'full' : 'current';
@@ -359,7 +359,7 @@ router.get('/versions/:versionId/template', async (req, res) => {
 });
 
 router.get('/documents/:id/assembled',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
   async (req, res) => {
     try {
       const doc = await qmsService.getDocumentById(req.params.id);
@@ -392,7 +392,7 @@ router.get('/documents/:id/assembled',
 );
 
 router.get('/versions/:versionId/assembled',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
   async (req, res) => {
     try {
       const verRes = await pool.query('SELECT doc_id FROM qms_document_versions WHERE version_id = $1', [req.params.versionId]);
@@ -614,7 +614,7 @@ router.post('/training/acknowledge', async (req, res) => {
 // ============================================================================
 
 router.get('/review-tasks',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
   async (req, res) => {
     try { res.json(await qmsService.listReviewTasks({ status: req.query.status || 'OPEN' })); }
     catch (e) { res.status(500).json({ error: e.message }); }

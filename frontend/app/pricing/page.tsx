@@ -1,19 +1,34 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth, api } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import PricingManager from '@/components/admin/PricingManager';
 import { DollarSign, Save, RefreshCw, CheckCircle2 } from 'lucide-react';
 
+// Matches this page's own sidebar nav entry (DashboardLayout.tsx). Also
+// used for canEdit below -- the backend's POST /sales/exchange-rate
+// authorize() array separately includes 'manager', but exchange_rates
+// history shows manager has never actually used it, so it's not treated
+// as an access boundary here.
+const CAN_VIEW_ROLES = ['admin', 'ceo', 'cfo'];
+
 export default function PricingPage() {
+  const router = useRouter();
   const { token, user } = useAuth();
   const [globalRate, setGlobalRate] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const canEdit = ['admin', 'cfo', 'manager'].includes(user?.role || '');
+  const canEdit = CAN_VIEW_ROLES.includes(user?.role || '');
+
+  useEffect(() => {
+    if (user && !CAN_VIEW_ROLES.includes(user.role)) {
+      router.push('/dashboard');
+    }
+  }, [user, router]);
 
   useEffect(() => {
     fetchRate();
@@ -46,6 +61,8 @@ export default function PricingPage() {
       setSaving(false);
     }
   };
+
+  if (user && !CAN_VIEW_ROLES.includes(user.role)) return null;
 
   return (
     <DashboardLayout>
