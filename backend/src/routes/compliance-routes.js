@@ -53,12 +53,12 @@ const getUserEmail = async (userId) => {
 
 router.post('/items', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const { category_id, issued_date, due_date, evidence_file_ref } = req.body;
+    const { category_id, issued_date, due_date, evidence_file_ref, day_of_month_due } = req.body;
     if (!category_id || !due_date) {
       return res.status(400).json({ message: 'category_id and due_date are required.' });
     }
     const item = await complianceService.createComplianceItem({
-      category_id, issued_date, due_date, evidence_file_ref,
+      category_id, issued_date, due_date, evidence_file_ref, day_of_month_due,
       created_by: req.user.user_id
     });
     res.status(201).json(item);
@@ -74,7 +74,7 @@ router.post('/items/:id/submit', async (req, res) => {
     const isAdmin = req.user.role === 'admin';
     const item = await complianceService.submitComplianceItem(req.params.id, req.user.user_id, isAdmin);
 
-    const emails = await NotificationService.getEmailsByRole(['admin', 'cfo', 'ceo']);
+    const emails = await NotificationService.getComplianceNotificationEmails(['admin', 'cfo', 'ceo']);
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
         <div style="background-color:#3b82f6;padding:20px;text-align:center;color:white;"><h2>Compliance Item Awaiting Approval</h2></div>
@@ -103,7 +103,7 @@ router.post('/items/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req
 
     if (isSelfApproval) {
       const otherExecutiveRoles = complianceService.EXECUTIVE_ROLES.filter(r => r !== req.user.role);
-      const emails = await NotificationService.getEmailsByRole(otherExecutiveRoles);
+      const emails = await NotificationService.getComplianceNotificationEmails(otherExecutiveRoles);
       const html = `
         <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
           <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Self-Approved — Review</h2></div>
@@ -161,12 +161,9 @@ router.post('/items/:id/reject', authorize(['admin', 'cfo', 'ceo']), async (req,
 });
 
 // ─── Acknowledge (Phase 4) ──────────────────────────────────────────────────
-// Any authenticated user, not role-restricted -- per the session spec. Worth
-// confirming this is actually intended: every other compliance action
-// (create/submit/approve/reject) is role-gated, and this is the one place a
-// plain viewer-role user could act on a compliance item with no other stake
-// in it. Implemented as specified; flagging rather than silently narrowing it.
-router.post('/items/:id/acknowledge', async (req, res) => {
+// Restricted to the same role set as create/submit -- a plain viewer-role
+// user has no stake in a compliance item and shouldn't be able to act on one.
+router.post('/items/:id/acknowledge', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { note } = req.body;
     const itemId = req.params.id;
@@ -191,7 +188,7 @@ router.post('/items/:id/acknowledge', async (req, res) => {
       [itemId, req.user.user_id, note || null]
     );
 
-    const emails = await NotificationService.getEmailsByRole(['admin', 'cfo', 'ceo']);
+    const emails = await NotificationService.getComplianceNotificationEmails(['admin', 'cfo', 'ceo']);
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
         <div style="background-color:#4ade80;padding:20px;text-align:center;color:white;"><h2>Compliance Item Acknowledged</h2></div>

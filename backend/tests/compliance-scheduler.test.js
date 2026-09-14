@@ -36,6 +36,7 @@ const {
 const cleanup = new Cleanup();
 let adminToken, adminHeaders, adminUser;
 let jrToken, jrHeaders;
+let viewerToken, viewerHeaders;
 
 function isoDate(offsetDays) {
   const d = new Date();
@@ -51,6 +52,9 @@ before(async () => {
 
   ({ token: jrToken } = await signTokenForRole('junior_accountant'));
   jrHeaders = authHeaders(jrToken);
+
+  ({ token: viewerToken } = await signTokenForRole('viewer'));
+  viewerHeaders = authHeaders(viewerToken);
 });
 
 after(async () => {
@@ -60,12 +64,10 @@ after(async () => {
 // Creates a real item through the real create->submit->approve flow
 // (junior_accountant creates, admin approves -- not a self-approval, so no
 // justification needed) and returns its final row.
-async function createApprovedItem(categoryId, dueDateOffsetDays) {
-  const createRes = await axios.post(
-    `${BASE_URL}/api/compliance/items`,
-    { category_id: categoryId, due_date: isoDate(dueDateOffsetDays), evidence_file_ref: 'scheduler-test.pdf' },
-    jrHeaders
-  );
+async function createApprovedItem(categoryId, dueDateOffsetDays, dayOfMonthDue) {
+  const body = { category_id: categoryId, due_date: isoDate(dueDateOffsetDays), evidence_file_ref: 'scheduler-test.pdf' };
+  if (dayOfMonthDue != null) body.day_of_month_due = dayOfMonthDue;
+  const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, body, jrHeaders);
   cleanup.trackItem(createRes.data.item_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, jrHeaders);
   const approveRes = await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/approve`, {}, adminHeaders);
@@ -185,12 +187,13 @@ test('monthly recurrence: first run generates the next item, a same-day second r
   const categoryId = await createComplianceCategory({ name: 'TEST SUITE - monthly recurrence', recurrence_type: 'MONTHLY_RECURRING' });
   cleanup.trackCategory(categoryId);
 
-  // Bootstraps compliance_recurrence_rule via the real approve flow (Phase 2
-  // logic) -- but that bootstrap never sets day_of_month_due (see the flag
-  // in compliance-scheduler-service.js and this session's report: nothing in
-  // the existing codebase populates it today). Set it directly here to
-  // actually exercise Phase 3's own generation logic; not something the real
-  // app can do yet without a follow-up.
+  // Pick a day-of-month that lands 5 days from today -- inside the 10-day
+  // generation window -- and provide it at item-creation time, same as a
+  // real user would. The approve-time rule bootstrap (Phase 2 logic) now
+  // carries this straight onto compliance_recurrence_rule.day_of_month_due,
+  // so this is a fresh, non-test-patched row exercising Phase 3's real
+  // generation logic end to end, not a row hand-fixed after the fact.
+  //
   // The anchor's due_date must NOT satisfy the "already exists for the
   // upcoming occurrence" check (due_date >= today), or generation would
   // correctly (and intentionally) be skipped -- that check doesn't
@@ -198,18 +201,15 @@ test('monthly recurrence: first run generates the next item, a same-day second r
   // is correct: in real usage an anchor's due_date should already align
   // with the rule's cadence. Backdating it here simulates "the current
   // instance has already passed, time to generate the next one."
-  const anchor = await createApprovedItem(categoryId, -20);
-
-  const ruleRes = await pool.query(`SELECT rule_id FROM compliance_recurrence_rule WHERE category_id = $1`, [categoryId]);
-  assert.equal(ruleRes.rows.length, 1, 'expected the first approval to bootstrap exactly one recurrence rule');
-  const ruleId = ruleRes.rows[0].rule_id;
-
-  // Pick a day-of-month that lands 5 days from today -- inside the 10-day
-  // generation window.
   const target = new Date();
   target.setUTCDate(target.getUTCDate() + 5);
   const dayOfMonthDue = target.getUTCDate();
-  await pool.query(`UPDATE compliance_recurrence_rule SET day_of_month_due = $1 WHERE rule_id = $2`, [dayOfMonthDue, ruleId]);
+  const anchor = await createApprovedItem(categoryId, -20, dayOfMonthDue);
+
+  const ruleRes = await pool.query(`SELECT rule_id, day_of_month_due FROM compliance_recurrence_rule WHERE category_id = $1`, [categoryId]);
+  assert.equal(ruleRes.rows.length, 1, 'expected the first approval to bootstrap exactly one recurrence rule');
+  assert.equal(ruleRes.rows[0].day_of_month_due, dayOfMonthDue, 'day_of_month_due should already be set on the rule from creation, with no manual patch');
+  const ruleId = ruleRes.rows[0].rule_id;
 
   const run1 = await callScheduler({ dryRun: false });
   const generated1 = run1.data.recurring_items_generated.filter((g) => g.rule_id === ruleId);
@@ -232,7 +232,50 @@ test('monthly recurrence: first run generates the next item, a same-day second r
   assert.equal(itemsAfterRun2.rows.length, 2, 'still anchor + one generated item after the second run -- no duplicate');
 });
 
+// ── 7d-2: 12-month re-approval reminder dedup ────────────────────────────────
+
+test('12-month re-approval reminder: two scheduler runs same day send exactly one reminder, not two', async () => {
+  const categoryId = await createComplianceCategory({ name: 'TEST SUITE - reapproval reminder dedup', recurrence_type: 'ANNUAL_RECURRING' });
+  cleanup.trackCategory(categoryId);
+  const anchor = await createApprovedItem(categoryId, -5);
+
+  const ruleRes = await pool.query(`SELECT rule_id FROM compliance_recurrence_rule WHERE category_id = $1`, [categoryId]);
+  assert.equal(ruleRes.rows.length, 1, 'expected the first approval to bootstrap exactly one recurrence rule');
+  const ruleId = ruleRes.rows[0].rule_id;
+
+  // Pull next_reapproval_due inside the 30-day window (bootstrap sets it
+  // ~12 months out by default) -- direct UPDATE here is the same pattern
+  // already used elsewhere in this file to simulate time passing without
+  // literally waiting.
+  await pool.query(`UPDATE compliance_recurrence_rule SET next_reapproval_due = CURRENT_DATE + INTERVAL '10 days' WHERE rule_id = $1`, [ruleId]);
+
+  const run1 = await callScheduler({ dryRun: false });
+  const mine1 = run1.data.reapproval_reminders_sent.filter((r) => r.rule_id === ruleId);
+  assert.equal(mine1.length, 1, 'expected exactly one reapproval reminder on the first run');
+
+  const logRows1 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier = 'REAPPROVAL_REMINDER'`, [ruleId]);
+  assert.equal(logRows1.rows.length, 1, 'expected exactly one REAPPROVAL_REMINDER log row after the first run');
+
+  const run2 = await callScheduler({ dryRun: false });
+  const mine2 = run2.data.reapproval_reminders_sent.filter((r) => r.rule_id === ruleId);
+  assert.equal(mine2.length, 0, 'a second same-day run must not send a duplicate reapproval reminder');
+
+  const logRows2 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier = 'REAPPROVAL_REMINDER'`, [ruleId]);
+  assert.equal(logRows2.rows.length, 1, 'row count must be unchanged after the second same-day run');
+});
+
 // ── 7e/7f: acknowledgement ───────────────────────────────────────────────────
+
+test('a viewer-role token gets 403 on the acknowledge endpoint', async () => {
+  const categoryId = await createComplianceCategory({ name: 'TEST SUITE - ack role gate', recurrence_type: 'ONE_OFF_EXPIRY' });
+  cleanup.trackCategory(categoryId);
+  const item = await createApprovedItem(categoryId, 10);
+
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/items/${item.item_id}/acknowledge`, {}, viewerHeaders),
+    (err) => err.response?.status === 403
+  );
+});
 
 test('acknowledging an overdue item stops further escalation on the next scheduler run', async () => {
   const categoryId = await createComplianceCategory({ name: 'TEST SUITE - ack stops escalation', recurrence_type: 'ONE_OFF_EXPIRY' });

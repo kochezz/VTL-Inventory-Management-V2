@@ -108,6 +108,14 @@ class Cleanup {
         await pool.query(`DELETE FROM compliance_acknowledgements WHERE item_id = ANY($1)`, [leftoverIds]);
         await pool.query(`DELETE FROM compliance_items WHERE item_id = ANY($1)`, [leftoverIds]);
       }
+      // Rule-scoped reminder_log rows (REAPPROVAL_REMINDER) reference
+      // compliance_recurrence_rule.rule_id -- must go before the rule itself.
+      await pool.query(
+        `DELETE FROM compliance_reminder_log WHERE rule_id IN (
+           SELECT rule_id FROM compliance_recurrence_rule WHERE category_id = ANY($1)
+         )`,
+        [this.complianceCategoryIds]
+      );
       await pool.query(`DELETE FROM compliance_recurrence_rule WHERE category_id = ANY($1)`, [this.complianceCategoryIds]);
       await pool.query(`DELETE FROM compliance_categories WHERE category_id = ANY($1)`, [this.complianceCategoryIds]);
     }

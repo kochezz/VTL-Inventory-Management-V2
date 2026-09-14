@@ -57,12 +57,10 @@ after(async () => {
   await cleanup.run();
 });
 
-async function createAndSubmit(headers, categoryId, dueDate) {
-  const createRes = await axios.post(
-    `${BASE_URL}/api/compliance/items`,
-    { category_id: categoryId, due_date: dueDate, evidence_file_ref: 'test.pdf' },
-    headers
-  );
+async function createAndSubmit(headers, categoryId, dueDate, dayOfMonthDue) {
+  const body = { category_id: categoryId, due_date: dueDate, evidence_file_ref: 'test.pdf' };
+  if (dayOfMonthDue != null) body.day_of_month_due = dayOfMonthDue;
+  const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, body, headers);
   cleanup.trackItem(createRes.data.item_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, headers);
   return createRes.data.item_id;
@@ -146,11 +144,12 @@ test('self-approval with justification notifies the OTHER two executive roles dy
 test('approving a MONTHLY_RECURRING category bootstraps the recurrence rule exactly once', async (t) => {
   let firstRuleId;
 
-  await t.test('first approval under the category creates exactly one rule row', async () => {
-    const itemId = await createAndSubmit(jrHeaders, monthlyCategoryId, '2026-10-15');
+  await t.test('first approval under the category creates exactly one rule row, day_of_month_due carried onto it', async () => {
+    const itemId = await createAndSubmit(jrHeaders, monthlyCategoryId, '2026-10-15', 15);
     const approveRes = await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/approve`, {}, adminHeaders);
     assert.ok(approveRes.data.recurrence_rule_created, 'expected a recurrence rule to be created on first approval');
     firstRuleId = approveRes.data.recurrence_rule_created.rule_id;
+    assert.equal(approveRes.data.recurrence_rule_created.day_of_month_due, 15, 'day_of_month_due should be carried from the item onto the new rule');
 
     const dueDate = new Date(approveRes.data.recurrence_rule_created.next_reapproval_due);
     const expected = new Date();
@@ -160,7 +159,7 @@ test('approving a MONTHLY_RECURRING category bootstraps the recurrence rule exac
   });
 
   await t.test('second approval under the same category does not duplicate the rule', async () => {
-    const itemId = await createAndSubmit(jrHeaders, monthlyCategoryId, '2026-11-15');
+    const itemId = await createAndSubmit(jrHeaders, monthlyCategoryId, '2026-11-15', 15);
     const approveRes = await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/approve`, {}, adminHeaders);
     assert.equal(approveRes.data.recurrence_rule_created, null, 'a second approval under the same category must not create another rule row');
 
@@ -169,6 +168,17 @@ test('approving a MONTHLY_RECURRING category bootstraps the recurrence rule exac
     assert.equal(rows.rows.length, 1);
     assert.equal(rows.rows[0].rule_id, firstRuleId);
   });
+});
+
+test('creating a MONTHLY_RECURRING item without day_of_month_due is rejected with 400', async () => {
+  await assert.rejects(
+    () => axios.post(
+      `${BASE_URL}/api/compliance/items`,
+      { category_id: monthlyCategoryId, due_date: '2026-12-15', evidence_file_ref: 'test.pdf' },
+      jrHeaders
+    ),
+    (err) => err.response?.status === 400
+  );
 });
 
 test('reject without a reason is rejected with 400', async () => {

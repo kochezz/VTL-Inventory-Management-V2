@@ -71,7 +71,7 @@ async function processReminderLadder(dryRun, summary) {
       );
       if (already.rows.length > 0) continue;
 
-      const emails = await NotificationService.getEmailsByRole(EXECUTIVE_ROLES);
+      const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
       summary.reminders_sent.push({ item_id: item.item_id, tier, days_until_due: item.days_until_due, recipients: emails });
 
       if (!dryRun) {
@@ -122,7 +122,7 @@ async function processNonCompliantAndEscalations(dryRun, summary) {
   const escalationCandidateIds = new Set(alreadyNonCompliant.rows.map((r) => r.item_id));
   if (dryRun) dryRunFlippedIds.forEach((id) => escalationCandidateIds.add(id));
 
-  const emails = await NotificationService.getEmailsByRole(EXECUTIVE_ROLES);
+  const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
 
   for (const itemId of escalationCandidateIds) {
     if (!dryRun) {
@@ -200,18 +200,11 @@ async function processMonthlyRecurrence(dryRun, summary) {
 
 // ── Step 4: 12-month re-approval reminder ───────────────────────────────────
 //
-// compliance_reminder_log.item_id is NOT NULL and its tier CHECK constraint
-// only allows the 5 item-level values -- there is no schema-supported way to
-// log a rule-level (not item-level) reminder without either changing that
-// schema (out of this session's scope) or risking corrupting a real item's
-// own ladder/escalation dedup by reusing one of its tier values against an
-// unrelated row. Flagging this rather than silently picking a workaround:
-// this reminder is NOT persisted to compliance_reminder_log at all, and
-// instead fires every day the rule is within the 30-day window (the same
-// "repeat until resolved" shape as OVERDUE_ESCALATION), gated purely by
-// next_reapproval_due. The correct long-term fix is a small follow-up
-// migration (a nullable item_id + a new rule_id column, or a separate
-// compliance_rule_reminder_log table) -- deliberately not done here.
+// Rule-scoped, day-deduped exactly like OVERDUE_ESCALATION is item-scoped:
+// compliance_reminder_log.item_id is now nullable with a sibling rule_id
+// column (CHECK enforces exactly one of the two is set), and a partial
+// unique index on (rule_id, tier, sent_date) gives this the same "repeat
+// once per day until resolved" guarantee every other reminder type has.
 async function processReapprovalReminders(dryRun, summary) {
   const rules = await pool.query(`
     SELECT rule_id, category_id, next_reapproval_due
@@ -221,14 +214,29 @@ async function processReapprovalReminders(dryRun, summary) {
 
   if (rules.rows.length === 0) return;
 
-  const emails = await NotificationService.getEmailsByRole(EXECUTIVE_ROLES);
+  const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
 
   for (const rule of rules.rows) {
-    summary.reapproval_reminders_sent.push({ rule_id: rule.rule_id, next_reapproval_due: rule.next_reapproval_due, recipients: emails });
     if (!dryRun) {
+      const inserted = await pool.query(
+        `INSERT INTO compliance_reminder_log (rule_id, tier) VALUES ($1, 'REAPPROVAL_REMINDER')
+         ON CONFLICT (rule_id, tier, sent_date) WHERE rule_id IS NOT NULL DO NOTHING
+         RETURNING reminder_log_id`,
+        [rule.rule_id]
+      );
+      if (inserted.rows.length === 0) continue; // already reminded today
+
+      summary.reapproval_reminders_sent.push({ rule_id: rule.rule_id, next_reapproval_due: rule.next_reapproval_due, recipients: emails });
       const html = `<p>A recurring compliance category's annual re-approval is due on ${toDateOnlyString(new Date(rule.next_reapproval_due))}.</p>
         <p>Please log in to the Vilagio ERP Compliance module to review and re-approve.</p>`;
       NotificationService.sendEmail(emails, `Compliance Re-Approval Due Within 30 Days`, html).catch(console.error);
+    } else {
+      const already = await pool.query(
+        `SELECT 1 FROM compliance_reminder_log WHERE rule_id = $1 AND tier = 'REAPPROVAL_REMINDER' AND sent_date = CURRENT_DATE LIMIT 1`,
+        [rule.rule_id]
+      );
+      if (already.rows.length > 0) continue;
+      summary.reapproval_reminders_sent.push({ rule_id: rule.rule_id, next_reapproval_due: rule.next_reapproval_due, recipients: emails });
     }
   }
 }
