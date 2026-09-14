@@ -7,13 +7,11 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import PricingManager from '@/components/admin/PricingManager';
 import { DollarSign, Save, RefreshCw, CheckCircle2 } from 'lucide-react';
 
-// Matches this page's own sidebar nav entry (DashboardLayout.tsx) -- the
-// officially sanctioned "who should even see this page" list. Previously
-// there was no page-level guard at all: GET /sales/exchange-rate is open to
-// any authenticated user, so anyone navigating here directly got a
-// read-only view regardless of role, with only the save button hidden via
-// canEdit below. Global Pricing is meant to stay fully blocked for every
-// role not explicitly granted it -- this guard makes that actually true.
+// Matches this page's own sidebar nav entry (DashboardLayout.tsx). Also
+// used for canEdit below -- the backend's POST /sales/exchange-rate
+// authorize() array separately includes 'manager', but exchange_rates
+// history shows manager has never actually used it, so it's not treated
+// as an access boundary here.
 const CAN_VIEW_ROLES = ['admin', 'ceo', 'cfo'];
 
 export default function PricingPage() {
@@ -24,7 +22,7 @@ export default function PricingPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const canEdit = ['admin', 'cfo', 'manager'].includes(user?.role || '');
+  const canEdit = CAN_VIEW_ROLES.includes(user?.role || '');
 
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {
