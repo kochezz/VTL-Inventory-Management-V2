@@ -1,12 +1,23 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth, api } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import PricingManager from '@/components/admin/PricingManager';
 import { DollarSign, Save, RefreshCw, CheckCircle2 } from 'lucide-react';
 
+// Matches this page's own sidebar nav entry (DashboardLayout.tsx) -- the
+// officially sanctioned "who should even see this page" list. Previously
+// there was no page-level guard at all: GET /sales/exchange-rate is open to
+// any authenticated user, so anyone navigating here directly got a
+// read-only view regardless of role, with only the save button hidden via
+// canEdit below. Global Pricing is meant to stay fully blocked for every
+// role not explicitly granted it -- this guard makes that actually true.
+const CAN_VIEW_ROLES = ['admin', 'ceo', 'cfo'];
+
 export default function PricingPage() {
+  const router = useRouter();
   const { token, user } = useAuth();
   const [globalRate, setGlobalRate] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -14,6 +25,12 @@ export default function PricingPage() {
   const [success, setSuccess] = useState(false);
 
   const canEdit = ['admin', 'cfo', 'manager'].includes(user?.role || '');
+
+  useEffect(() => {
+    if (user && !CAN_VIEW_ROLES.includes(user.role)) {
+      router.push('/dashboard');
+    }
+  }, [user, router]);
 
   useEffect(() => {
     fetchRate();
@@ -46,6 +63,8 @@ export default function PricingPage() {
       setSaving(false);
     }
   };
+
+  if (user && !CAN_VIEW_ROLES.includes(user.role)) return null;
 
   return (
     <DashboardLayout>

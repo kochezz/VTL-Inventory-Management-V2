@@ -10,6 +10,7 @@ const axios = require('axios');
 
 const {
   BASE_URL,
+  pool,
   assertServerReachable,
   login,
   authHeaders,
@@ -18,25 +19,39 @@ const {
 } = require('./helpers/test-helper');
 
 let adminToken, adminHeaders;
-let jrToken, jrHeaders;
+let jrToken, jrHeaders, jrUser;
 let managerToken, managerHeaders;
 let disposableUserId;
+let vendorId, customerId, otherEmployeeId;
 
 before(async () => {
   await assertServerReachable();
   adminToken = await login(process.env.TEST_ADMIN_EMAIL, process.env.TEST_ADMIN_PASSWORD);
   adminHeaders = authHeaders(adminToken);
 
-  ({ token: jrToken } = await signTokenForRole('junior_accountant'));
+  ({ token: jrToken, user: jrUser } = await signTokenForRole('junior_accountant'));
   jrHeaders = authHeaders(jrToken);
 
   ({ token: managerToken } = await signTokenForRole('manager'));
   managerHeaders = authHeaders(managerToken);
+
+  // A real, active, non-junior_accountant user to prove "another employee's
+  // record fails" for Attendance -- found live, not hardcoded.
+  const other = await pool.query(
+    `SELECT user_id FROM users WHERE role != 'junior_accountant' AND is_active = true LIMIT 1`
+  );
+  otherEmployeeId = other.rows[0]?.user_id;
 });
 
 after(async () => {
   if (disposableUserId) {
     await axios.delete(`${BASE_URL}/api/users/${disposableUserId}`, adminHeaders).catch(() => {});
+  }
+  if (vendorId) {
+    await pool.query(`DELETE FROM vendors WHERE vendor_id = $1`, [vendorId]).catch(() => {});
+  }
+  if (customerId) {
+    await pool.query(`DELETE FROM customers WHERE customer_id = $1`, [customerId]).catch(() => {});
   }
 });
 
@@ -135,4 +150,209 @@ test('the password endpoint changes only password_hash and requires_password_cha
   const loginRes = await axios.post(`${BASE_URL}/api/auth/login`, { email, password: 'NewSuitePass456!' });
   assert.equal(loginRes.status, 200);
   assert.equal(loginRes.data.user.role, 'junior_accountant');
+});
+
+// ── Junior Accountant Access Expansion (per-module pass + regression checks) ──
+
+test('Vendor Management: junior_accountant can create/edit a vendor, still cannot approve', async (t) => {
+  await t.test('POST /api/suppliers succeeds', async () => {
+    const res = await axios.post(
+      `${BASE_URL}/api/suppliers`,
+      { legal_name: 'TEST SUITE Vendor Access Check', registered_address: '1 Test St', primary_category: 'RAW' },
+      jrHeaders
+    );
+    assert.equal(res.status, 201);
+    vendorId = res.data.vendor_id;
+  });
+
+  await t.test('PUT /api/suppliers/:id succeeds', async () => {
+    const res = await axios.put(
+      `${BASE_URL}/api/suppliers/${vendorId}`,
+      { legal_name: 'TEST SUITE Vendor Access Check (edited)', registered_address: '1 Test St', primary_category: 'RAW' },
+      jrHeaders
+    );
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('POST /:id/approve still 403 (unchanged)', async () => {
+    await assert.rejects(
+      () => axios.post(`${BASE_URL}/api/suppliers/${vendorId}/approve`, {}, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+});
+
+test('CRM: junior_accountant can create a customer, still cannot approve', async (t) => {
+  await t.test('POST /api/customers succeeds', async () => {
+    const res = await axios.post(
+      `${BASE_URL}/api/customers`,
+      {
+        trading_name: 'TEST SUITE Customer Access Check',
+        legal_name: 'TEST SUITE Customer Access Check Ltd',
+        tpin: '1234567890',
+        business_type: 'Retail',
+        tier_name: 'Retail',
+        payment_terms: 'COD',
+        territory: 'Test Territory',
+      },
+      jrHeaders
+    );
+    assert.equal(res.status, 201);
+    customerId = res.data.customer_id;
+  });
+
+  await t.test('POST /:id/approve still 403 (never granted -- regression guard)', async () => {
+    await assert.rejects(
+      () => axios.post(`${BASE_URL}/api/customers/${customerId}/approve`, {}, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+});
+
+test('Purchase Orders: junior_accountant passes the authorization gate on create, still cannot approve', async (t) => {
+  await t.test('POST /api/pos is NOT 403 (passes auth; may still 400 on business validation)', async () => {
+    let status;
+    try {
+      const res = await axios.post(`${BASE_URL}/api/pos`, { vendor_id: '00000000-0000-0000-0000-000000000000' }, jrHeaders);
+      status = res.status;
+    } catch (err) {
+      status = err.response?.status;
+    }
+    assert.notEqual(status, 403, `expected NOT 403 (proving the authorize() gate let junior_accountant through), got ${status}`);
+  });
+
+  await t.test('POST /:id/approve still 403 (unchanged)', async () => {
+    await assert.rejects(
+      () => axios.post(`${BASE_URL}/api/pos/00000000-0000-0000-0000-000000000000/approve`, {}, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+});
+
+test('Goods Receipt: junior_accountant passes the authorization gate on create', async () => {
+  let status;
+  try {
+    const res = await axios.post(`${BASE_URL}/api/grns`, { po_id: '00000000-0000-0000-0000-000000000000', items: [] }, jrHeaders);
+    status = res.status;
+  } catch (err) {
+    status = err.response?.status;
+  }
+  assert.notEqual(status, 403, `expected NOT 403 (proving the authorize() gate let junior_accountant through), got ${status}`);
+});
+
+test('Sales/POS: junior_accountant can reach GET /api/sales/sessions', async () => {
+  const res = await axios.get(`${BASE_URL}/api/sales/sessions`, jrHeaders);
+  assert.equal(res.status, 200);
+});
+
+test('Inventory: junior_accountant passes the authorization gate on POST /check-availability, POST /transactions still 403', async (t) => {
+  await t.test('POST /check-availability is NOT 403', async () => {
+    let status;
+    try {
+      const res = await axios.post(
+        `${BASE_URL}/api/inventory/check-availability`,
+        { product_id: '00000000-0000-0000-0000-000000000000', location_id: '00000000-0000-0000-0000-000000000000', required_quantity: 1 },
+        jrHeaders
+      );
+      status = res.status;
+    } catch (err) {
+      status = err.response?.status;
+    }
+    assert.notEqual(status, 403, `expected NOT 403, got ${status}`);
+  });
+
+  await t.test('POST /transactions still 403 (its own independent array, untouched)', async () => {
+    await assert.rejects(
+      () => axios.post(`${BASE_URL}/api/inventory/transactions`, {}, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+});
+
+test('QMS: junior_accountant can reach all 7 newly-granted GET routes; the open write surface is unchanged (still open, no new regression)', async (t) => {
+  const getRoutes = [
+    '/api/qms/compliance',
+    '/api/qms/review-tasks',
+  ];
+  for (const route of getRoutes) {
+    await t.test(`${route} is reachable (200)`, async () => {
+      const res = await axios.get(`${BASE_URL}${route}`, jrHeaders);
+      assert.equal(res.status, 200);
+    });
+  }
+
+  await t.test('/api/qms/documents/next-code is NOT 403 (400 without query params is expected/correct, not a grant failure)', async () => {
+    let status;
+    try {
+      const res = await axios.get(`${BASE_URL}/api/qms/documents/next-code`, jrHeaders);
+      status = res.status;
+    } catch (err) {
+      status = err.response?.status;
+    }
+    assert.notEqual(status, 403, `expected NOT 403, got ${status}`);
+  });
+
+  await t.test('GET /documents/:id/inspector, /pdf, /assembled are NOT 403 (id is fake, so 404/500 is fine -- 403 would mean the grant failed)', async () => {
+    for (const route of [
+      '/api/qms/documents/00000000-0000-0000-0000-000000000000/inspector',
+      '/api/qms/documents/00000000-0000-0000-0000-000000000000/pdf',
+      '/api/qms/documents/00000000-0000-0000-0000-000000000000/assembled',
+      '/api/qms/versions/00000000-0000-0000-0000-000000000000/assembled',
+    ]) {
+      let status;
+      try {
+        const res = await axios.get(`${BASE_URL}${route}`, jrHeaders);
+        status = res.status;
+      } catch (err) {
+        status = err.response?.status;
+      }
+      assert.notEqual(status, 403, `${route} expected NOT 403, got ${status}`);
+    }
+  });
+
+  await t.test('the ~15 previously-open write routes remain open (no accidental new restriction) -- spot check POST /ncrs', async () => {
+    // Deliberately NOT restricted this session (locked decision) -- this is
+    // a "confirm nothing broke" check, not a "confirm it's blocked" check.
+    let status;
+    try {
+      const res = await axios.post(`${BASE_URL}/api/qms/ncrs`, {}, jrHeaders);
+      status = res.status;
+    } catch (err) {
+      status = err.response?.status;
+    }
+    assert.notEqual(status, 403, `POST /ncrs must remain open to junior_accountant (unchanged) -- got ${status}`);
+  });
+
+  await t.test('the genuine approval/sign-off routes remain 403 for junior_accountant', async () => {
+    await assert.rejects(
+      () => axios.post(`${BASE_URL}/api/qms/versions/00000000-0000-0000-0000-000000000000/approve`, {}, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+    await assert.rejects(
+      () => axios.post(`${BASE_URL}/api/qms/versions/00000000-0000-0000-0000-000000000000/sign-off`, {}, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+});
+
+test('Attendance: own record succeeds, another employee\'s record fails, GET /team fails', async (t) => {
+  await t.test('own register succeeds (200)', async () => {
+    const res = await axios.get(`${BASE_URL}/api/attendance/register/${jrUser.user_id}?month=2026-09`, jrHeaders);
+    assert.equal(res.status, 200);
+  });
+
+  await t.test('another employee\'s register fails (403)', async () => {
+    assert.ok(otherEmployeeId, 'expected to find at least one other active, non-junior_accountant user');
+    await assert.rejects(
+      () => axios.get(`${BASE_URL}/api/attendance/register/${otherEmployeeId}?month=2026-09`, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
+
+  await t.test('GET /team fails (403)', async () => {
+    await assert.rejects(
+      () => axios.get(`${BASE_URL}/api/attendance/team`, jrHeaders),
+      (err) => err.response?.status === 403
+    );
+  });
 });

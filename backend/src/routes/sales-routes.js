@@ -115,7 +115,7 @@ router.post('/sessions/:id/close', authorize(['admin', 'manager', 'staff', 'sale
   }
 });
 
-router.get('/sessions', authorize(['admin', 'manager']), async (req, res) => {
+router.get('/sessions', authorize(['admin', 'manager', 'junior_accountant']), async (req, res) => {
   try {
     const sessions = await posService.listSessions(req.query);
     res.json({ sessions });

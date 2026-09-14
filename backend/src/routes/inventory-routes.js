@@ -102,7 +102,7 @@ router.get('/locations', async (req, res) => {
 
 // POST /api/inventory/check-availability - Check stock availability
 // VIEWERS CANNOT CHECK AVAILABILITY (they don't need it since they can't transact)
-router.post('/check-availability', authorize(['admin', 'manager', 'staff', 'operator', 'ceo', 'cfo']), async (req, res) => {
+router.post('/check-availability', authorize(['admin', 'manager', 'staff', 'operator', 'ceo', 'cfo', 'junior_accountant']), async (req, res) => {
   try {
     const { product_id, location_id, required_quantity } = req.body;
 
