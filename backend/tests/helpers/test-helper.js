@@ -86,13 +86,28 @@ class Cleanup {
 
   async run() {
     if (this.complianceItemIds.length) {
+      // Child rows first -- neither compliance_reminder_log nor
+      // compliance_acknowledgements has ON DELETE CASCADE, so deleting the
+      // item first would hit a foreign key violation once a test has
+      // exercised the scheduler or the acknowledge endpoint.
+      await pool.query(`DELETE FROM compliance_reminder_log WHERE item_id = ANY($1)`, [this.complianceItemIds]);
+      await pool.query(`DELETE FROM compliance_acknowledgements WHERE item_id = ANY($1)`, [this.complianceItemIds]);
       await pool.query(`DELETE FROM compliance_items WHERE item_id = ANY($1)`, [this.complianceItemIds]);
     }
     if (this.complianceCategoryIds.length) {
-      // A category's recurrence rule (if any) cascades via its own FK to
-      // compliance_items.recurrence_rule_id already being cleared above by
-      // the item delete; delete the rule row directly by category_id too,
-      // since a category can have a rule with no remaining item pointing at it.
+      // Any items still pointing at a to-be-deleted category (e.g.
+      // scheduler-auto-generated ones never individually tracked) need their
+      // own child rows cleared first too, same reasoning as above.
+      const leftoverItems = await pool.query(
+        `SELECT item_id FROM compliance_items WHERE category_id = ANY($1)`,
+        [this.complianceCategoryIds]
+      );
+      const leftoverIds = leftoverItems.rows.map((r) => r.item_id);
+      if (leftoverIds.length) {
+        await pool.query(`DELETE FROM compliance_reminder_log WHERE item_id = ANY($1)`, [leftoverIds]);
+        await pool.query(`DELETE FROM compliance_acknowledgements WHERE item_id = ANY($1)`, [leftoverIds]);
+        await pool.query(`DELETE FROM compliance_items WHERE item_id = ANY($1)`, [leftoverIds]);
+      }
       await pool.query(`DELETE FROM compliance_recurrence_rule WHERE category_id = ANY($1)`, [this.complianceCategoryIds]);
       await pool.query(`DELETE FROM compliance_categories WHERE category_id = ANY($1)`, [this.complianceCategoryIds]);
     }
@@ -145,6 +160,29 @@ async function waitForResendEmail({ subject, sentAfter, timeoutMs = 20000, inter
   return null;
 }
 
+// Calls the compliance scheduler webhook exactly as an external cron
+// service would -- no JWT, just the shared secret header. Pass
+// omitSecret: true to send no header at all (a plain `secret: undefined`
+// argument can't express that -- JS destructuring defaults trigger on an
+// explicit `undefined` too, so it would silently fall back to the real
+// secret instead of testing its absence).
+async function callScheduler({ dryRun = false, secret, omitSecret = false } = {}) {
+  const headers = {};
+  if (!omitSecret) headers['X-Scheduler-Secret'] = secret !== undefined ? secret : process.env.COMPLIANCE_SCHEDULER_SECRET;
+  return axios.post(`${BASE_URL}/api/compliance/scheduler/run`, { dryRun }, { headers });
+}
+
+// Backdates a reminder_log row's sent_date -- there is no API for this (by
+// design; sent_date always defaults to CURRENT_DATE on insert), needed only
+// to simulate "yesterday's escalation already went out" without literally
+// waiting a day in a test.
+async function backdateReminderLog(itemId, tier, sentDate) {
+  await pool.query(
+    `UPDATE compliance_reminder_log SET sent_date = $1, sent_at = $1::date WHERE item_id = $2 AND tier = $3`,
+    [sentDate, itemId, tier]
+  );
+}
+
 module.exports = {
   BASE_URL,
   pool,
@@ -156,4 +194,6 @@ module.exports = {
   createComplianceCategory,
   getUserRow,
   waitForResendEmail,
+  callScheduler,
+  backdateReminderLog,
 };
