@@ -6,12 +6,40 @@ const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
 
 // ─── Items ──────────────────────────────────────────────────────────────────
 
-const createComplianceItem = async ({ category_id, issued_date, due_date, evidence_file_ref, created_by }) => {
+// day_of_month_due is required (1-31) when the item's category is
+// MONTHLY_RECURRING -- enforced here at the application layer rather than a
+// column-level NOT NULL, since the column is legitimately NULL for
+// ONE_OFF_EXPIRY/ANNUAL_RECURRING items. This is the only point in the
+// item's lifecycle where the creator (who knows the cadence) provides it;
+// approveComplianceItem's recurrence-rule bootstrap below just carries it
+// forward onto compliance_recurrence_rule, it doesn't collect it.
+const createComplianceItem = async ({ category_id, issued_date, due_date, evidence_file_ref, day_of_month_due, created_by }) => {
+  const categoryRes = await pool.query(
+    `SELECT recurrence_type FROM compliance_categories WHERE category_id = $1`,
+    [category_id]
+  );
+  const category = categoryRes.rows[0];
+  if (!category) {
+    const err = new Error('Compliance category not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  let dayOfMonthDue = day_of_month_due ?? null;
+  if (category.recurrence_type === 'MONTHLY_RECURRING') {
+    dayOfMonthDue = Number(day_of_month_due);
+    if (!Number.isInteger(dayOfMonthDue) || dayOfMonthDue < 1 || dayOfMonthDue > 31) {
+      const err = new Error('day_of_month_due (1-31) is required for MONTHLY_RECURRING categories.');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
   const result = await pool.query(
-    `INSERT INTO compliance_items (category_id, issued_date, due_date, evidence_file_ref, created_by, status)
-     VALUES ($1, $2, $3, $4, $5, 'DRAFT')
+    `INSERT INTO compliance_items (category_id, issued_date, due_date, evidence_file_ref, day_of_month_due, created_by, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'DRAFT')
      RETURNING *`,
-    [category_id, issued_date || null, due_date, evidence_file_ref || null, created_by]
+    [category_id, issued_date || null, due_date, evidence_file_ref || null, dayOfMonthDue, created_by]
   );
   return result.rows[0];
 };
@@ -114,12 +142,17 @@ const approveComplianceItem = async (itemId, approverId, approverRole, justifica
         [item.category_id]
       );
       if (existingRule.rows.length === 0) {
+        // item.day_of_month_due is set at creation time (required for
+        // MONTHLY_RECURRING, see createComplianceItem above) and carried
+        // straight onto the rule here -- this is what fixes the scheduler's
+        // Step 3 monthly-generation logic, which previously always found
+        // day_of_month_due NULL on every rule it bootstrapped.
         const ruleRes = await client.query(
           `INSERT INTO compliance_recurrence_rule
-             (category_id, recurrence_type, next_reapproval_due, last_reapproved_at, last_reapproved_by)
-           VALUES ($1, $2, (CURRENT_DATE + INTERVAL '12 months'), CURRENT_TIMESTAMP, $3)
+             (category_id, recurrence_type, day_of_month_due, next_reapproval_due, last_reapproved_at, last_reapproved_by)
+           VALUES ($1, $2, $3, (CURRENT_DATE + INTERVAL '12 months'), CURRENT_TIMESTAMP, $4)
            RETURNING *`,
-          [item.category_id, category.recurrence_type, approverId]
+          [item.category_id, category.recurrence_type, item.day_of_month_due, approverId]
         );
         recurrenceRuleCreated = ruleRes.rows[0];
 

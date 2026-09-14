@@ -33,6 +33,26 @@ const getEmailsByRole = async (roles) => {
   }
 };
 
+// Compliance-module-only wrapper around getEmailsByRole(). Who gets notified
+// is still decided exactly the same way (this calls the real getEmailsByRole
+// unchanged) -- COMPLIANCE_TEST_NOTIFICATION_OVERRIDE only redirects where
+// that real recipient list actually gets sent, and only for compliance call
+// sites (they're the only callers of this wrapper; every other module's
+// getEmailsByRole() usage is untouched, so setting this var never affects
+// QMS/engineering/etc. notifications). Exists for verifying the compliance
+// reminder/escalation/self-approval-review pipeline without real mail
+// landing on an address known to bounce (e.g. an unprovisioned mailbox).
+// Must be unset in production except for a deliberate, time-boxed test window.
+const getComplianceNotificationEmails = async (roles) => {
+  const realEmails = await getEmailsByRole(roles);
+  const override = process.env.COMPLIANCE_TEST_NOTIFICATION_OVERRIDE;
+  if (override) {
+    console.log(`📧 [TEST OVERRIDE] would have sent to ${realEmails.join(', ') || '(none)'} — sent to override instead (${override})`);
+    return [override];
+  }
+  return realEmails;
+};
+
 const sendEmail = async (to, subject, htmlContent) => {
   if (!to || to.length === 0) {
     console.warn('📧 sendEmail: no recipients for subject:', subject);
@@ -716,6 +736,7 @@ const notifyHrGateBlocked = async (
 module.exports = {
   sendEmail, // Exposed for custom dynamic emails from routes
   getEmailsByRole,
+  getComplianceNotificationEmails,
   // CRM & Vendors
   notifyCustomerPendingApproval,
   notifyCustomerStatus,
