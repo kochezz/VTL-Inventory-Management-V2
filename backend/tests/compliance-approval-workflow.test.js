@@ -21,18 +21,20 @@ const {
 
 const axios = require('axios');
 
-// Resend's daily send quota was confirmed exhausted during the Phase 3/4
-// pre-merge session (2026-09-14) -- a 429 daily_quota_exceeded hit even
-// admin@vilag.io, an address already confirmed to deliver, so this is not
-// specific to any one recipient. The two real-delivery tests below
-// (waitForResendEmail-based) cannot pass while the quota is down, for
-// reasons unrelated to their own correctness. Skipped conditionally rather
-// than deleted or unconditionally skipped -- set
-// SKIP_EMAIL_DELIVERY_TESTS=false (or unset it) once the quota has reset
-// to bring them back. This is a known, tracked gap, not a silent one.
+// These two tests are the ONLY ones in the whole suite meant to hit live
+// Resend (waitForResendEmail-based, real delivery confirmation) -- every
+// other test's notification checks go through the mocked sendEmail() via
+// waitForMockEmail (see notification-service.js / tests/README.md).
+// Skipped by default on purpose, not just because Resend's daily quota was
+// once exhausted (2026-09-14, since resolved) -- real-delivery checks
+// should be a deliberate, occasional opt-in, not something every `npm
+// test` run does. Running them requires BOTH SKIP_EMAIL_DELIVERY_TESTS=false
+// here AND a server started WITHOUT MOCK_EMAIL_TRANSPORT (npm run dev, not
+// dev:test-server) -- otherwise sendEmail() never reaches Resend and
+// these will just time out finding nothing.
 const SKIP_EMAIL_DELIVERY_TESTS = process.env.SKIP_EMAIL_DELIVERY_TESTS !== 'false';
 const emailTestOpts = SKIP_EMAIL_DELIVERY_TESTS
-  ? { skip: 'Resend daily send quota exhausted as of 2026-09-14 -- set SKIP_EMAIL_DELIVERY_TESTS=false once reset' }
+  ? { skip: 'Real-delivery test, opt-in only -- set SKIP_EMAIL_DELIVERY_TESTS=false and start the server without MOCK_EMAIL_TRANSPORT to run it' }
   : {};
 
 const cleanup = new Cleanup();

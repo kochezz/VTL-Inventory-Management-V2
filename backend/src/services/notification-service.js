@@ -11,11 +11,35 @@ const { pool } = require('../config/database');
 
 const resend = new Resend(process.env.SMTP_PASS); // Reuses existing SMTP_PASS env var (Resend API key)
 
+// Test-only email transport. When set, sendEmail() below never calls Resend
+// at all -- it records the attempt in-memory instead. This is deliberately
+// NOT gated on NODE_ENV=test: this codebase already reads
+// NODE_ENV === 'production' in a few places to decide real behavior (e.g.
+// src/utils/db-enhanced.js's SSL config -- ssl: false when NODE_ENV isn't
+// 'production'), and Neon requires SSL, so setting NODE_ENV=test for the
+// test suite would silently break unrelated DB connections used by several
+// services that suite exercises. A dedicated flag avoids that collision
+// entirely. Must stay unset (or 'false') in Render's production
+// environment -- .env.example documents this alongside the other
+// test-only compliance vars.
+const MOCK_EMAIL_TRANSPORT = process.env.MOCK_EMAIL_TRANSPORT === 'true';
+
+// In-memory record of every "send" while mocked. Lives in the SERVER
+// process (this module), not the test process -- tests running as
+// separate `node --test` processes reach it over HTTP via the
+// /api/_test/email-log debug route (test-debug-routes.js), which is only
+// mounted at all when MOCK_EMAIL_TRANSPORT is on. Never cleared
+// automatically; helpers filter by subject + a `sentAfter` timestamp, same
+// approach the real waitForResendEmail helper already uses against
+// Resend's own history.
+const mockEmailLog = [];
+
 // Log config on startup so Render logs confirm vars are loaded
 console.log('📧 Resend HTTP API initialised:', {
   apiKey: process.env.SMTP_PASS ? `set (${process.env.SMTP_PASS.length} chars)` : '❌ NOT SET',
   from:   process.env.EMAIL_FROM   || '❌ NOT SET',
   frontend: process.env.FRONTEND_URL || '❌ NOT SET',
+  mockEmailTransport: MOCK_EMAIL_TRANSPORT,
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,6 +81,16 @@ const sendEmail = async (to, subject, htmlContent) => {
   if (!to || to.length === 0) {
     console.warn('📧 sendEmail: no recipients for subject:', subject);
     return { success: false, error: 'No recipients' };
+  }
+
+  if (MOCK_EMAIL_TRANSPORT) {
+    const id = `mock-${mockEmailLog.length + 1}-${Date.now()}`;
+    const record = { id, to, subject, timestamp: new Date().toISOString() };
+    mockEmailLog.push(record);
+    console.log(`📧 [MOCK] Recorded, not sent: "${subject}" → [${to.join(', ')}]`);
+    // Shaped like the real success path's return value so no calling code
+    // needs to branch on mock vs real.
+    return { success: true, id };
   }
 
   console.log(`📧 Sending: "${subject}" → [${to.join(', ')}]`);
@@ -737,6 +771,8 @@ module.exports = {
   sendEmail, // Exposed for custom dynamic emails from routes
   getEmailsByRole,
   getComplianceNotificationEmails,
+  MOCK_EMAIL_TRANSPORT,
+  getMockEmailLog: () => mockEmailLog,
   // CRM & Vendors
   notifyCustomerPendingApproval,
   notifyCustomerStatus,

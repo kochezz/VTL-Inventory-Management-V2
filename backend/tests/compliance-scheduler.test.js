@@ -31,6 +31,7 @@ const {
   pool,
   callScheduler,
   backdateReminderLog,
+  waitForMockEmail,
 } = require('./helpers/test-helper');
 
 const cleanup = new Cleanup();
@@ -123,6 +124,7 @@ test('item at all four ladder thresholds gets exactly one reminder per tier; a s
   // [30,15,10,5], so all four tiers are "reached" simultaneously on a fresh item.
   const item = await createApprovedItem(categoryId, 5);
 
+  const since = new Date();
   const run1 = await callScheduler({ dryRun: false });
   const mine1 = run1.data.reminders_sent.filter((r) => r.item_id === item.item_id);
   const tiers1 = mine1.map((r) => r.tier).sort();
@@ -133,6 +135,12 @@ test('item at all four ladder thresholds gets exactly one reminder per tier; a s
     [item.item_id]
   );
   assert.equal(dbRows.rows.length, 4, 'expected exactly 4 reminder_log rows after the first run');
+
+  // Precise check against what notification-service actually recorded, not
+  // just the API summary/DB rows -- confirms a real sendEmail() call
+  // happened with the exact subject the reminder ladder is supposed to use.
+  const mockedEmail = await waitForMockEmail({ subject: 'Compliance Reminder: 30 DAY — item due soon', sentAfter: since });
+  assert.ok(mockedEmail, 'expected a mocked "Compliance Reminder: 30 DAY" email to have been recorded');
 
   const run2 = await callScheduler({ dryRun: false });
   const mine2 = run2.data.reminders_sent.filter((r) => r.item_id === item.item_id);
@@ -152,9 +160,13 @@ test('overdue item with no ack flips to NON_COMPLIANT once, escalates once per d
   cleanup.trackCategory(categoryId);
   const item = await createApprovedItem(categoryId, -1); // overdue
 
+  const since = new Date();
   const run1 = await callScheduler({ dryRun: false });
   assert.ok(run1.data.items_flipped_non_compliant.some((r) => r.item_id === item.item_id));
   assert.ok(run1.data.escalations_sent.some((r) => r.item_id === item.item_id));
+
+  const mockedEmail = await waitForMockEmail({ subject: 'OVERDUE: Compliance Item Requires Immediate Action', sentAfter: since });
+  assert.ok(mockedEmail, 'expected the escalation email to have actually been recorded, not just reported in the summary');
 
   const row1 = await getItemRow(item.item_id);
   assert.equal(row1.status, 'NON_COMPLIANT');
@@ -249,9 +261,13 @@ test('12-month re-approval reminder: two scheduler runs same day send exactly on
   // literally waiting.
   await pool.query(`UPDATE compliance_recurrence_rule SET next_reapproval_due = CURRENT_DATE + INTERVAL '10 days' WHERE rule_id = $1`, [ruleId]);
 
+  const since = new Date();
   const run1 = await callScheduler({ dryRun: false });
   const mine1 = run1.data.reapproval_reminders_sent.filter((r) => r.rule_id === ruleId);
   assert.equal(mine1.length, 1, 'expected exactly one reapproval reminder on the first run');
+
+  const mockedEmail = await waitForMockEmail({ subject: 'Compliance Re-Approval Due Within 30 Days', sentAfter: since });
+  assert.ok(mockedEmail, 'expected the reapproval reminder email to have actually been recorded');
 
   const logRows1 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier = 'REAPPROVAL_REMINDER'`, [ruleId]);
   assert.equal(logRows1.rows.length, 1, 'expected exactly one REAPPROVAL_REMINDER log row after the first run');
@@ -285,8 +301,12 @@ test('acknowledging an overdue item stops further escalation on the next schedul
   const run1 = await callScheduler({ dryRun: false });
   assert.ok(run1.data.escalations_sent.some((r) => r.item_id === item.item_id));
 
+  const since = new Date();
   const ackRes = await axios.post(`${BASE_URL}/api/compliance/items/${item.item_id}/acknowledge`, { note: 'Resolved late.' }, jrHeaders);
   assert.equal(ackRes.status, 201);
+
+  const mockedEmail = await waitForMockEmail({ subject: 'Compliance Item Acknowledged', sentAfter: since });
+  assert.ok(mockedEmail, 'expected the acknowledgement email to have actually been recorded');
 
   const run2 = await callScheduler({ dryRun: false });
   assert.ok(!run2.data.escalations_sent.some((r) => r.item_id === item.item_id), 'must not escalate an acknowledged item');
@@ -320,6 +340,7 @@ test('dry-run mode reports what would happen but writes nothing and sends nothin
   const before = {
     reminderLogCount: (await pool.query(`SELECT 1 FROM compliance_reminder_log WHERE item_id = ANY($1)`, [[reminderItem.item_id, overdueItem.item_id]])).rows.length,
     overdueStatus: (await getItemRow(overdueItem.item_id)).status,
+    mockLogCount: (await axios.get(`${BASE_URL}/api/_test/email-log`)).data.emails.length,
   };
   assert.equal(before.reminderLogCount, 0);
   assert.equal(before.overdueStatus, 'APPROVED');
@@ -330,16 +351,17 @@ test('dry-run mode reports what would happen but writes nothing and sends nothin
   assert.ok(dry.data.items_flipped_non_compliant.some((r) => r.item_id === overdueItem.item_id), 'summary should report the item that WOULD have flipped');
   assert.ok(dry.data.escalations_sent.some((r) => r.item_id === overdueItem.item_id), 'summary should report the escalation that WOULD have sent');
 
-  // The real check: nothing was actually written. sendEmail() and every
-  // reminder_log/status/item-creation write in the scheduler service all
-  // live inside the same `if (!dryRun)` blocks as each other, so "zero new
-  // reminder_log rows" is a reliable proxy for "zero sendEmail calls" here,
-  // not just an assumption -- there is no code path that sends an email
-  // without also writing the corresponding log row in the same branch.
   const after = {
     reminderLogCount: (await pool.query(`SELECT 1 FROM compliance_reminder_log WHERE item_id = ANY($1)`, [[reminderItem.item_id, overdueItem.item_id]])).rows.length,
     overdueStatus: (await getItemRow(overdueItem.item_id)).status,
+    mockLogCount: (await axios.get(`${BASE_URL}/api/_test/email-log`)).data.emails.length,
   };
   assert.equal(after.reminderLogCount, 0, 'dry-run must not write any reminder_log rows');
   assert.equal(after.overdueStatus, 'APPROVED', 'dry-run must not change item status');
+  // Direct check against notification-service's own record, replacing the
+  // old proxy reasoning ("zero new reminder_log rows implies zero sendEmail
+  // calls, since both live in the same `if (!dryRun)` branches"). This
+  // asserts the actual thing that matters -- no sendEmail() call happened --
+  // instead of inferring it from an unrelated table.
+  assert.equal(after.mockLogCount, before.mockLogCount, 'dry-run must not record any mock email sends');
 });
