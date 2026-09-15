@@ -168,6 +168,27 @@ async function waitForResendEmail({ subject, sentAfter, timeoutMs = 20000, inter
   return null;
 }
 
+// Polls the server's own mock-email debug endpoint (only exists when the
+// server was started with MOCK_EMAIL_TRANSPORT=true -- see
+// notification-service.js / test-debug-routes.js) for a matching recorded
+// send. Same shape and race-absorbing retry as waitForResendEmail, against
+// an in-memory record instead of Resend's real history -- no quota cost,
+// no network round-trip to a third party, and precise: it asserts the exact
+// recipient list and subject that were actually recorded, not just "no
+// error was thrown" or a log line a human would have to read.
+async function waitForMockEmail({ subject, sentAfter, timeoutMs = 10000, intervalMs = 300 }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { data } = await axios.get(`${BASE_URL}/api/_test/email-log`);
+    const match = (data?.emails || []).find(
+      (e) => e.subject === subject && new Date(e.timestamp) >= sentAfter
+    );
+    if (match) return match;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
 // Calls the compliance scheduler webhook exactly as an external cron
 // service would -- no JWT, just the shared secret header. Pass
 // omitSecret: true to send no header at all (a plain `secret: undefined`
@@ -202,6 +223,7 @@ module.exports = {
   createComplianceCategory,
   getUserRow,
   waitForResendEmail,
+  waitForMockEmail,
   callScheduler,
   backdateReminderLog,
 };

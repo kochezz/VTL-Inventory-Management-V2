@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "dev:test-server": "MOCK_EMAIL_TRANSPORT=true nodemon server.js",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "keywords": [

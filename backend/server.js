@@ -141,6 +141,12 @@ app.use('/api/mobile',             mobileRoutes);
 app.use('/hr',                     hrRoutes);
 app.use('/api/attendance',         attendanceRoutes);
 
+// Test-only debug route -- only exists at all when MOCK_EMAIL_TRANSPORT is
+// on, so it's not reachable (or even registered) in a normal/production run.
+if (process.env.MOCK_EMAIL_TRANSPORT === 'true') {
+  app.use('/api/_test', require('./src/routes/test-debug-routes'));
+}
+
 // ============================================================================
 // HEALTH CHECK
 // ============================================================================
