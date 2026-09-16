@@ -46,18 +46,25 @@ after(async () => {
 
 // ── Category creation: role gate ─────────────────────────────────────────────
 
-test('junior_accountant gets 403 creating a category', async () => {
-  await assert.rejects(
-    () => axios.post(
-      `${BASE_URL}/api/compliance/categories`,
-      { name: 'TEST SUITE - jr blocked', recurrence_type: 'ONE_OFF_EXPIRY' },
-      jrHeaders
-    ),
-    (err) => err.response?.status === 403
+// Category creation was opened to junior_accountant (see
+// compliance-category-approval.test.js for the full approval-workflow
+// coverage this unlocked) -- every new category, including an executive's
+// own, lands PENDING_APPROVAL. This test now confirms the *opposite* of
+// what it used to: junior_accountant is no longer blocked at creation,
+// only at approval.
+test('junior_accountant CAN create a category, landing PENDING_APPROVAL', async () => {
+  const res = await axios.post(
+    `${BASE_URL}/api/compliance/categories`,
+    { name: 'TEST SUITE - jr create', recurrence_type: 'ONE_OFF_EXPIRY' },
+    jrHeaders
   );
+  cleanup.trackCategory(res.data.category_id);
+  assert.equal(res.status, 201);
+  assert.equal(res.data.status, 'PENDING_APPROVAL');
+  assert.equal(res.data.created_by, jrUser.user_id);
 });
 
-test('admin can create a category with default reminder_ladder_days', async () => {
+test('admin can create a category with default reminder_ladder_days (also lands PENDING_APPROVAL)', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
     { name: 'TEST SUITE - admin create', regulator: 'PACRA', recurrence_type: 'ANNUAL_RECURRING' },
@@ -70,6 +77,10 @@ test('admin can create a category with default reminder_ladder_days', async () =
   assert.equal(res.data.recurrence_type, 'ANNUAL_RECURRING');
   assert.deepEqual(res.data.reminder_ladder_days, [30, 15, 10, 5]);
   assert.equal(res.data.is_active, true);
+  // Locked design decision: no role-based branching at creation time --
+  // even an admin's own category needs a (possibly different) executive
+  // to approve it before it's ACTIVE.
+  assert.equal(res.data.status, 'PENDING_APPROVAL');
 });
 
 test('cfo can create a category with a custom reminder_ladder_days', async () => {
@@ -81,6 +92,7 @@ test('cfo can create a category with a custom reminder_ladder_days', async () =>
   cleanup.trackCategory(res.data.category_id);
   assert.equal(res.status, 201);
   assert.deepEqual(res.data.reminder_ladder_days, [14, 7, 1]);
+  assert.equal(res.data.status, 'PENDING_APPROVAL');
 });
 
 test('creating a category with an invalid recurrence_type is rejected with 400', async () => {
