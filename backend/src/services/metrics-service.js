@@ -4,6 +4,7 @@ class MetricsService {
   
   static async getVendorAndCRMMetrics() {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       // 1. CUSTOMER METRICS (CRM)
       // Total customers and breakdown by tier

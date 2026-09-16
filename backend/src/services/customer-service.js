@@ -33,6 +33,7 @@ class CustomerService {
   // ============================================================================
   static async createCustomer(customerData, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -175,6 +176,7 @@ class CustomerService {
   // ============================================================================
   static async approveCustomer(customerId, cfoId, notes = '') {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 

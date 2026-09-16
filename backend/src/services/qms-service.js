@@ -326,6 +326,7 @@ const QmsService = {
   async createDocument(docData, userId) {
     const { doc_code, doc_name, doc_type, section_id, erp_link_module, doc_owner } = docData;
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
       const docRes = await client.query(`
@@ -355,6 +356,7 @@ const QmsService = {
   async updateDocumentMetadata(docId, updateData, userId) {
     const { doc_code, doc_name, doc_type, section_id, erp_link_module, doc_owner } = updateData;
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
       const result = await client.query(`
@@ -385,6 +387,7 @@ const QmsService = {
 
   async createDraft(docId, userId, changeReason, authoringChoiceParam = null) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -569,6 +572,7 @@ const QmsService = {
 
   async submitForReview(versionId, reviewerId, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -630,6 +634,7 @@ const QmsService = {
 
   async recallDraft(versionId, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -667,6 +672,7 @@ const QmsService = {
 
   async rejectReview(versionId, userId, reason) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -704,6 +710,7 @@ const QmsService = {
 // ── PHASE 6: QA Sign Off Review ───────────────────────────────────────────
   async signOffReview(versionId, reviewerId, signaturePassword, ipAddress) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
       await this.verifySignature(reviewerId, signaturePassword);
@@ -740,6 +747,7 @@ const QmsService = {
   // ── PHASE 6: Final Approval & Release ──────────────────────────────────────
   async releaseDocument(versionId, approverId, signaturePassword, ipAddress) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
       await this.verifySignature(approverId, signaturePassword);
@@ -827,6 +835,7 @@ const QmsService = {
     if (!withdrawReason?.trim()) throw new Error('A withdrawal reason is required.');
 
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -991,6 +1000,7 @@ const QmsService = {
     const sequence = String(parseInt(countRes.rows[0].count) + 1).padStart(3, '0');
     const capaCode = `CAPA-${dateStr}-${sequence}`;
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     let createdCapa, ncrCode;
     try {
       await client.query('BEGIN');
@@ -1321,6 +1331,7 @@ const QmsService = {
 
   async linkVersionToNCR(versionId, ncrId, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -1354,6 +1365,7 @@ const QmsService = {
 
   async linkVersionToCAPA(versionId, capaId, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 

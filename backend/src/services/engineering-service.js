@@ -43,6 +43,7 @@ const createWorkOrder = async ({
   priority, short_description, scheduled_start, scheduled_end, created_by
 }) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 
@@ -274,6 +275,7 @@ const updateChecklistItem = async ({
 
 const addChecklistItems = async (workOrderId, items) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
     const inserted = [];
@@ -464,6 +466,7 @@ const createTaskList = async ({
     throw new Error('A task list needs at least one operation/step.');
   }
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 
@@ -538,6 +541,7 @@ const createMeasuringPoint = async ({ equipment_id, name, metric_type, unit_of_m
 
 const recordMeasuringReading = async ({ point_id, reading_value, recorded_by, source }) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
     await client.query(
@@ -586,6 +590,7 @@ const createPMPlan = async ({
   }
 
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 
@@ -670,6 +675,7 @@ const listPMPlans = async () => {
 
 const generateWorkOrderFromPMPlan = async (pmPlanId, createdBy) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 
