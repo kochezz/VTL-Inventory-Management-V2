@@ -27,6 +27,10 @@ import {
   Calendar,
   Network,
   Wrench,
+  Gavel,
+  ClipboardList,
+  Inbox,
+  ListChecks,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -108,6 +112,34 @@ const navigation: NavItem[] = [
     href: '/pricing',
     icon: BadgeDollarSign,
     roles: ['admin', 'ceo', 'cfo']
+  },
+  {
+    name: 'Compliance',
+    href: '/compliance/my-tasks',
+    icon: Gavel,
+    roles: ['junior_accountant', 'admin', 'cfo', 'ceo'],
+    children: [
+      {
+        name: 'My Tasks',
+        href: '/compliance/my-tasks',
+        roles: ['junior_accountant', 'admin', 'cfo', 'ceo'],
+      },
+      {
+        name: 'Register Item',
+        href: '/compliance/register',
+        roles: ['junior_accountant', 'admin', 'cfo', 'ceo'],
+      },
+      {
+        name: 'Approval Queue',
+        href: '/compliance/approvals',
+        roles: ['admin', 'cfo', 'ceo'],
+      },
+      {
+        name: 'Categories',
+        href: '/compliance/categories',
+        roles: ['admin', 'cfo', 'ceo'],
+      },
+    ],
   },
   {
     name: 'Quality (QMS)',
@@ -229,6 +261,10 @@ const navigation: NavItem[] = [
 ];
 
 const subIcons: Record<string, any> = {
+  '/compliance/my-tasks':    Inbox,
+  '/compliance/register':    ClipboardList,
+  '/compliance/approvals':   ListChecks,
+  '/compliance/categories':  FolderTree,
   '/qms/documents':          FolderTree,
   '/qms/compliance':         BarChart3,
   '/qms/review-calendar':    Calendar,

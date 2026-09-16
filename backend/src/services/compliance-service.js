@@ -3,6 +3,115 @@
 const { pool } = require('./auth-service');
 
 const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
+const RECURRENCE_TYPES = ['ONE_OFF_EXPIRY', 'MONTHLY_RECURRING', 'ANNUAL_RECURRING'];
+const DEFAULT_REMINDER_LADDER_DAYS = [30, 15, 10, 5];
+
+// ─── Categories (Phase 5) ───────────────────────────────────────────────────
+// Categories were previously only ever created by direct DB insert (see
+// tests/helpers/test-helper.js's createComplianceCategory, and every ad hoc
+// verification script across Phases 2-4). This is the first real API
+// surface for them -- create/list/update, deliberately NOT delete (a
+// category with items pointing at it should be deactivated, not removed).
+
+const createComplianceCategory = async ({ name, regulator, recurrence_type, reminder_ladder_days }) => {
+  if (!name || !name.trim()) {
+    const err = new Error('name is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!RECURRENCE_TYPES.includes(recurrence_type)) {
+    const err = new Error(`recurrence_type must be one of: ${RECURRENCE_TYPES.join(', ')}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const ladder = reminder_ladder_days ?? DEFAULT_REMINDER_LADDER_DAYS;
+  if (!Array.isArray(ladder) || ladder.length === 0 || !ladder.every((d) => Number.isInteger(d) && d > 0)) {
+    const err = new Error('reminder_ladder_days must be a non-empty array of positive integers.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(
+    `INSERT INTO compliance_categories (name, regulator, recurrence_type, reminder_ladder_days)
+     VALUES ($1, $2, $3, $4) RETURNING *`,
+    [name.trim(), regulator || null, recurrence_type, ladder]
+  );
+  return result.rows[0];
+};
+
+const listComplianceCategories = async ({ activeOnly } = {}) => {
+  const result = await pool.query(
+    activeOnly
+      ? `SELECT * FROM compliance_categories WHERE is_active = true ORDER BY name`
+      : `SELECT * FROM compliance_categories ORDER BY name`
+  );
+  return result.rows;
+};
+
+// Deliberately does not allow changing recurrence_type: the scheduler
+// (compliance-scheduler-service.js) and the approval-time recurrence-rule
+// bootstrap both key their logic off a category's recurrence_type at the
+// moment each item/rule was created. Changing it out from under existing
+// items/rules would leave their behavior inconsistent with a category that
+// no longer describes them -- a category whose cadence was set up wrong
+// should be deactivated and recreated, not mutated in place.
+const updateComplianceCategory = async (categoryId, updates) => {
+  const existing = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
+  if (existing.rows.length === 0) {
+    const err = new Error('Compliance category not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if ('recurrence_type' in updates) {
+    const err = new Error('recurrence_type cannot be changed after creation. Deactivate this category and create a new one instead.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const fields = [];
+  const values = [];
+  let i = 1;
+
+  if ('name' in updates) {
+    if (!updates.name || !updates.name.trim()) {
+      const err = new Error('name cannot be empty.');
+      err.statusCode = 400;
+      throw err;
+    }
+    fields.push(`name = $${i++}`); values.push(updates.name.trim());
+  }
+  if ('regulator' in updates) {
+    fields.push(`regulator = $${i++}`); values.push(updates.regulator || null);
+  }
+  if ('reminder_ladder_days' in updates) {
+    const ladder = updates.reminder_ladder_days;
+    if (!Array.isArray(ladder) || ladder.length === 0 || !ladder.every((d) => Number.isInteger(d) && d > 0)) {
+      const err = new Error('reminder_ladder_days must be a non-empty array of positive integers.');
+      err.statusCode = 400;
+      throw err;
+    }
+    fields.push(`reminder_ladder_days = $${i++}`); values.push(ladder);
+  }
+  if ('is_active' in updates) {
+    fields.push(`is_active = $${i++}`); values.push(!!updates.is_active);
+  }
+
+  if (fields.length === 0) {
+    const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active).');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(categoryId);
+  const result = await pool.query(
+    `UPDATE compliance_categories SET ${fields.join(', ')} WHERE category_id = $${i} RETURNING *`,
+    values
+  );
+  return result.rows[0];
+};
 
 // ─── Items ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +156,70 @@ const createComplianceItem = async ({ category_id, issued_date, due_date, eviden
 const getComplianceItem = async (itemId) => {
   const result = await pool.query(`SELECT * FROM compliance_items WHERE item_id = $1`, [itemId]);
   return result.rows[0];
+};
+
+// Lists items with category info, ack status, and which reminder tiers have
+// fired -- the fields the approval queue / my-tasks / item-detail UIs all
+// need, in one call rather than N+1 requests per item.
+//
+// Role scoping (not just an authorize() gate, since "which items" differs
+// by role, not just "can you hit this route at all"):
+//   - EXECUTIVE_ROLES (admin/cfo/ceo): every item, no restriction -- they
+//     can approve/reject anything, so they need visibility into everything.
+//   - junior_accountant: items they created (any status -- they need to see
+//     their own DRAFT/REJECTED items to act on them) OR any NON_COMPLIANT
+//     item with no acknowledgement yet (acknowledge is open to this role
+//     for ANY item, not just ones they created, so "my tasks" has to
+//     include those too, not just their own submissions).
+// This is a judgment call filling a gap the original Phase 2-4 spec never
+// defined (there's no "assignee" concept in this schema) -- flagging it
+// rather than assuming silently, since a different scoping rule would be
+// an easy, reasonable alternative.
+const listComplianceItems = async ({ role, userId, status, needsAcknowledgement, mine }) => {
+  const conditions = [];
+  const values = [];
+  let i = 1;
+
+  if (!EXECUTIVE_ROLES.includes(role)) {
+    conditions.push(`(ci.created_by = $${i} OR (ci.status = 'NON_COMPLIANT' AND ca.acknowledgement_id IS NULL))`);
+    values.push(userId);
+    i++;
+  } else if (mine) {
+    conditions.push(`ci.created_by = $${i}`);
+    values.push(userId);
+    i++;
+  }
+
+  if (status) {
+    const statuses = Array.isArray(status) ? status : [status];
+    conditions.push(`ci.status = ANY($${i})`);
+    values.push(statuses);
+    i++;
+  }
+
+  if (needsAcknowledgement) {
+    conditions.push(`ci.status = 'NON_COMPLIANT' AND ca.acknowledgement_id IS NULL`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const result = await pool.query(
+    `SELECT ci.*,
+            cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.reminder_ladder_days,
+            (ci.due_date - CURRENT_DATE) AS days_until_due,
+            (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
+            COALESCE(
+              (SELECT array_agg(DISTINCT crl.tier ORDER BY crl.tier) FROM compliance_reminder_log crl WHERE crl.item_id = ci.item_id),
+              ARRAY[]::varchar[]
+            ) AS reminder_tiers_fired
+     FROM compliance_items ci
+     JOIN compliance_categories cc ON cc.category_id = ci.category_id
+     LEFT JOIN compliance_acknowledgements ca ON ca.item_id = ci.item_id
+     ${whereClause}
+     ORDER BY ci.due_date ASC`,
+    values
+  );
+  return result.rows;
 };
 
 const submitComplianceItem = async (itemId, userId, isAdmin) => {
@@ -174,6 +347,29 @@ const approveComplianceItem = async (itemId, approverId, approverRole, justifica
   }
 };
 
+// Single-item version of listComplianceItems's joined shape -- used for a
+// detail view. Does NOT enforce role-scoping itself (the route decides
+// whether the requester is allowed to see this particular item); it only
+// fetches and shapes the data.
+const getComplianceItemDetail = async (itemId) => {
+  const result = await pool.query(
+    `SELECT ci.*,
+            cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.reminder_ladder_days,
+            (ci.due_date - CURRENT_DATE) AS days_until_due,
+            (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
+            COALESCE(
+              (SELECT array_agg(DISTINCT crl.tier ORDER BY crl.tier) FROM compliance_reminder_log crl WHERE crl.item_id = ci.item_id),
+              ARRAY[]::varchar[]
+            ) AS reminder_tiers_fired
+     FROM compliance_items ci
+     JOIN compliance_categories cc ON cc.category_id = ci.category_id
+     LEFT JOIN compliance_acknowledgements ca ON ca.item_id = ci.item_id
+     WHERE ci.item_id = $1`,
+    [itemId]
+  );
+  return result.rows[0];
+};
+
 const rejectComplianceItem = async (itemId, reason) => {
   if (!reason || !reason.trim()) {
     const err = new Error('A rejection reason is required.');
@@ -204,8 +400,14 @@ const rejectComplianceItem = async (itemId, reason) => {
 
 module.exports = {
   EXECUTIVE_ROLES,
+  RECURRENCE_TYPES,
+  createComplianceCategory,
+  listComplianceCategories,
+  updateComplianceCategory,
   createComplianceItem,
   getComplianceItem,
+  getComplianceItemDetail,
+  listComplianceItems,
   submitComplianceItem,
   approveComplianceItem,
   rejectComplianceItem,

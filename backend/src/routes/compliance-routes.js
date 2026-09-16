@@ -49,6 +49,81 @@ const getUserEmail = async (userId) => {
   return result.rows[0]?.email;
 };
 
+// ─── Categories (Phase 5) ───────────────────────────────────────────────────
+// Defining what compliance obligations exist is an executive-level decision
+// -- junior_accountant registers items against categories, but doesn't get
+// to create/edit the categories themselves.
+
+router.post('/categories', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { name, regulator, recurrence_type, reminder_ladder_days } = req.body;
+    const category = await complianceService.createComplianceCategory({ name, regulator, recurrence_type, reminder_ladder_days });
+    res.status(201).json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// Any of the 4 compliance-module roles can list categories (junior_accountant
+// needs this for the item-registration category picker) -- only creating/
+// editing is executive-only.
+router.get('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const activeOnly = req.query.active_only !== 'false'; // defaults to true
+    const categories = await complianceService.listComplianceCategories({ activeOnly });
+    res.json(categories);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.patch('/categories/:id', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const category = await complianceService.updateComplianceCategory(req.params.id, req.body);
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// ─── List / detail ──────────────────────────────────────────────────────────
+
+router.get('/items', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { status, needs_acknowledgement, mine } = req.query;
+    const items = await complianceService.listComplianceItems({
+      role: req.user.role,
+      userId: req.user.user_id,
+      status: status ? status.split(',') : undefined,
+      needsAcknowledgement: needs_acknowledgement === 'true',
+      mine: mine === 'true',
+    });
+    res.json(items);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.get('/items/:id', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const item = await complianceService.getComplianceItemDetail(req.params.id);
+    if (!item) return res.status(404).json({ message: 'Compliance item not found.' });
+
+    // Same visibility rule as the list endpoint -- a non-executive can only
+    // see their own item, or one that's open for acknowledgement.
+    const isExecutive = complianceService.EXECUTIVE_ROLES.includes(req.user.role);
+    const isOwnItem = item.created_by === req.user.user_id;
+    const isOpenForAck = item.status === 'NON_COMPLIANT' && !item.is_acknowledged;
+    if (!isExecutive && !isOwnItem && !isOpenForAck) {
+      return res.status(403).json({ message: 'You do not have access to this compliance item.' });
+    }
+
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
 // ─── Create ─────────────────────────────────────────────────────────────────
 
 router.post('/items', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
