@@ -293,6 +293,20 @@ const getComplianceEvidence = async (itemId) => {
 // ANNUAL_RECURRING categories.
 const approveComplianceItem = async (itemId, approverId, approverRole, justification) => {
   const client = await pool.connect();
+  // A pool-level pool.on('error', ...) only catches errors on IDLE clients
+  // sitting in the pool -- a client actively checked out via pool.connect()
+  // (this manual BEGIN/COMMIT transaction) emits its own 'error' event
+  // directly on itself if the underlying connection drops mid-transaction,
+  // and with no listener here that becomes an uncaught exception that
+  // crashes the whole process (confirmed live: a real Neon connection drop
+  // during this exact transaction did exactly that). Log-and-continue, same
+  // policy as every pool-level handler elsewhere in this codebase -- the
+  // surrounding try/catch below already handles ROLLBACK for the normal
+  // query-promise-rejection path; this only covers the async, out-of-band
+  // connection-level error pg-pool doesn't route through that promise.
+  client.on('error', (err) => {
+    console.error('❌ Unexpected error on compliance-approval client connection:', err.message);
+  });
   try {
     await client.query('BEGIN');
 
