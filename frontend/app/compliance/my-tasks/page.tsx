@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { Inbox, AlertCircle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { Inbox, AlertCircle, CheckCircle2, ShieldAlert, Eye } from 'lucide-react';
 
 const CAN_VIEW_ROLES = ['junior_accountant', 'admin', 'cfo', 'ceo'];
 
@@ -17,6 +17,7 @@ interface ComplianceItem {
   status: string;
   is_acknowledged: boolean;
   reminder_tiers_fired: string[];
+  evidence_file_ref: string | null;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -36,6 +37,24 @@ export default function ComplianceMyTasksPage() {
   const [error, setError] = useState('');
   const [ackingId, setAckingId] = useState<string | null>(null);
   const [ackNote, setAckNote] = useState<Record<string, string>>({});
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+
+  // Same authenticated-blob-fetch pattern as app/qms/documents/[id]/page.tsx
+  // and the Approvals page -- a plain href/src can't carry the Bearer token.
+  const previewEvidence = async (itemId: string) => {
+    try {
+      setPreviewingId(itemId);
+      const res = await api.get(`/compliance/items/${itemId}/evidence`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } catch (err) {
+      setError('Failed to load the evidence PDF for this item.');
+      console.error(err);
+    } finally {
+      setPreviewingId(null);
+    }
+  };
 
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {
@@ -146,6 +165,14 @@ export default function ComplianceMyTasksPage() {
                         ))}
                       </div>
                     )}
+                    <button
+                      onClick={() => previewEvidence(item.item_id)}
+                      disabled={previewingId === item.item_id}
+                      className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 text-xs font-medium mt-2 disabled:opacity-50"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      {previewingId === item.item_id ? 'Opening...' : (item.evidence_file_ref || 'View evidence')}
+                    </button>
                   </div>
 
                   {item.status === 'NON_COMPLIANT' && !item.is_acknowledged && (

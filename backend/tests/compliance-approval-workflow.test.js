@@ -17,6 +17,7 @@ const {
   Cleanup,
   createComplianceCategory,
   waitForResendEmail,
+  uploadTestEvidence,
 } = require('./helpers/test-helper');
 
 const axios = require('axios');
@@ -78,6 +79,7 @@ async function createAndSubmit(headers, categoryId, dueDate, dayOfMonthDue) {
   if (dayOfMonthDue != null) body.day_of_month_due = dayOfMonthDue;
   const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, body, headers);
   cleanup.trackItem(createRes.data.item_id);
+  await uploadTestEvidence(createRes.data.item_id, headers);
   await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, headers);
   return createRes.data.item_id;
 }
@@ -92,6 +94,7 @@ test('junior_accountant can create and submit a compliance item', async () => {
   assert.equal(createRes.status, 201);
   assert.equal(createRes.data.status, 'DRAFT');
 
+  await uploadTestEvidence(createRes.data.item_id, jrHeaders);
   const submitRes = await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, jrHeaders);
   assert.equal(submitRes.status, 200);
   assert.equal(submitRes.data.status, 'PENDING_APPROVAL');

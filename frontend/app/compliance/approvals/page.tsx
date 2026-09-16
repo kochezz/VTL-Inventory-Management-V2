@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { ListChecks, AlertCircle, CheckCircle2, XCircle, X } from 'lucide-react';
+import { ListChecks, AlertCircle, CheckCircle2, XCircle, X, FileText, Eye } from 'lucide-react';
 
 // Same standard as /pricing and /compliance/categories -- a route guard,
 // not just a hidden nav link.
@@ -35,6 +35,32 @@ export default function ComplianceApprovalsPage() {
   const [justification, setJustification] = useState('');
   const [reason, setReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState('');
+
+  // Same authenticated-blob-fetch pattern already established in
+  // app/qms/documents/[id]/page.tsx -- a plain <a href> or <iframe src>
+  // pointing at the API directly wouldn't carry the Bearer token, since
+  // auth here is header-based, not cookie-based. Opens in a new tab so the
+  // browser's native PDF viewer renders it inline (a real preview, not a
+  // forced download).
+  const previewEvidence = async (itemId: string) => {
+    try {
+      setPreviewError('');
+      setPreviewingId(itemId);
+      const res = await api.get(`/compliance/items/${itemId}/evidence`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Deliberately not revoking the object URL immediately -- the new tab
+      // needs it to stay alive to render the PDF.
+    } catch (err) {
+      setPreviewError('Failed to load the evidence PDF for this item.');
+      console.error(err);
+    } finally {
+      setPreviewingId(null);
+    }
+  };
 
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {
@@ -124,6 +150,12 @@ export default function ComplianceApprovalsPage() {
             <p>{error}</p>
           </div>
         )}
+        {previewError && (
+          <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p>{previewError}</p>
+          </div>
+        )}
 
         <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
@@ -164,7 +196,21 @@ export default function ComplianceApprovalsPage() {
                           {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
                         </span>
                       </td>
-                      <td className="py-4 px-6 text-gray-400 text-sm">{item.evidence_file_ref || '—'}</td>
+                      <td className="py-4 px-6">
+                        <button
+                          onClick={() => previewEvidence(item.item_id)}
+                          disabled={previewingId === item.item_id}
+                          className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
+                          title="Open the evidence PDF in a new tab"
+                        >
+                          {previewingId === item.item_id ? (
+                            <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-t-2 border-primary-400"></span>
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                          <span className="truncate max-w-[160px]">{item.evidence_file_ref || 'View evidence'}</span>
+                        </button>
+                      </td>
                       <td className="py-4 px-6 text-right">
                         <div className="flex justify-end gap-2">
                           <button
@@ -210,6 +256,15 @@ export default function ComplianceApprovalsPage() {
                 <span className="font-bold text-white">{actionModal.item.category_name}</span>
                 {' '}— due {new Date(actionModal.item.due_date).toLocaleDateString()}
               </p>
+              <button
+                type="button"
+                onClick={() => previewEvidence(actionModal.item.item_id)}
+                disabled={previewingId === actionModal.item.item_id}
+                className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
+              >
+                <FileText className="w-4 h-4" />
+                {previewingId === actionModal.item.item_id ? 'Opening...' : 'Review the evidence PDF before deciding'}
+              </button>
 
               {actionModal.type === 'approve' && isSelfApproval(actionModal.item) && (
                 <div>

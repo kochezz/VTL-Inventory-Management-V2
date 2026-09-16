@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { ClipboardList, AlertCircle, CheckCircle2, Send } from 'lucide-react';
+import { ClipboardList, AlertCircle, CheckCircle2, Send, FileText, Upload } from 'lucide-react';
 
 // Matches the sidebar's roles for this page.
 const CAN_VIEW_ROLES = ['junior_accountant', 'admin', 'cfo', 'ceo'];
@@ -31,8 +31,9 @@ export default function ComplianceRegisterPage() {
     issued_date: '',
     due_date: '',
     day_of_month_due: '',
-    evidence_file_ref: '',
   });
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState('');
 
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {
@@ -65,6 +66,25 @@ export default function ComplianceRegisterPage() {
   const selectedCategory = categories.find((c) => c.category_id === form.category_id);
   const isMonthly = selectedCategory?.recurrence_type === 'MONTHLY_RECURRING';
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFileError('');
+    const file = e.target.files?.[0] || null;
+    if (!file) { setEvidenceFile(null); return; }
+    if (file.type !== 'application/pdf') {
+      setFileError('Only PDF files are accepted.');
+      setEvidenceFile(null);
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setFileError('File exceeds the 10MB limit.');
+      setEvidenceFile(null);
+      e.target.value = '';
+      return;
+    }
+    setEvidenceFile(file);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -72,6 +92,10 @@ export default function ComplianceRegisterPage() {
 
     if (isMonthly && !form.day_of_month_due) {
       setError('day_of_month_due is required for a monthly-recurring category.');
+      return;
+    }
+    if (!evidenceFile) {
+      setError('A PDF evidence file is required.');
       return;
     }
 
@@ -82,14 +106,21 @@ export default function ComplianceRegisterPage() {
         category_id: form.category_id,
         issued_date: form.issued_date || undefined,
         due_date: form.due_date,
-        evidence_file_ref: form.evidence_file_ref || undefined,
+        evidence_file_ref: evidenceFile.name,
         day_of_month_due: isMonthly ? parseInt(form.day_of_month_due, 10) : undefined,
       });
 
-      await api.post(`/compliance/items/${createRes.data.item_id}/submit`);
+      const itemId = createRes.data.item_id;
 
-      setSuccess('Item registered and submitted for approval.');
-      setForm({ category_id: form.category_id, issued_date: '', due_date: '', day_of_month_due: '', evidence_file_ref: '' });
+      const fd = new FormData();
+      fd.append('evidence', evidenceFile);
+      await api.post(`/compliance/items/${itemId}/evidence`, fd);
+
+      await api.post(`/compliance/items/${itemId}/submit`);
+
+      setSuccess('Item registered, evidence attached, and submitted for approval.');
+      setForm({ category_id: form.category_id, issued_date: '', due_date: '', day_of_month_due: '' });
+      setEvidenceFile(null);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to register this item.');
     } finally {
@@ -193,15 +224,26 @@ export default function ComplianceRegisterPage() {
               )}
 
               <div>
-                <label className="block text-sm font-bold text-gray-300 mb-2">Evidence Reference (optional)</label>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Evidence (PDF)</label>
+                <label
+                  htmlFor="evidence-file-input"
+                  className="flex items-center gap-3 w-full px-4 py-3 bg-dark-950 border border-dashed border-dark-600 rounded-lg text-gray-400 hover:border-primary-500 hover:text-white cursor-pointer transition-colors"
+                >
+                  {evidenceFile ? <FileText className="w-5 h-5 text-primary-400 flex-shrink-0" /> : <Upload className="w-5 h-5 flex-shrink-0" />}
+                  <span className="truncate">{evidenceFile ? evidenceFile.name : 'Click to choose a PDF file...'}</span>
+                </label>
                 <input
-                  type="text"
-                  name="evidence_file_ref"
-                  value={form.evidence_file_ref}
-                  onChange={(e) => setForm({ ...form, evidence_file_ref: e.target.value })}
-                  placeholder="e.g. filename, document ID, or link"
-                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  id="evidence-file-input"
+                  type="file"
+                  required
+                  accept="application/pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
                 />
+                {fileError && <p className="text-xs text-red-400 mt-1.5">{fileError}</p>}
+                {evidenceFile && (
+                  <p className="text-xs text-gray-500 mt-1.5">{(evidenceFile.size / 1024).toFixed(0)} KB</p>
+                )}
               </div>
 
               <div className="pt-4 border-t border-dark-700 flex justify-end">

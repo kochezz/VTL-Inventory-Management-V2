@@ -87,11 +87,13 @@ class Cleanup {
   async run() {
     if (this.complianceItemIds.length) {
       // Child rows first -- neither compliance_reminder_log nor
-      // compliance_acknowledgements has ON DELETE CASCADE, so deleting the
-      // item first would hit a foreign key violation once a test has
-      // exercised the scheduler or the acknowledge endpoint.
+      // compliance_acknowledgements nor compliance_item_evidence has ON
+      // DELETE CASCADE, so deleting the item first would hit a foreign key
+      // violation once a test has exercised the scheduler, the acknowledge
+      // endpoint, or (now that submit requires it) an evidence upload.
       await pool.query(`DELETE FROM compliance_reminder_log WHERE item_id = ANY($1)`, [this.complianceItemIds]);
       await pool.query(`DELETE FROM compliance_acknowledgements WHERE item_id = ANY($1)`, [this.complianceItemIds]);
+      await pool.query(`DELETE FROM compliance_item_evidence WHERE item_id = ANY($1)`, [this.complianceItemIds]);
       await pool.query(`DELETE FROM compliance_items WHERE item_id = ANY($1)`, [this.complianceItemIds]);
     }
     if (this.complianceCategoryIds.length) {
@@ -106,6 +108,7 @@ class Cleanup {
       if (leftoverIds.length) {
         await pool.query(`DELETE FROM compliance_reminder_log WHERE item_id = ANY($1)`, [leftoverIds]);
         await pool.query(`DELETE FROM compliance_acknowledgements WHERE item_id = ANY($1)`, [leftoverIds]);
+        await pool.query(`DELETE FROM compliance_item_evidence WHERE item_id = ANY($1)`, [leftoverIds]);
         await pool.query(`DELETE FROM compliance_items WHERE item_id = ANY($1)`, [leftoverIds]);
       }
       // Rule-scoped reminder_log rows (REAPPROVAL_REMINDER) reference
@@ -120,6 +123,17 @@ class Cleanup {
       await pool.query(`DELETE FROM compliance_categories WHERE category_id = ANY($1)`, [this.complianceCategoryIds]);
     }
   }
+}
+
+// Submitting an item now requires a PDF evidence row to exist (see
+// compliance-service.js's submitComplianceItem) -- every test file that
+// creates-then-submits an item needs this first. The byte content doesn't
+// need to be a real, renderable PDF; multer's fileFilter checks the form
+// part's declared Content-Type, not the bytes.
+async function uploadTestEvidence(itemId, headers) {
+  const fd = new FormData();
+  fd.append('evidence', new Blob([Buffer.from('%PDF-1.4 test evidence')], { type: 'application/pdf' }), 'test-evidence.pdf');
+  return axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, fd, headers);
 }
 
 async function createComplianceCategory({ name, regulator = 'TEST', recurrence_type = 'ONE_OFF_EXPIRY' }) {
@@ -221,6 +235,7 @@ module.exports = {
   signTokenForRole,
   Cleanup,
   createComplianceCategory,
+  uploadTestEvidence,
   getUserRow,
   waitForResendEmail,
   waitForMockEmail,
