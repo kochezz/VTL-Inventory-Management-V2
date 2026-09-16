@@ -172,6 +172,7 @@ const validateComponentAvailability = async (productId, plannedQuantity, selecte
 // Create a new production batch
 const createBatch = async (batchData, userId) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -334,6 +335,7 @@ const createBatch = async (batchData, userId) => {
 // Assign components to a batch
 const assignComponents = async (batchId, componentAssignments) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -746,6 +748,7 @@ const listBatches = async (filters = {}) => {
 // Submit batch for QA (draft → awaiting_qa)
 const submitForQA = async (batchId, userId) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -807,6 +810,7 @@ const submitForQA = async (batchId, userId) => {
 // ============================================================================
 const approveQAGate = async (batchId, gateId, userId, destinationLocationId = null) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -981,6 +985,7 @@ const approveQAGate = async (batchId, gateId, userId, destinationLocationId = nu
 // Reject QA gate
 const rejectQAGate = async (batchId, gateId, userId, reason) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -1047,6 +1052,7 @@ const rejectQAGate = async (batchId, gateId, userId, reason) => {
 // Start production (ready_for_setup → in_progress)
 const startProduction = async (batchId, userId) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -1088,6 +1094,7 @@ const startProduction = async (batchId, userId) => {
 // Complete production (in_progress → completed)
 const completeProduction = async (batchId, productionData) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');
@@ -1142,6 +1149,7 @@ const completeProduction = async (batchId, productionData) => {
  */
 const recordIPQC = async (batchId, ipqcData, userId) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   
   try {
     await client.query('BEGIN');

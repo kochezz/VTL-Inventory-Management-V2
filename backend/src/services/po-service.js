@@ -41,6 +41,7 @@ class PurchaseOrderService {
     }
 
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -195,6 +196,7 @@ class PurchaseOrderService {
   // ============================================================================
   static async approvePO(poId, approverId, role, notes = '') {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -264,6 +266,7 @@ class PurchaseOrderService {
   // ============================================================================
   static async rejectPO(poId, approverId, role, reason) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 

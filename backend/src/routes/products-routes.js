@@ -153,6 +153,7 @@ router.get('/:id', async (req, res) => {
 const { pool } = require('../config/database');
 router.put('/pricing', authorize(['admin', 'ceo', 'cfo']), async (req, res) => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
     for (const p of req.body.products) {

@@ -85,6 +85,7 @@ const query = async (text, params) => {
  */
 const getClient = async () => {
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   const query = client.query;
   const release = client.release;
   

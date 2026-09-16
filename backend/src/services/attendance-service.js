@@ -187,6 +187,7 @@ async function _setPinAdmin(target_user_id, temp_pin, performed_by, ip_address, 
   }
 
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 
@@ -297,6 +298,7 @@ async function changePIN(user_id, old_pin, new_pin, ip_address) {
   }
 
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
     const new_hash = await bcrypt.hash(String(new_pin), BCRYPT_ROUNDS);
@@ -605,6 +607,7 @@ async function createAdjustment({ shift_id, reason, new_value }, performed_by, i
   };
 
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 
@@ -684,6 +687,7 @@ async function issueBadgeToken(target_user_id, performed_by, ip_address) {
   const now       = new Date();
 
   const client = await pool.connect();
+  client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
   try {
     await client.query('BEGIN');
 

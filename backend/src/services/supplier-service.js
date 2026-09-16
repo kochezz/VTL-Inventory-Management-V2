@@ -34,6 +34,7 @@ class SupplierService {
   // ============================================================================
   static async createVendor(vendorData, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN'); 
 
@@ -101,6 +102,7 @@ class SupplierService {
   // ============================================================================
   static async updateVendor(vendorId, vendorData, userId) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
@@ -236,6 +238,7 @@ class SupplierService {
 
   static async approveVendor(vendorId, qaUserId, approvalData) {
     const client = await pool.connect();
+    client.on('error', (err) => { console.error('❌ Unexpected error on checked-out client (manual transaction):', err.message); });
     try {
       await client.query('BEGIN');
 
