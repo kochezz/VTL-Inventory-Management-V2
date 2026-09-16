@@ -4,11 +4,26 @@ const express = require('express');
 const router = express.Router();
 
 const crypto = require('crypto');
+const multer = require('multer');
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 const complianceService = require('../services/compliance-service');
 const schedulerService = require('../services/compliance-scheduler-service');
 const { pool } = require('../services/auth-service');
 const NotificationService = require('../services/notification-service');
+
+// Same memoryStorage pattern already established for QMS file uploads --
+// the buffer is stored straight into Neon (compliance_item_evidence),
+// never written to local disk. 10MB is generous for a scanned certificate
+// without being reckless.
+const evidenceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    file.mimetype === 'application/pdf'
+      ? cb(null, true)
+      : cb(new Error('Only PDF files are accepted.'));
+  },
+});
 
 // ─── Scheduler webhook — registered BEFORE router.use(authenticate) below,
 // so it never requires a user JWT. Called by an external cron service, not
@@ -104,21 +119,77 @@ router.get('/items', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), as
   }
 });
 
+// Same visibility rule the list endpoint applies: a non-executive can only
+// see their own item, or one that's open for acknowledgement. Shared here
+// so the evidence GET route below enforces the identical rule rather than
+// a hand-copied restatement of it.
+function canViewItem(item, user) {
+  const isExecutive = complianceService.EXECUTIVE_ROLES.includes(user.role);
+  const isOwnItem = item.created_by === user.user_id;
+  const isOpenForAck = item.status === 'NON_COMPLIANT' && !item.is_acknowledged;
+  return isExecutive || isOwnItem || isOpenForAck;
+}
+
 router.get('/items/:id', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const item = await complianceService.getComplianceItemDetail(req.params.id);
     if (!item) return res.status(404).json({ message: 'Compliance item not found.' });
 
-    // Same visibility rule as the list endpoint -- a non-executive can only
-    // see their own item, or one that's open for acknowledgement.
-    const isExecutive = complianceService.EXECUTIVE_ROLES.includes(req.user.role);
-    const isOwnItem = item.created_by === req.user.user_id;
-    const isOpenForAck = item.status === 'NON_COMPLIANT' && !item.is_acknowledged;
-    if (!isExecutive && !isOwnItem && !isOpenForAck) {
+    if (!canViewItem(item, req.user)) {
       return res.status(403).json({ message: 'You do not have access to this compliance item.' });
     }
 
     res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// ─── Evidence (PDF upload/download) ─────────────────────────────────────────
+
+router.post('/items/:id/evidence', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), (req, res) => {
+  evidenceUpload.single('evidence')(req, res, async (err) => {
+    // multer's fileFilter/limits errors land here, not in a try/catch --
+    // handled explicitly so they come back as a clean 400, not the global
+    // error handler's generic 500 (which is what QMS's own upload route
+    // falls back to today for the same kind of error).
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'File exceeds the 10MB limit.'
+        : err.message || 'Upload failed.';
+      return res.status(400).json({ message });
+    }
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+
+    try {
+      const evidence = await complianceService.uploadComplianceEvidence({
+        itemId: req.params.id,
+        fileBuffer: req.file.buffer,
+        filename: req.file.originalname,
+        fileSizeBytes: req.file.size,
+        uploadedBy: req.user.user_id,
+      });
+      res.status(201).json(evidence);
+    } catch (error) {
+      res.status(error.statusCode || 400).json({ message: error.message });
+    }
+  });
+});
+
+router.get('/items/:id/evidence', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const item = await complianceService.getComplianceItemDetail(req.params.id);
+    if (!item) return res.status(404).json({ message: 'Compliance item not found.' });
+    if (!canViewItem(item, req.user)) {
+      return res.status(403).json({ message: 'You do not have access to this compliance item.' });
+    }
+
+    const evidence = await complianceService.getComplianceEvidence(req.params.id);
+    if (!evidence) return res.status(404).json({ message: 'No evidence file has been uploaded for this item.' });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${evidence.filename || 'evidence.pdf'}"`);
+    res.send(evidence.file_data);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }

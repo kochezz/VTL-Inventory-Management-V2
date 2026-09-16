@@ -237,9 +237,51 @@ const submitComplianceItem = async (itemId, userId, isAdmin) => {
     throw err;
   }
 
+  const evidenceCheck = await pool.query(`SELECT 1 FROM compliance_item_evidence WHERE item_id = $1`, [itemId]);
+  if (evidenceCheck.rows.length === 0) {
+    const err = new Error('A PDF evidence file must be attached before this item can be submitted for approval.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const result = await pool.query(
     `UPDATE compliance_items SET status = 'PENDING_APPROVAL', updated_at = CURRENT_TIMESTAMP
      WHERE item_id = $1 RETURNING *`,
+    [itemId]
+  );
+  return result.rows[0];
+};
+
+// ─── Evidence (PDF upload/download) ────────────────────────────────────────
+// One row per item, upsert-replace on re-upload -- matches this codebase's
+// own established pattern for exactly this scenario (qms_document_files:
+// INSERT ... ON CONFLICT (version_id) DO UPDATE). A compliance item's
+// evidence represents "the current filing," not a draft history; the
+// item's own audit fields already record that/when evidence was attached.
+const uploadComplianceEvidence = async ({ itemId, fileBuffer, filename, fileSizeBytes, uploadedBy }) => {
+  const item = await getComplianceItem(itemId);
+  if (!item) {
+    const err = new Error('Compliance item not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const result = await pool.query(
+    `INSERT INTO compliance_item_evidence (item_id, file_data, filename, file_size_bytes, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (item_id) DO UPDATE
+       SET file_data = EXCLUDED.file_data, filename = EXCLUDED.filename,
+           file_size_bytes = EXCLUDED.file_size_bytes, uploaded_by = EXCLUDED.uploaded_by,
+           uploaded_at = CURRENT_TIMESTAMP
+     RETURNING evidence_id, item_id, filename, file_size_bytes, uploaded_by, uploaded_at`,
+    [itemId, fileBuffer, filename, fileSizeBytes, uploadedBy]
+  );
+  return result.rows[0];
+};
+
+const getComplianceEvidence = async (itemId) => {
+  const result = await pool.query(
+    `SELECT file_data, filename FROM compliance_item_evidence WHERE item_id = $1`,
     [itemId]
   );
   return result.rows[0];
@@ -411,4 +453,6 @@ module.exports = {
   submitComplianceItem,
   approveComplianceItem,
   rejectComplianceItem,
+  uploadComplianceEvidence,
+  getComplianceEvidence,
 };

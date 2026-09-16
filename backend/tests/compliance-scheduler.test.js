@@ -32,6 +32,7 @@ const {
   callScheduler,
   backdateReminderLog,
   waitForMockEmail,
+  uploadTestEvidence,
 } = require('./helpers/test-helper');
 
 const cleanup = new Cleanup();
@@ -70,6 +71,7 @@ async function createApprovedItem(categoryId, dueDateOffsetDays, dayOfMonthDue) 
   if (dayOfMonthDue != null) body.day_of_month_due = dayOfMonthDue;
   const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, body, jrHeaders);
   cleanup.trackItem(createRes.data.item_id);
+  await uploadTestEvidence(createRes.data.item_id, jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, jrHeaders);
   const approveRes = await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/approve`, {}, adminHeaders);
   return approveRes.data.item;
