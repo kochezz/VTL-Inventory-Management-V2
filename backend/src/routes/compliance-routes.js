@@ -64,15 +64,20 @@ const getUserEmail = async (userId) => {
   return result.rows[0]?.email;
 };
 
-// ─── Categories (Phase 5) ───────────────────────────────────────────────────
-// Defining what compliance obligations exist is an executive-level decision
-// -- junior_accountant registers items against categories, but doesn't get
-// to create/edit the categories themselves.
+// ─── Categories ──────────────────────────────────────────────────────────────
+// Any of the 4 compliance-module roles can PROPOSE a category, but every new
+// one lands PENDING_APPROVAL regardless of who created it -- an executive
+// still has to approve it before it's usable (see /categories/:id/approve
+// below), which is what actually closes the "no executive ever has to look
+// at it" gap. Only the approval/reject/edit actions stay executive-only.
 
-router.post('/categories', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+router.post('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { name, regulator, recurrence_type, reminder_ladder_days } = req.body;
-    const category = await complianceService.createComplianceCategory({ name, regulator, recurrence_type, reminder_ladder_days });
+    const category = await complianceService.createComplianceCategory({
+      name, regulator, recurrence_type, reminder_ladder_days,
+      created_by: req.user.user_id,
+    });
     res.status(201).json(category);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
@@ -80,12 +85,16 @@ router.post('/categories', authorize(['admin', 'cfo', 'ceo']), async (req, res) 
 });
 
 // Any of the 4 compliance-module roles can list categories (junior_accountant
-// needs this for the item-registration category picker) -- only creating/
-// editing is executive-only.
+// needs this for the item-registration category picker, and to see their own
+// pending proposals) -- only creating/editing/approving is more restricted.
+// ?status=ACTIVE (combined with the default active_only=true) is what the
+// Register page's picker uses to exclude PENDING_APPROVAL/REJECTED
+// categories -- the actual enforcement mechanism, not just a UI nicety.
 router.get('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const activeOnly = req.query.active_only !== 'false'; // defaults to true
-    const categories = await complianceService.listComplianceCategories({ activeOnly });
+    const status = req.query.status || undefined;
+    const categories = await complianceService.listComplianceCategories({ activeOnly, status });
     res.json(categories);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
@@ -95,6 +104,28 @@ router.get('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']
 router.patch('/categories/:id', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const category = await complianceService.updateComplianceCategory(req.params.id, req.body);
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { justification } = req.body;
+    const { category, isSelfApproval } = await complianceService.approveComplianceCategory(
+      req.params.id, req.user.user_id, req.user.role, justification
+    );
+    res.json({ category, is_self_approved: isSelfApproval });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/categories/:id/reject', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const category = await complianceService.rejectComplianceCategory(req.params.id, reason);
     res.json(category);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });

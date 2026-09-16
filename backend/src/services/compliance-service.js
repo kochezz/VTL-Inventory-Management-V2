@@ -13,7 +13,17 @@ const DEFAULT_REMINDER_LADDER_DAYS = [30, 15, 10, 5];
 // surface for them -- create/list/update, deliberately NOT delete (a
 // category with items pointing at it should be deactivated, not removed).
 
-const createComplianceCategory = async ({ name, regulator, recurrence_type, reminder_ladder_days }) => {
+// Every new category lands PENDING_APPROVAL regardless of who creates it --
+// including admin/cfo/ceo. Mirrors compliance_items' self-approval pattern
+// exactly (an executive CAN approve their own category, but only with a
+// mandatory justification -- see approveComplianceCategory below), not a
+// stricter "must be a different person" rule. A category defines the
+// reminder ladder and cadence every future item under it inherits, so it's
+// at least as consequential as a single item and deserves the same
+// deliberate-approval step, not a rubber stamp -- but a hard block on
+// self-approval would risk a real bottleneck given this org currently has
+// only two active executives (admin, cfo) and zero active ceo.
+const createComplianceCategory = async ({ name, regulator, recurrence_type, reminder_ladder_days, created_by }) => {
   if (!name || !name.trim()) {
     const err = new Error('name is required.');
     err.statusCode = 400;
@@ -33,20 +43,112 @@ const createComplianceCategory = async ({ name, regulator, recurrence_type, remi
   }
 
   const result = await pool.query(
-    `INSERT INTO compliance_categories (name, regulator, recurrence_type, reminder_ladder_days)
-     VALUES ($1, $2, $3, $4) RETURNING *`,
-    [name.trim(), regulator || null, recurrence_type, ladder]
+    `INSERT INTO compliance_categories (name, regulator, recurrence_type, reminder_ladder_days, created_by)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [name.trim(), regulator || null, recurrence_type, ladder, created_by]
   );
   return result.rows[0];
 };
 
-const listComplianceCategories = async ({ activeOnly } = {}) => {
-  const result = await pool.query(
-    activeOnly
-      ? `SELECT * FROM compliance_categories WHERE is_active = true ORDER BY name`
-      : `SELECT * FROM compliance_categories ORDER BY name`
-  );
+// status filter powers three different views with one function:
+//   - Register's category picker: status: 'ACTIVE' (+ activeOnly for
+//     is_active -- both must hold, see the route for how they're combined).
+//   - Categories management page: no status filter, everything.
+//   - Approval queue: status: 'PENDING_APPROVAL'.
+const listComplianceCategories = async ({ activeOnly, status } = {}) => {
+  const conditions = [];
+  const values = [];
+  let i = 1;
+
+  if (activeOnly) conditions.push(`is_active = true`);
+  if (status) { conditions.push(`status = $${i++}`); values.push(status); }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await pool.query(`SELECT * FROM compliance_categories ${whereClause} ORDER BY name`, values);
   return result.rows;
+};
+
+// Atomic single-query status transition -- WHERE status = 'PENDING_APPROVAL'
+// in the UPDATE itself is the concurrency guard (a second, simultaneous
+// approve/reject affects 0 rows and gets a clean 409), so this doesn't need
+// a manual pool.connect()/BEGIN/COMMIT transaction at all. Unlike
+// approveComplianceItem, there's no check-then-act sequence here (no
+// recurrence-rule bootstrap for categories) worth carrying that pattern's
+// crash-risk class for (see approveComplianceItem's client.on('error') fix
+// and why it was needed).
+const approveComplianceCategory = async (categoryId, approverId, approverRole, justification) => {
+  const categoryRes = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
+  if (categoryRes.rows.length === 0) {
+    const err = new Error('Compliance category not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+  const category = categoryRes.rows[0];
+
+  if (category.status !== 'PENDING_APPROVAL') {
+    const err = new Error(`Category is currently ${category.status}; must be PENDING_APPROVAL to approve.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const isSelfApproval = category.created_by === approverId;
+  if (isSelfApproval && !EXECUTIVE_ROLES.includes(approverRole)) {
+    const err = new Error('Cannot approve your own submission.');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (isSelfApproval && (!justification || !justification.trim())) {
+    const err = new Error('Justification is required for self-approval.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(
+    `UPDATE compliance_categories
+     SET status = 'ACTIVE', approved_by = $1, approved_at = CURRENT_TIMESTAMP,
+         is_self_approved = $2, self_approval_justification = $3, updated_at = CURRENT_TIMESTAMP
+     WHERE category_id = $4 AND status = 'PENDING_APPROVAL'
+     RETURNING *`,
+    [approverId, isSelfApproval, isSelfApproval ? justification : null, categoryId]
+  );
+  if (result.rows.length === 0) {
+    const err = new Error('This category was already processed (approved or rejected) by someone else.');
+    err.statusCode = 409;
+    throw err;
+  }
+  return { category: result.rows[0], isSelfApproval };
+};
+
+const rejectComplianceCategory = async (categoryId, reason) => {
+  if (!reason || !reason.trim()) {
+    const err = new Error('A rejection reason is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const categoryRes = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
+  if (categoryRes.rows.length === 0) {
+    const err = new Error('Compliance category not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (categoryRes.rows[0].status !== 'PENDING_APPROVAL') {
+    const err = new Error(`Category is currently ${categoryRes.rows[0].status}; must be PENDING_APPROVAL to reject.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(
+    `UPDATE compliance_categories SET status = 'REJECTED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE category_id = $2 AND status = 'PENDING_APPROVAL' RETURNING *`,
+    [reason, categoryId]
+  );
+  if (result.rows.length === 0) {
+    const err = new Error('This category was already processed (approved or rejected) by someone else.');
+    err.statusCode = 409;
+    throw err;
+  }
+  return result.rows[0];
 };
 
 // Deliberately does not allow changing recurrence_type: the scheduler
@@ -56,6 +158,15 @@ const listComplianceCategories = async ({ activeOnly } = {}) => {
 // items/rules would leave their behavior inconsistent with a category that
 // no longer describes them -- a category whose cadence was set up wrong
 // should be deactivated and recreated, not mutated in place.
+//
+// Also deliberately does not accept `status` -- status only ever moves via
+// approveComplianceCategory/rejectComplianceCategory below. is_active and
+// status are different concerns: is_active is "still in use" (toggleable
+// any time, by design, regardless of approval history); status is "has
+// this been vetted at all." Letting this generic update touch status would
+// let someone silently reactivate a REJECTED category, or flip a still-
+// PENDING one straight to ACTIVE without ever going through approve() --
+// exactly the conflation the session asked to avoid.
 const updateComplianceCategory = async (categoryId, updates) => {
   const existing = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
   if (existing.rows.length === 0) {
@@ -460,6 +571,8 @@ module.exports = {
   createComplianceCategory,
   listComplianceCategories,
   updateComplianceCategory,
+  approveComplianceCategory,
+  rejectComplianceCategory,
   createComplianceItem,
   getComplianceItem,
   getComplianceItemDetail,

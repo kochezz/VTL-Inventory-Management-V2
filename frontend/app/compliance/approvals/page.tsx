@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { ListChecks, AlertCircle, CheckCircle2, XCircle, X, FileText, Eye } from 'lucide-react';
+import { ListChecks, AlertCircle, CheckCircle2, XCircle, X, FileText, Eye, Gavel, Bell } from 'lucide-react';
 
 // Same standard as /pricing and /compliance/categories -- a route guard,
 // not just a hidden nav link.
@@ -22,16 +22,34 @@ interface ComplianceItem {
   evidence_file_ref: string | null;
 }
 
+interface ComplianceCategory {
+  category_id: string;
+  name: string;
+  regulator: string | null;
+  recurrence_type: string;
+  reminder_ladder_days: number[];
+  created_by: string;
+  status: string;
+}
+
+// Both items and categories go through the exact same approve/reject shape
+// (self-approval + justification, reject + reason), so one modal handles
+// both rather than duplicating it -- `kind` picks the right endpoint.
+type ActionTarget =
+  | { kind: 'item'; entity: ComplianceItem }
+  | { kind: 'category'; entity: ComplianceCategory };
+
 export default function ComplianceApprovalsPage() {
   const router = useRouter();
   const { user } = useAuth();
 
   const [items, setItems] = useState<ComplianceItem[]>([]);
+  const [categories, setCategories] = useState<ComplianceCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
 
-  const [actionModal, setActionModal] = useState<{ item: ComplianceItem; type: 'approve' | 'reject' } | null>(null);
+  const [actionModal, setActionModal] = useState<{ target: ActionTarget; type: 'approve' | 'reject' } | null>(null);
   const [justification, setJustification] = useState('');
   const [reason, setReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
@@ -77,8 +95,15 @@ export default function ComplianceApprovalsPage() {
   const fetchQueue = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/compliance/items?status=PENDING_APPROVAL');
-      setItems(res.data);
+      const [itemsRes, categoriesRes] = await Promise.all([
+        api.get('/compliance/items?status=PENDING_APPROVAL'),
+        // active_only=false -- what matters here is status, not is_active
+        // (a newly-proposed category defaults is_active=true anyway, but
+        // this shouldn't depend on that coincidence).
+        api.get('/compliance/categories?status=PENDING_APPROVAL&active_only=false'),
+      ]);
+      setItems(itemsRes.data);
+      setCategories(categoriesRes.data);
     } catch (err) {
       setError('Failed to load the approval queue.');
       console.error(err);
@@ -87,24 +112,25 @@ export default function ComplianceApprovalsPage() {
     }
   };
 
-  const isSelfApproval = (item: ComplianceItem) => item.created_by === user?.user_id;
+  const isSelfApproval = (entity: { created_by: string }) => entity.created_by === user?.user_id;
 
-  const openApprove = (item: ComplianceItem) => {
+  const openApprove = (target: ActionTarget) => {
     setActionError('');
     setJustification('');
-    setActionModal({ item, type: 'approve' });
+    setActionModal({ target, type: 'approve' });
   };
-  const openReject = (item: ComplianceItem) => {
+  const openReject = (target: ActionTarget) => {
     setActionError('');
     setReason('');
-    setActionModal({ item, type: 'reject' });
+    setActionModal({ target, type: 'reject' });
   };
 
   const confirmAction = async () => {
     if (!actionModal) return;
-    const { item, type } = actionModal;
+    const { target, type } = actionModal;
+    const selfApproval = isSelfApproval(target.entity);
 
-    if (type === 'approve' && isSelfApproval(item) && !justification.trim()) {
+    if (type === 'approve' && selfApproval && !justification.trim()) {
       setActionError('Justification is required when approving your own submission.');
       return;
     }
@@ -113,18 +139,21 @@ export default function ComplianceApprovalsPage() {
       return;
     }
 
+    const basePath = target.kind === 'item' ? '/compliance/items' : '/compliance/categories';
+    const id = target.kind === 'item' ? target.entity.item_id : target.entity.category_id;
+
     try {
       setActionLoading(true);
       setActionError('');
       if (type === 'approve') {
-        await api.post(`/compliance/items/${item.item_id}/approve`, isSelfApproval(item) ? { justification } : {});
+        await api.post(`${basePath}/${id}/approve`, selfApproval ? { justification } : {});
       } else {
-        await api.post(`/compliance/items/${item.item_id}/reject`, { reason });
+        await api.post(`${basePath}/${id}/reject`, { reason });
       }
       setActionModal(null);
       fetchQueue();
     } catch (err: any) {
-      setActionError(err.response?.data?.message || `Failed to ${type} this item.`);
+      setActionError(err.response?.data?.message || `Failed to ${type} this ${target.kind}.`);
     } finally {
       setActionLoading(false);
     }
@@ -134,14 +163,14 @@ export default function ComplianceApprovalsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-[1400px] mx-auto space-y-6 pb-12">
+      <div className="p-6 max-w-[1400px] mx-auto space-y-8 pb-12">
 
         <div>
           <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             <ListChecks className="w-8 h-8 text-primary-500" />
             Compliance Approval Queue
           </h1>
-          <p className="text-gray-400 mt-1">Items awaiting approval. Self-approving your own submission requires a justification.</p>
+          <p className="text-gray-400 mt-1">Items and proposed categories awaiting approval. Self-approving your own submission requires a justification.</p>
         </div>
 
         {error && (
@@ -157,81 +186,163 @@ export default function ComplianceApprovalsPage() {
           </div>
         )}
 
-        <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-dark-900/80 border-b border-dark-700">
-                <tr>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Category</th>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Due Date</th>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Evidence</th>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-dark-700">
-                {loading ? (
-                  <tr><td colSpan={4} className="py-16 text-center">
-                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500 mb-4"></div>
-                    <p className="text-gray-400">Loading queue...</p>
-                  </td></tr>
-                ) : items.length === 0 ? (
-                  <tr><td colSpan={4} className="py-16 text-center">
-                    <CheckCircle2 className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-                    <p className="text-lg font-medium text-white mb-1">Nothing pending approval</p>
-                    <p className="text-gray-500 text-sm">The queue is clear.</p>
-                  </td></tr>
-                ) : (
-                  items.map((item) => (
-                    <tr key={item.item_id} className="hover:bg-dark-700/50 transition-colors">
-                      <td className="py-4 px-6">
-                        <p className="font-bold text-white">{item.category_name}</p>
-                        {item.regulator && <p className="text-xs text-gray-500">{item.regulator}</p>}
-                        {isSelfApproval(item) && (
-                          <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own submission</span>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 text-gray-300">
-                        {new Date(item.due_date).toLocaleDateString()}
-                        <span className={`block text-xs mt-0.5 ${item.days_until_due < 0 ? 'text-red-400' : 'text-gray-500'}`}>
-                          {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6">
-                        <button
-                          onClick={() => previewEvidence(item.item_id)}
-                          disabled={previewingId === item.item_id}
-                          className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
-                          title="Open the evidence PDF in a new tab"
-                        >
-                          {previewingId === item.item_id ? (
-                            <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-t-2 border-primary-400"></span>
-                          ) : (
-                            <Eye className="w-4 h-4" />
+        {/* ── Pending categories ─────────────────────────────────────────── */}
+        <div>
+          <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-3">
+            <Gavel className="w-5 h-5 text-amber-400" />
+            Pending Categories
+            {categories.length > 0 && (
+              <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs">{categories.length}</span>
+            )}
+          </h2>
+          <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-dark-900/80 border-b border-dark-700">
+                  <tr>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Category</th>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Cadence</th>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Proposed Reminder Ladder</th>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-700">
+                  {loading ? (
+                    <tr><td colSpan={4} className="py-10 text-center text-gray-400">Loading...</td></tr>
+                  ) : categories.length === 0 ? (
+                    <tr><td colSpan={4} className="py-10 text-center text-gray-500 text-sm">No categories awaiting approval.</td></tr>
+                  ) : (
+                    categories.map((cat) => (
+                      <tr key={cat.category_id} className="hover:bg-dark-700/50 transition-colors">
+                        <td className="py-4 px-6">
+                          <p className="font-bold text-white">{cat.name}</p>
+                          {cat.regulator && <p className="text-xs text-gray-500">{cat.regulator}</p>}
+                          {isSelfApproval(cat) && (
+                            <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own proposal</span>
                           )}
-                          <span className="truncate max-w-[160px]">{item.evidence_file_ref || 'View evidence'}</span>
-                        </button>
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <div className="flex justify-end gap-2">
+                        </td>
+                        <td className="py-4 px-6 text-gray-300">{cat.recurrence_type.replace(/_/g, ' ')}</td>
+                        <td className="py-4 px-6">
+                          {/* Step 4: the proposed ladder/cadence must be
+                              visible right here, not just the category name --
+                              an approver needs to consciously accept it. */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Bell className="w-3.5 h-3.5 text-gray-500" />
+                            {cat.reminder_ladder_days.map((d) => (
+                              <span key={d} className="px-2 py-0.5 bg-dark-900 border border-dark-600 rounded text-xs font-mono text-gray-300">{d}d</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => openApprove({ kind: 'category', entity: cat })}
+                              className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                            >
+                              <CheckCircle2 className="w-4 h-4" /> Approve
+                            </button>
+                            <button
+                              onClick={() => openReject({ kind: 'category', entity: cat })}
+                              className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                            >
+                              <XCircle className="w-4 h-4" /> Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Pending items ───────────────────────────────────────────────── */}
+        <div>
+          <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-3">
+            <ListChecks className="w-5 h-5 text-primary-400" />
+            Pending Items
+            {items.length > 0 && (
+              <span className="px-2 py-0.5 bg-primary-500/10 text-primary-400 border border-primary-500/20 rounded-full text-xs">{items.length}</span>
+            )}
+          </h2>
+          <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-2xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-dark-900/80 border-b border-dark-700">
+                  <tr>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Category</th>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Due Date</th>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Evidence</th>
+                    <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-700">
+                  {loading ? (
+                    <tr><td colSpan={4} className="py-16 text-center">
+                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500 mb-4"></div>
+                      <p className="text-gray-400">Loading queue...</p>
+                    </td></tr>
+                  ) : items.length === 0 ? (
+                    <tr><td colSpan={4} className="py-16 text-center">
+                      <CheckCircle2 className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+                      <p className="text-lg font-medium text-white mb-1">Nothing pending approval</p>
+                      <p className="text-gray-500 text-sm">The queue is clear.</p>
+                    </td></tr>
+                  ) : (
+                    items.map((item) => (
+                      <tr key={item.item_id} className="hover:bg-dark-700/50 transition-colors">
+                        <td className="py-4 px-6">
+                          <p className="font-bold text-white">{item.category_name}</p>
+                          {item.regulator && <p className="text-xs text-gray-500">{item.regulator}</p>}
+                          {isSelfApproval(item) && (
+                            <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own submission</span>
+                          )}
+                        </td>
+                        <td className="py-4 px-6 text-gray-300">
+                          {new Date(item.due_date).toLocaleDateString()}
+                          <span className={`block text-xs mt-0.5 ${item.days_until_due < 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                            {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6">
                           <button
-                            onClick={() => openApprove(item)}
-                            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                            onClick={() => previewEvidence(item.item_id)}
+                            disabled={previewingId === item.item_id}
+                            className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
+                            title="Open the evidence PDF in a new tab"
                           >
-                            <CheckCircle2 className="w-4 h-4" /> Approve
+                            {previewingId === item.item_id ? (
+                              <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-t-2 border-primary-400"></span>
+                            ) : (
+                              <Eye className="w-4 h-4" />
+                            )}
+                            <span className="truncate max-w-[160px]">{item.evidence_file_ref || 'View evidence'}</span>
                           </button>
-                          <button
-                            onClick={() => openReject(item)}
-                            className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                          >
-                            <XCircle className="w-4 h-4" /> Reject
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => openApprove({ kind: 'item', entity: item })}
+                              className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                            >
+                              <CheckCircle2 className="w-4 h-4" /> Approve
+                            </button>
+                            <button
+                              onClick={() => openReject({ kind: 'item', entity: item })}
+                              className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                            >
+                              <XCircle className="w-4 h-4" /> Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -241,7 +352,7 @@ export default function ComplianceApprovalsPage() {
           <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
               <h2 className="text-xl font-bold text-white">
-                {actionModal.type === 'approve' ? 'Approve Item' : 'Reject Item'}
+                {actionModal.type === 'approve' ? 'Approve' : 'Reject'} {actionModal.target.kind === 'item' ? 'Item' : 'Category'}
               </h2>
               <button onClick={() => setActionModal(null)} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
             </div>
@@ -252,21 +363,55 @@ export default function ComplianceApprovalsPage() {
                   <p>{actionError}</p>
                 </div>
               )}
-              <p className="text-gray-300">
-                <span className="font-bold text-white">{actionModal.item.category_name}</span>
-                {' '}— due {new Date(actionModal.item.due_date).toLocaleDateString()}
-              </p>
-              <button
-                type="button"
-                onClick={() => previewEvidence(actionModal.item.item_id)}
-                disabled={previewingId === actionModal.item.item_id}
-                className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
-              >
-                <FileText className="w-4 h-4" />
-                {previewingId === actionModal.item.item_id ? 'Opening...' : 'Review the evidence PDF before deciding'}
-              </button>
 
-              {actionModal.type === 'approve' && isSelfApproval(actionModal.item) && (
+              {actionModal.target.kind === 'item' ? (
+                // Narrowed into a local const first -- accessing
+                // actionModal.target.entity directly inside a closure (the
+                // onClick below) doesn't retain TS's narrowing on the
+                // ternary check above, since actionModal is state that could
+                // change between narrowing and callback execution.
+                (() => {
+                  const item = actionModal.target.entity as ComplianceItem;
+                  return (
+                    <>
+                      <p className="text-gray-300">
+                        <span className="font-bold text-white">{item.category_name}</span>
+                        {' '}— due {new Date(item.due_date).toLocaleDateString()}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => previewEvidence(item.item_id)}
+                        disabled={previewingId === item.item_id}
+                        className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
+                      >
+                        <FileText className="w-4 h-4" />
+                        {previewingId === item.item_id ? 'Opening...' : 'Review the evidence PDF before deciding'}
+                      </button>
+                    </>
+                  );
+                })()
+              ) : (
+                (() => {
+                  const category = actionModal.target.entity as ComplianceCategory;
+                  return (
+                    <div className="bg-dark-900 border border-dark-700 rounded-xl p-4 space-y-2">
+                      <p className="font-bold text-white text-lg">{category.name}</p>
+                      {category.regulator && <p className="text-sm text-gray-400">{category.regulator}</p>}
+                      <p className="text-sm text-gray-300">Cadence: <span className="font-mono">{category.recurrence_type.replace(/_/g, ' ')}</span></p>
+                      <div>
+                        <p className="text-sm text-gray-300 mb-1.5">Proposed reminder ladder (days before due):</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {category.reminder_ladder_days.map((d) => (
+                            <span key={d} className="px-2.5 py-1 bg-dark-950 border border-dark-600 rounded text-sm font-mono text-white">{d} days</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
+
+              {actionModal.type === 'approve' && isSelfApproval(actionModal.target.entity) && (
                 <div>
                   <label className="block text-sm font-bold text-gray-300 mb-2">Justification (required for self-approval)</label>
                   <textarea

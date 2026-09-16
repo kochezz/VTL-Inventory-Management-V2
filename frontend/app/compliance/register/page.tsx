@@ -50,7 +50,11 @@ export default function ComplianceRegisterPage() {
   const fetchCategories = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/compliance/categories');
+      // status=ACTIVE (combined with the default active_only=true) is the
+      // real enforcement mechanism: a category a junior just proposed sits
+      // PENDING_APPROVAL and simply cannot appear here until an executive
+      // approves it -- not just hidden by convention.
+      const res = await api.get('/compliance/categories?status=ACTIVE');
       setCategories(res.data);
       if (res.data.length > 0) {
         setForm((prev) => ({ ...prev, category_id: prev.category_id || res.data[0].category_id }));

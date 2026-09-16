@@ -6,13 +6,13 @@ import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Gavel, Plus, X, Save, AlertCircle, Power, PowerOff } from 'lucide-react';
 
-// Matches this page's own sidebar nav entry (DashboardLayout.tsx) -- defining
-// what compliance obligations exist is an executive-level decision, same
-// boundary the backend's authorize(['admin','cfo','ceo']) enforces on
-// POST/PATCH /api/compliance/categories. This guard is what makes the
-// boundary real for direct-URL access, not just a hidden nav link (the same
-// standard applied to /pricing earlier in this project).
-const CAN_VIEW_ROLES = ['admin', 'cfo', 'ceo'];
+// junior_accountant can now PROPOSE a category (backend:
+// authorize(['junior_accountant','admin','cfo','ceo']) on POST
+// /categories) -- this page is their only frontend path to do that, so it
+// must be open to them too, not just the executives who approve/edit/
+// deactivate. Those still-executive-only actions are individually gated
+// below by checking isExecutive rather than by blocking the whole page.
+const CAN_VIEW_ROLES = ['junior_accountant', 'admin', 'cfo', 'ceo'];
 
 const RECURRENCE_TYPES = [
   { value: 'ONE_OFF_EXPIRY', label: 'One-off / Expiry (e.g. a license renewal)' },
@@ -27,11 +27,25 @@ interface ComplianceCategory {
   recurrence_type: string;
   reminder_ladder_days: number[];
   is_active: boolean;
+  status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED';
+  rejection_reason: string | null;
 }
+
+// status (has this been vetted at all) vs is_active (still in use) are
+// shown as two separate badges deliberately -- conflating them into one
+// indicator would hide exactly the distinction the backend keeps separate.
+const STATUS_STYLES: Record<string, string> = {
+  PENDING_APPROVAL: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  ACTIVE: 'bg-green-500/10 text-green-400 border-green-500/20',
+  REJECTED: 'bg-red-500/10 text-red-400 border-red-500/20',
+};
+
+const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
 
 export default function ComplianceCategoriesPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const isExecutive = !!user && EXECUTIVE_ROLES.includes(user.role);
 
   const [categories, setCategories] = useState<ComplianceCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,18 +168,19 @@ export default function ComplianceCategoriesPage() {
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Regulator</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Cadence</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Reminder Ladder</th>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">Status</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">Approval</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">In Use</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-dark-700">
                 {loading ? (
-                  <tr><td colSpan={6} className="py-16 text-center">
+                  <tr><td colSpan={7} className="py-16 text-center">
                     <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500 mb-4"></div>
                     <p className="text-gray-400">Loading categories...</p>
                   </td></tr>
                 ) : categories.length === 0 ? (
-                  <tr><td colSpan={6} className="py-16 text-center">
+                  <tr><td colSpan={7} className="py-16 text-center">
                     <Gavel className="w-12 h-12 text-gray-600 mx-auto mb-4" />
                     <p className="text-lg font-medium text-white mb-1">No compliance categories yet</p>
                     <p className="text-gray-500 text-sm">Create one to let junior_accountant register items against it.</p>
@@ -178,23 +193,42 @@ export default function ComplianceCategoriesPage() {
                       <td className="py-4 px-6 text-gray-300">{cat.recurrence_type.replace(/_/g, ' ')}</td>
                       <td className="py-4 px-6 text-gray-300 font-mono text-sm">{cat.reminder_ladder_days.join(', ')} days</td>
                       <td className="py-4 px-6 text-center">
-                        <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${
-                          cat.is_active
-                            ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                            : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
-                        }`}>
-                          {cat.is_active ? 'Active' : 'Inactive'}
+                        <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[cat.status]}`}>
+                          {cat.status.replace('_', ' ')}
                         </span>
+                        {cat.status === 'REJECTED' && cat.rejection_reason && (
+                          <p className="text-xs text-gray-500 mt-1 max-w-[160px] mx-auto">{cat.rejection_reason}</p>
+                        )}
+                      </td>
+                      <td className="py-4 px-6 text-center">
+                        {cat.status === 'ACTIVE' ? (
+                          <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${
+                            cat.is_active
+                              ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                              : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
+                          }`}>
+                            {cat.is_active ? 'In Use' : 'Deactivated'}
+                          </span>
+                        ) : (
+                          <span className="text-gray-600 text-xs">—</span>
+                        )}
                       </td>
                       <td className="py-4 px-6 text-right">
-                        <button
-                          onClick={() => toggleActive(cat)}
-                          className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
-                          title={cat.is_active ? 'Deactivate' : 'Reactivate'}
-                        >
-                          {cat.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-                          {cat.is_active ? 'Deactivate' : 'Reactivate'}
-                        </button>
+                        {/* Deactivate/reactivate hits PATCH /categories/:id, which the
+                            backend restricts to admin/cfo/ceo -- hidden here rather than
+                            shown-then-403'd for a junior_accountant viewer. */}
+                        {cat.status === 'ACTIVE' && isExecutive ? (
+                          <button
+                            onClick={() => toggleActive(cat)}
+                            className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                            title={cat.is_active ? 'Deactivate' : 'Reactivate'}
+                          >
+                            {cat.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                            {cat.is_active ? 'Deactivate' : 'Reactivate'}
+                          </button>
+                        ) : cat.status === 'PENDING_APPROVAL' ? (
+                          <span className="text-xs text-amber-400">{isExecutive ? 'Review in Approval Queue' : 'Awaiting executive approval'}</span>
+                        ) : null}
                       </td>
                     </tr>
                   ))
