@@ -166,15 +166,33 @@ test('manager gets 403 updating, approving, or rejecting a category (create+list
   );
 });
 
-test('manager gets 403 on GET /items and POST /items (module scope stops at categories)', async () => {
-  await assert.rejects(
-    () => axios.get(`${BASE_URL}/api/compliance/items`, managerHeaders),
-    (err) => err.response?.status === 403
+// Superseded by the "widen manager to full initiator tier" session that
+// followed this one: manager now has the same GET/POST /items access as
+// junior_accountant (see compliance-approval-workflow.test.js for the
+// create/submit/acknowledge coverage, and the "blocked from approving or
+// rejecting" test there for what manager still can't do). This test now
+// confirms manager CAN list and create items -- the opposite of what it
+// originally asserted, which was correct only for the single session in
+// between where manager's access was deliberately scoped to categories only.
+test('manager CAN list and create items (widened to the full initiator tier)', async () => {
+  const listRes = await axios.get(`${BASE_URL}/api/compliance/items`, managerHeaders);
+  assert.equal(listRes.status, 200);
+
+  const created = await axios.post(
+    `${BASE_URL}/api/compliance/categories`,
+    { name: 'TEST SUITE - manager items scope', recurrence_type: 'ONE_OFF_EXPIRY' },
+    adminHeaders
   );
-  await assert.rejects(
-    () => axios.post(`${BASE_URL}/api/compliance/items`, { category_id: '00000000-0000-0000-0000-000000000000', due_date: '2027-01-01' }, managerHeaders),
-    (err) => err.response?.status === 403
+  cleanup.trackCategory(created.data.category_id);
+
+  const itemRes = await axios.post(
+    `${BASE_URL}/api/compliance/items`,
+    { category_id: created.data.category_id, due_date: '2027-01-01', evidence_file_ref: 'test.pdf' },
+    managerHeaders
   );
+  cleanup.trackItem(itemRes.data.item_id);
+  assert.equal(itemRes.status, 201);
+  assert.equal(itemRes.data.created_by, managerUser.user_id);
 });
 
 // ── Category listing: open to all 4 module roles ────────────────────────────

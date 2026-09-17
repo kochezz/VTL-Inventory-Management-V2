@@ -117,21 +117,21 @@ const navigation: NavItem[] = [
     name: 'Compliance',
     href: '/compliance/my-tasks',
     icon: Gavel,
-    // manager added here only so the parent item (and therefore the
-    // Categories child below) renders for them at all -- the top-level and
-    // per-child role arrays are filtered independently, so this alone does
-    // not grant manager the My Tasks/Register Item/Approval Queue children.
+    // manager has My Tasks/Register Item/Categories but not Approval Queue
+    // -- the top-level and per-child role arrays are filtered independently,
+    // so the parent roles list here only controls whether the section
+    // renders at all; each child below still needs its own entry too.
     roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
     children: [
       {
         name: 'My Tasks',
         href: '/compliance/my-tasks',
-        roles: ['junior_accountant', 'admin', 'cfo', 'ceo'],
+        roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
       },
       {
         name: 'Register Item',
         href: '/compliance/register',
-        roles: ['junior_accountant', 'admin', 'cfo', 'ceo'],
+        roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
       },
       {
         name: 'Approval Queue',
@@ -383,7 +383,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div key={item.href}>
                     <button
                       onClick={() => {
-                        if (!isParentActive(item)) router.push(item.href);
+                        // Navigate to the first child this role can actually
+                        // see, not the parent's hardcoded default href --
+                        // that default (e.g. /compliance/my-tasks) may not be
+                        // in allowedChildren for every role permitted to see
+                        // the parent (e.g. manager, who currently only sees
+                        // Categories here). Routing to a fixed default caused
+                        // a silent bounce: the page would mount, then its own
+                        // independent route guard -- which the sidebar's own
+                        // role filtering doesn't share or know about -- would
+                        // redirect straight back to /dashboard.
+                        if (!isParentActive(item)) router.push(allowedChildren[0].href);
                         toggleGroup(item.href);
                       }}
                       className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${

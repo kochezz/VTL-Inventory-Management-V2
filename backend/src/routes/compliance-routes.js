@@ -139,7 +139,7 @@ router.post('/categories/:id/reject', authorize(['admin', 'cfo', 'ceo']), async 
 
 // ─── List / detail ──────────────────────────────────────────────────────────
 
-router.get('/items', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+router.get('/items', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { status, needs_acknowledgement, mine } = req.query;
     const items = await complianceService.listComplianceItems({
@@ -166,7 +166,7 @@ function canViewItem(item, user) {
   return isExecutive || isOwnItem || isOpenForAck;
 }
 
-router.get('/items/:id', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+router.get('/items/:id', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const item = await complianceService.getComplianceItemDetail(req.params.id);
     if (!item) return res.status(404).json({ message: 'Compliance item not found.' });
@@ -183,7 +183,7 @@ router.get('/items/:id', authorize(['junior_accountant', 'admin', 'cfo', 'ceo'])
 
 // ─── Evidence (PDF upload/download) ─────────────────────────────────────────
 
-router.post('/items/:id/evidence', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), (req, res) => {
+router.post('/items/:id/evidence', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), (req, res) => {
   evidenceUpload.single('evidence')(req, res, async (err) => {
     // multer's fileFilter/limits errors land here, not in a try/catch --
     // handled explicitly so they come back as a clean 400, not the global
@@ -212,7 +212,7 @@ router.post('/items/:id/evidence', authorize(['junior_accountant', 'admin', 'cfo
   });
 });
 
-router.get('/items/:id/evidence', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+router.get('/items/:id/evidence', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const item = await complianceService.getComplianceItemDetail(req.params.id);
     if (!item) return res.status(404).json({ message: 'Compliance item not found.' });
@@ -233,7 +233,7 @@ router.get('/items/:id/evidence', authorize(['junior_accountant', 'admin', 'cfo'
 
 // ─── Create ─────────────────────────────────────────────────────────────────
 
-router.post('/items', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+router.post('/items', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { category_id, issued_date, due_date, evidence_file_ref, day_of_month_due } = req.body;
     if (!category_id || !due_date) {
@@ -345,7 +345,7 @@ router.post('/items/:id/reject', authorize(['admin', 'cfo', 'ceo']), async (req,
 // ─── Acknowledge (Phase 4) ──────────────────────────────────────────────────
 // Restricted to the same role set as create/submit -- a plain viewer-role
 // user has no stake in a compliance item and shouldn't be able to act on one.
-router.post('/items/:id/acknowledge', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+router.post('/items/:id/acknowledge', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { note } = req.body;
     const itemId = req.params.id;

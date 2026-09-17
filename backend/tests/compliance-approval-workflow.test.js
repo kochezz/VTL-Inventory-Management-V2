@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 
 const {
   BASE_URL,
+  pool,
   assertServerReachable,
   login,
   authHeaders,
@@ -42,6 +43,7 @@ const cleanup = new Cleanup();
 let adminToken, adminHeaders, adminUser;
 let jrToken, jrHeaders, jrUser;
 let cfoToken, cfoHeaders, cfoUser;
+let managerToken, managerHeaders, managerUser;
 let oneOffCategoryId, monthlyCategoryId;
 
 before(async () => {
@@ -56,6 +58,12 @@ before(async () => {
 
   ({ token: cfoToken, user: cfoUser } = await signTokenForRole('cfo'));
   cfoHeaders = authHeaders(cfoToken);
+
+  // manager -- widened to the full initiator tier (same as junior_accountant)
+  // in this session: create/submit/evidence/acknowledge, but never
+  // approve/reject, same as junior_accountant.
+  ({ token: managerToken, user: managerUser } = await signTokenForRole('manager'));
+  managerHeaders = authHeaders(managerToken);
 
   oneOffCategoryId = await createComplianceCategory({
     name: 'TEST SUITE - one-off category',
@@ -106,6 +114,53 @@ test('junior_accountant is blocked from approving (403)', async () => {
     () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/approve`, {}, jrHeaders),
     (err) => err.response?.status === 403
   );
+});
+
+// ── manager: full initiator tier, same as junior_accountant ────────────────
+
+test('manager can create and submit a compliance item', async () => {
+  const createRes = await axios.post(
+    `${BASE_URL}/api/compliance/items`,
+    { category_id: oneOffCategoryId, due_date: '2027-01-17', evidence_file_ref: 'test.pdf' },
+    managerHeaders
+  );
+  cleanup.trackItem(createRes.data.item_id);
+  assert.equal(createRes.status, 201);
+  assert.equal(createRes.data.status, 'DRAFT');
+  assert.equal(createRes.data.created_by, managerUser.user_id);
+
+  await uploadTestEvidence(createRes.data.item_id, managerHeaders);
+  const submitRes = await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, managerHeaders);
+  assert.equal(submitRes.status, 200);
+  assert.equal(submitRes.data.status, 'PENDING_APPROVAL');
+});
+
+test('manager is blocked from approving or rejecting (403) -- including their own item, so self-approval never applies', async () => {
+  const itemId = await createAndSubmit(managerHeaders, oneOffCategoryId, '2027-01-18');
+  // authorize() rejects manager before the service layer's self-approval
+  // check is ever reached -- there is no "manager self-approves with
+  // justification" path, same as junior_accountant.
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/approve`, { justification: 'trying anyway' }, managerHeaders),
+    (err) => err.response?.status === 403
+  );
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/reject`, { reason: 'trying anyway' }, managerHeaders),
+    (err) => err.response?.status === 403
+  );
+});
+
+test('manager can acknowledge a NON_COMPLIANT item (junior_accountant-equivalent acknowledge access)', async () => {
+  const itemId = await createAndSubmit(adminHeaders, oneOffCategoryId, '2027-01-19');
+  // cfo approves admin's item -- not self-approval, so no justification is
+  // needed here; using adminHeaders for both create and approve would hit
+  // the (unrelated) self-approval justification requirement instead.
+  await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/approve`, {}, cfoHeaders);
+  // Force it NON_COMPLIANT directly -- same shortcut the scheduler tests use
+  // elsewhere in this suite; the scheduler itself is not under test here.
+  await pool.query(`UPDATE compliance_items SET status = 'NON_COMPLIANT' WHERE item_id = $1`, [itemId]);
+  const ackRes = await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/acknowledge`, { note: 'manager ack test' }, managerHeaders);
+  assert.equal(ackRes.status, 201);
 });
 
 test('admin can approve someone else\'s item (not self-approval)', async () => {
