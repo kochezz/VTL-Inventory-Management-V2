@@ -6,13 +6,16 @@ import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Gavel, Plus, X, Save, AlertCircle, Power, PowerOff } from 'lucide-react';
 
-// junior_accountant can now PROPOSE a category (backend:
-// authorize(['junior_accountant','admin','cfo','ceo']) on POST
+// junior_accountant and manager can now PROPOSE a category (backend:
+// authorize(['junior_accountant','manager','admin','cfo','ceo']) on POST
 // /categories) -- this page is their only frontend path to do that, so it
 // must be open to them too, not just the executives who approve/edit/
 // deactivate. Those still-executive-only actions are individually gated
 // below by checking isExecutive rather than by blocking the whole page.
-const CAN_VIEW_ROLES = ['junior_accountant', 'admin', 'cfo', 'ceo'];
+// The Approvals queue page keeps its own separate admin/cfo/ceo-only guard
+// untouched -- being able to view/create a category here does not carry
+// over to approving one there.
+const CAN_VIEW_ROLES = ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'];
 
 const RECURRENCE_TYPES = [
   { value: 'ONE_OFF_EXPIRY', label: 'One-off / Expiry (e.g. a license renewal)' },

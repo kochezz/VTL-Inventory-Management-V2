@@ -65,13 +65,16 @@ const getUserEmail = async (userId) => {
 };
 
 // ─── Categories ──────────────────────────────────────────────────────────────
-// Any of the 4 compliance-module roles can PROPOSE a category, but every new
-// one lands PENDING_APPROVAL regardless of who created it -- an executive
-// still has to approve it before it's usable (see /categories/:id/approve
-// below), which is what actually closes the "no executive ever has to look
-// at it" gap. Only the approval/reject/edit actions stay executive-only.
+// junior_accountant AND manager can PROPOSE a category, but every new one
+// lands PENDING_APPROVAL regardless of who created it -- an executive still
+// has to approve it before it's usable (see /categories/:id/approve below),
+// which is what actually closes the "no executive ever has to look at it"
+// gap. Only the approval/reject/edit actions stay executive-only. manager is
+// scoped to create+list here only -- it does NOT get My Tasks/Register
+// Item/Approval Queue access, since only the Categories-page gap was in
+// scope for this extension.
 
-router.post('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+router.post('/categories', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { name, regulator, recurrence_type, reminder_ladder_days } = req.body;
     const category = await complianceService.createComplianceCategory({
@@ -84,13 +87,15 @@ router.post('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo'
   }
 });
 
-// Any of the 4 compliance-module roles can list categories (junior_accountant
-// needs this for the item-registration category picker, and to see their own
-// pending proposals) -- only creating/editing/approving is more restricted.
-// ?status=ACTIVE (combined with the default active_only=true) is what the
-// Register page's picker uses to exclude PENDING_APPROVAL/REJECTED
-// categories -- the actual enforcement mechanism, not just a UI nicety.
-router.get('/categories', authorize(['junior_accountant', 'admin', 'cfo', 'ceo']), async (req, res) => {
+// junior_accountant, manager, and the 3 executive roles can list categories
+// (junior_accountant needs this for the item-registration category picker,
+// and both non-executive roles need it to see their own pending proposals
+// on the Categories page) -- only creating/editing/approving is more
+// restricted. ?status=ACTIVE (combined with the default active_only=true)
+// is what the Register page's picker uses to exclude PENDING_APPROVAL/
+// REJECTED categories -- the actual enforcement mechanism, not just a UI
+// nicety.
+router.get('/categories', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const activeOnly = req.query.active_only !== 'false'; // defaults to true
     const status = req.query.status || undefined;

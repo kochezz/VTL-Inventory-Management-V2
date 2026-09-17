@@ -117,7 +117,11 @@ const navigation: NavItem[] = [
     name: 'Compliance',
     href: '/compliance/my-tasks',
     icon: Gavel,
-    roles: ['junior_accountant', 'admin', 'cfo', 'ceo'],
+    // manager added here only so the parent item (and therefore the
+    // Categories child below) renders for them at all -- the top-level and
+    // per-child role arrays are filtered independently, so this alone does
+    // not grant manager the My Tasks/Register Item/Approval Queue children.
+    roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
     children: [
       {
         name: 'My Tasks',
@@ -137,7 +141,7 @@ const navigation: NavItem[] = [
       {
         name: 'Categories',
         href: '/compliance/categories',
-        roles: ['admin', 'cfo', 'ceo'],
+        roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
       },
     ],
   },

@@ -24,6 +24,7 @@ let adminToken, adminHeaders;
 let jrToken, jrHeaders, jrUser;
 let cfoToken, cfoHeaders;
 let warehouseToken, warehouseHeaders;
+let managerToken, managerHeaders, managerUser;
 
 before(async () => {
   await assertServerReachable();
@@ -38,6 +39,12 @@ before(async () => {
 
   ({ token: warehouseToken } = await signTokenForRole('warehouse_manager'));
   warehouseHeaders = authHeaders(warehouseToken);
+
+  // 'manager' -- distinct from 'warehouse_manager' above -- was extended
+  // create+list access on /categories only (not the rest of the compliance
+  // module) to close the Categories-page sidebar/route-guard gap.
+  ({ token: managerToken, user: managerUser } = await signTokenForRole('manager'));
+  managerHeaders = authHeaders(managerToken);
 });
 
 after(async () => {
@@ -103,6 +110,70 @@ test('creating a category with an invalid recurrence_type is rejected with 400',
       adminHeaders
     ),
     (err) => err.response?.status === 400
+  );
+});
+
+// ── manager: extended create+list access, closing the Categories-page gap ──
+// manager is deliberately scoped narrower than junior_accountant across the
+// rest of the module (no My Tasks/Register Item/Approval Queue access) --
+// only POST/GET /categories were extended, matching the sidebar/route-guard
+// fix on the Categories page itself.
+
+test('manager CAN create a category, landing PENDING_APPROVAL', async () => {
+  const res = await axios.post(
+    `${BASE_URL}/api/compliance/categories`,
+    { name: 'TEST SUITE - manager create', recurrence_type: 'ONE_OFF_EXPIRY' },
+    managerHeaders
+  );
+  cleanup.trackCategory(res.data.category_id);
+  assert.equal(res.status, 201);
+  assert.equal(res.data.status, 'PENDING_APPROVAL');
+  assert.equal(res.data.created_by, managerUser.user_id);
+});
+
+test('manager CAN list categories', async () => {
+  const created = await axios.post(
+    `${BASE_URL}/api/compliance/categories`,
+    { name: 'TEST SUITE - manager list visibility', recurrence_type: 'ONE_OFF_EXPIRY' },
+    adminHeaders
+  );
+  cleanup.trackCategory(created.data.category_id);
+
+  const res = await axios.get(`${BASE_URL}/api/compliance/categories`, managerHeaders);
+  assert.equal(res.status, 200);
+  assert.ok(res.data.some((c) => c.category_id === created.data.category_id));
+});
+
+test('manager gets 403 updating, approving, or rejecting a category (create+list only, not executive actions)', async () => {
+  const created = await axios.post(
+    `${BASE_URL}/api/compliance/categories`,
+    { name: 'TEST SUITE - manager blocked from executive actions', recurrence_type: 'ONE_OFF_EXPIRY' },
+    adminHeaders
+  );
+  cleanup.trackCategory(created.data.category_id);
+
+  await assert.rejects(
+    () => axios.patch(`${BASE_URL}/api/compliance/categories/${created.data.category_id}`, { name: 'nope' }, managerHeaders),
+    (err) => err.response?.status === 403
+  );
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/categories/${created.data.category_id}/approve`, {}, managerHeaders),
+    (err) => err.response?.status === 403
+  );
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/categories/${created.data.category_id}/reject`, { reason: 'no' }, managerHeaders),
+    (err) => err.response?.status === 403
+  );
+});
+
+test('manager gets 403 on GET /items and POST /items (module scope stops at categories)', async () => {
+  await assert.rejects(
+    () => axios.get(`${BASE_URL}/api/compliance/items`, managerHeaders),
+    (err) => err.response?.status === 403
+  );
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/items`, { category_id: '00000000-0000-0000-0000-000000000000', due_date: '2027-01-01' }, managerHeaders),
+    (err) => err.response?.status === 403
   );
 });
 
