@@ -6,7 +6,7 @@ import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Inbox, AlertCircle, CheckCircle2, ShieldAlert, Eye } from 'lucide-react';
 
-const CAN_VIEW_ROLES = ['junior_accountant', 'admin', 'cfo', 'ceo'];
+const CAN_VIEW_ROLES = ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'];
 
 interface ComplianceItem {
   item_id: string;

@@ -7,7 +7,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { ClipboardList, AlertCircle, CheckCircle2, Send, FileText, Upload } from 'lucide-react';
 
 // Matches the sidebar's roles for this page.
-const CAN_VIEW_ROLES = ['junior_accountant', 'admin', 'cfo', 'ceo'];
+const CAN_VIEW_ROLES = ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'];
 
 interface ComplianceCategory {
   category_id: string;
