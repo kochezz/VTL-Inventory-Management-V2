@@ -7,12 +7,23 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import PricingManager from '@/components/admin/PricingManager';
 import { DollarSign, Save, RefreshCw, CheckCircle2 } from 'lucide-react';
 
-// Matches this page's own sidebar nav entry (DashboardLayout.tsx). Also
-// used for canEdit below -- the backend's POST /sales/exchange-rate
-// authorize() array separately includes 'manager', but exchange_rates
-// history shows manager has never actually used it, so it's not treated
-// as an access boundary here.
-const CAN_VIEW_ROLES = ['admin', 'ceo', 'cfo'];
+// Page-visibility gate -- who can reach /pricing at all. junior_accountant
+// added (Finance Access Expansion): they can now edit per-product pricing
+// via PricingManager below, so they need to reach this page. manager stays
+// out, unchanged.
+const CAN_VIEW_ROLES = ['admin', 'ceo', 'cfo', 'junior_accountant'];
+
+// Separate, narrower gate for the Global Exchange Rate widget specifically
+// -- a DIFFERENT backend route (POST /sales/exchange-rate) that
+// junior_accountant was NOT given access to in this session (only
+// PUT /products/pricing and POST /products were). Reusing CAN_VIEW_ROLES
+// here would show junior_accountant an "Update" button on this widget that
+// 403s -- the same class of frontend/backend mismatch found and fixed
+// across the compliance sessions. The backend's authorize() array
+// separately includes 'manager', but exchange-rate history shows manager
+// has never actually used it, so it's not treated as an access boundary
+// here either.
+const CAN_EDIT_EXCHANGE_RATE_ROLES = ['admin', 'ceo', 'cfo'];
 
 export default function PricingPage() {
   const router = useRouter();
@@ -22,7 +33,7 @@ export default function PricingPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const canEdit = CAN_VIEW_ROLES.includes(user?.role || '');
+  const canEdit = CAN_EDIT_EXCHANGE_RATE_ROLES.includes(user?.role || '');
 
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {

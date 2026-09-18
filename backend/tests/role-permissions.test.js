@@ -55,12 +55,18 @@ after(async () => {
   }
 });
 
-test('junior_accountant is rejected (403) on a cfo/ceo/admin-only route', async () => {
-  // PUT /api/products/pricing is authorize(['admin','ceo','cfo']) --
-  // junior_accountant must never be in that list.
+// INVERTED 2026-09-18 (Finance Access Expansion session): PUT
+// /api/products/pricing's authorize() now includes junior_accountant --
+// this was the "cfo/ceo/admin-only route" this test was named after, and
+// that description is no longer true. The boundary this test originally
+// protected (junior_accountant must never reach this route) has been
+// deliberately moved, not eroded by accident -- see
+// role-permissions.test.js's new "manager still blocked from Products +
+// Pricing writes" test below for the boundary that must NOT move.
+test('junior_accountant CAN now reach PUT /api/products/pricing (Finance Access Expansion), but still needs a reason', async () => {
   await assert.rejects(
-    () => axios.put(`${BASE_URL}/api/products/pricing`, { updates: [] }, jrHeaders),
-    (err) => err.response?.status === 403
+    () => axios.put(`${BASE_URL}/api/products/pricing`, { products: [] }, jrHeaders),
+    (err) => err.response?.status === 400 && /reason/i.test(err.response?.data?.message || '')
   );
 });
 
@@ -80,9 +86,17 @@ test('junior_accountant can reach dashboard and mobile ping (Phase 1.5 exception
     assert.equal(res.data.ok, true);
   });
 
-  await t.test('still has no cfo-only access (products pricing stays 403)', async () => {
+  // INVERTED 2026-09-18 (Finance Access Expansion session): products
+  // pricing is no longer a valid "still cfo-only" example -- junior_accountant
+  // was deliberately given that route in this same session. Swapped for
+  // POST /sales/exchange-rate, which junior_accountant was never granted
+  // and still isn't (Finance Access Expansion's Step 1 only added ceo to
+  // that route's authorize() array) -- this keeps the sub-test's original
+  // intent intact: proving Phase 1.5's dashboard/mobile grant was narrow
+  // and didn't cascade into unrelated finance-admin capabilities.
+  await t.test('still has no exchange-rate access (POST /sales/exchange-rate stays 403)', async () => {
     await assert.rejects(
-      () => axios.put(`${BASE_URL}/api/products/pricing`, { updates: [] }, jrHeaders),
+      () => axios.post(`${BASE_URL}/api/sales/exchange-rate`, { rate_value: 27 }, jrHeaders),
       (err) => err.response?.status === 403
     );
   });

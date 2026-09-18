@@ -36,8 +36,13 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [reason, setReason] = useState('');
 
-  const isAuthorized = ['admin', 'ceo', 'cfo'].includes(user?.role?.toLowerCase() || '');
+  // junior_accountant added (Finance Access Expansion) -- manager stays out,
+  // unchanged. This is the real double-gate the /pricing page's own
+  // CAN_VIEW_ROLES can't substitute for: this component fetches and saves
+  // independently of the page around it.
+  const isAuthorized = ['admin', 'ceo', 'cfo', 'junior_accountant'].includes(user?.role?.toLowerCase() || '');
 
   useEffect(() => {
     if (isAuthorized && token) {
@@ -97,16 +102,21 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
   }, [globalRate]);
 
   const savePrices = async () => {
+    if (!reason.trim()) {
+      setMessage({ type: 'error', text: 'A reason for this price change is required.' });
+      return;
+    }
     setSaving(true);
     setMessage({ type: '', text: '' });
     try {
-      await axios.put(`${process.env.NEXT_PUBLIC_API_URL}/products/pricing`, 
-        { products }, 
+      await axios.put(`${process.env.NEXT_PUBLIC_API_URL}/products/pricing`,
+        { products, reason: reason.trim() },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setMessage({ type: 'success', text: 'Pricing successfully updated across POS and ERP systems.' });
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to save pricing.' });
+      setReason('');
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.message || 'Failed to save pricing.' });
     } finally {
       setSaving(false);
     }
@@ -274,14 +284,26 @@ export default function PricingManager({ globalRate }: PricingManagerProps) {
               </table>
             </div>
             
-            <div className="p-4 border-t border-dark-700 bg-dark-800 flex justify-between items-center">
-              <span className="text-xs text-gray-500 ml-2">
-                Showing {filteredProducts.length} of {products.length} products
-              </span>
-              <button 
-                onClick={savePrices} 
-                disabled={saving || filteredProducts.length === 0} 
-                className="bg-green-500 hover:bg-green-600 text-white font-bold py-2.5 px-6 rounded-lg flex items-center gap-2 transition disabled:opacity-50"
+            <div className="p-4 border-t border-dark-700 bg-dark-800 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+              <div className="flex-1 min-w-0">
+                <label className="block text-xs font-semibold text-gray-400 mb-1.5">
+                  Reason for change <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g. Q3 supplier cost increase, correcting a data-entry error..."
+                  className="w-full bg-dark-900 border border-dark-600 text-white text-sm rounded-lg px-3 py-2 focus:border-green-500 outline-none transition"
+                />
+                <span className="text-xs text-gray-500 ml-2">
+                  Showing {filteredProducts.length} of {products.length} products
+                </span>
+              </div>
+              <button
+                onClick={savePrices}
+                disabled={saving || filteredProducts.length === 0 || !reason.trim()}
+                className="bg-green-500 hover:bg-green-600 text-white font-bold py-2.5 px-6 rounded-lg flex items-center gap-2 transition disabled:opacity-50 flex-shrink-0"
               >
                 <Save className="w-4 h-4" /> {saving ? 'Publishing...' : 'Publish Prices Globally'}
               </button>
