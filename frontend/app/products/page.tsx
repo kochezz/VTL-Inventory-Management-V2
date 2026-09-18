@@ -205,7 +205,19 @@ export default function ProductsPage() {
     );
   };
 
-  if (authLoading || loading) {
+  // Only the one-time auth check gets a full-page replacement -- it happens
+  // once, before anything on this page is interactive. `loading` (the
+  // products fetch) must NOT: fetchProducts() re-runs whenever `token`
+  // changes identity, which happens on every silent background token
+  // refresh triggered by ANY other request anywhere in the app (see
+  // hooks/useAuth.ts's response interceptor), not just on this page's own
+  // actions. A full-tree early return here previously unmounted the whole
+  // page -- including an open AddProductModal and all its in-progress form
+  // state -- every time that happened, with no relation to what the user
+  // was doing. `loading` is now handled as an inline spinner scoped to the
+  // products table below, so the modal (and everything else on the page)
+  // stays mounted across background refetches.
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center">
         <div className="text-center">
@@ -347,6 +359,12 @@ export default function ProductsPage() {
 
         {/* Products Table */}
         <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden shadow-sm">
+          {loading ? (
+            <div className="p-12 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500 mx-auto"></div>
+              <p className="text-gray-400 mt-4">Loading products...</p>
+            </div>
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead className="bg-dark-900 border-b border-dark-700">
@@ -414,6 +432,7 @@ export default function ProductsPage() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
 
         {showAddModal && (
