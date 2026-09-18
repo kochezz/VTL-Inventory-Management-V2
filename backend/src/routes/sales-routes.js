@@ -22,7 +22,12 @@ router.get('/exchange-rate', async (req, res) => {
   }
 });
 
-router.post('/exchange-rate', authorize(['admin', 'cfo', 'manager']), async (req, res) => {
+// 'ceo' was missing here -- a pre-existing bug: the /pricing page lets ceo
+// see and click "Update" on this exact widget (its own CAN_VIEW_ROLES has
+// always included ceo), but this route would 403 them. 'manager' is left
+// untouched -- historically unused but not this session's boundary to move
+// (see pricing/page.tsx's own comment on this route for that call).
+router.post('/exchange-rate', authorize(['admin', 'cfo', 'ceo', 'manager']), async (req, res) => {
   try {
     const { rate_value } = req.body;
     const userId = req.user.user_id;
