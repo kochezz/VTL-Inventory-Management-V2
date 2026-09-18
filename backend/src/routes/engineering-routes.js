@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 
 const { authenticate } = require('../middleware/auth-middleware');
-const { requireEngineeringAccess, requireEngineeringManager } = require('../middleware/engineering-middleware');
+const { requireEngineeringAccess, requireEngineeringManager, requireAssetRegisterRead } = require('../middleware/engineering-middleware');
 const engineeringService = require('../services/engineering-service');
 const EngineeringEmailService = require('../services/engineering-email-service');
 
@@ -35,8 +35,14 @@ router.post('/notifications', requireEngineeringAccess, async (req, res) => {
 });
 
 // ─── Asset Register ──────────────────────────────────────────────────────────
+// Reads (list, detail) are open to Finance (junior_accountant, manager, cfo,
+// ceo) alongside Engineering -- purchase and stock-level planning needs
+// visibility into asset data, not write access. Writes (create, edit,
+// delete) stay exactly as they already were: engineering_manager/admin
+// only -- this session does not widen that boundary to plain 'engineering',
+// preserving the existing, deliberate convention.
 
-router.get('/assets/locations', requireEngineeringAccess, async (req, res) => {
+router.get('/assets/locations', requireAssetRegisterRead, async (req, res) => {
   try {
     res.json(await engineeringService.listFunctionalLocations());
   } catch (error) {
@@ -44,12 +50,22 @@ router.get('/assets/locations', requireEngineeringAccess, async (req, res) => {
   }
 });
 
-router.get('/assets/equipment', requireEngineeringAccess, async (req, res) => {
+router.get('/assets/equipment', requireAssetRegisterRead, async (req, res) => {
   try {
     res.json(await engineeringService.listEquipment({
       floc_id: req.query.floc_id,
       status: req.query.status
     }));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/assets/equipment/:id', requireAssetRegisterRead, async (req, res) => {
+  try {
+    const equipment = await engineeringService.getEquipmentById(req.params.id);
+    if (!equipment) return res.status(404).json({ message: 'Equipment not found.' });
+    res.json(equipment);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -68,6 +84,23 @@ router.post('/assets/equipment', requireEngineeringManager, async (req, res) => 
     res.status(201).json(await engineeringService.createEquipment(req.body));
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+router.patch('/assets/equipment/:id', requireEngineeringManager, async (req, res) => {
+  try {
+    res.json(await engineeringService.updateEquipment(req.params.id, req.body));
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.delete('/assets/equipment/:id', requireEngineeringManager, async (req, res) => {
+  try {
+    await engineeringService.deleteEquipment(req.params.id);
+    res.status(204).end();
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
   }
 });
 

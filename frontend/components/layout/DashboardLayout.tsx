@@ -57,7 +57,12 @@ const navigation: NavItem[] = [
     name: 'Products',
     href: '/products',
     icon: Package,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    // junior_accountant added -- backend access (POST /products, PUT
+    // /products/pricing) already existed from the Finance Access
+    // Expansion session, but no sidebar entry meant no way to discover it.
+    // products/page.tsx itself has no separate role guard (only checks
+    // isAuthenticated), so this sidebar entry was the only actual gap.
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'Inventory',
@@ -182,11 +187,19 @@ const navigation: NavItem[] = [
     name: 'Engineering',
     href: '/engineering',
     icon: Wrench,
-    roles: ['admin', 'engineering', 'engineering_manager'],
+    // junior_accountant/manager/cfo/ceo added here only so the section
+    // renders for them at all (needed for the Asset Register child below);
+    // the parent/child role arrays are filtered independently, so this
+    // alone doesn't grant them Notifications/Work Orders/PM Schedule/Task
+    // Lists -- those stay engineering-only. The nav's parent-click handler
+    // routes to the first child a role can actually see, not this parent's
+    // own href, so a Finance user clicking "Engineering" lands on Asset
+    // Register directly rather than bouncing off a page they can't view.
+    roles: ['admin', 'engineering', 'engineering_manager', 'junior_accountant', 'manager', 'cfo', 'ceo'],
     children: [
       { name: 'Notifications', href: '/engineering/notifications', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'Work Orders', href: '/engineering/work-orders', roles: ['admin', 'engineering', 'engineering_manager'] },
-      { name: 'Asset Register', href: '/engineering/assets', roles: ['admin', 'engineering', 'engineering_manager'] },
+      { name: 'Asset Register', href: '/engineering/assets', roles: ['admin', 'engineering', 'engineering_manager', 'junior_accountant', 'manager', 'cfo', 'ceo'] },
       { name: 'PM Schedule', href: '/engineering/pm-schedule', roles: ['admin', 'engineering', 'engineering_manager'] },
       { name: 'Task Lists', href: '/engineering/task-lists', roles: ['admin', 'engineering', 'engineering_manager'] },
     ],
