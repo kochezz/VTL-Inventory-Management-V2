@@ -111,7 +111,12 @@ const navigation: NavItem[] = [
     name: 'Global Pricing',
     href: '/pricing',
     icon: BadgeDollarSign,
-    roles: ['admin', 'ceo', 'cfo']
+    // junior_accountant added (Finance Access Expansion) -- the page's own
+    // CAN_VIEW_ROLES already admits them; without this they'd have no nav
+    // link to discover a page they can actually use (same class of gap
+    // found and fixed for Categories across the compliance sessions).
+    // manager stays out, unchanged.
+    roles: ['admin', 'ceo', 'cfo', 'junior_accountant']
   },
   {
     name: 'Compliance',
