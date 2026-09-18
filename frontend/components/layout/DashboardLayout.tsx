@@ -57,7 +57,12 @@ const navigation: NavItem[] = [
     name: 'Products',
     href: '/products',
     icon: Package,
-    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager']
+    // junior_accountant added -- backend access (POST /products, PUT
+    // /products/pricing) already existed from the Finance Access
+    // Expansion session, but no sidebar entry meant no way to discover it.
+    // products/page.tsx itself has no separate role guard (only checks
+    // isAuthenticated), so this sidebar entry was the only actual gap.
+    roles: ['admin', 'manager', 'qa', 'staff', 'viewer', 'super_viewer', 'operator', 'ceo', 'cfo', 'sales', 'engineering', 'engineering_manager', 'junior_accountant']
   },
   {
     name: 'Inventory',
