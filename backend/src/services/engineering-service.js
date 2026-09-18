@@ -333,6 +333,17 @@ const listEquipment = async ({ floc_id, status } = {}) => {
   return result.rows;
 };
 
+const getEquipmentById = async (equipmentId) => {
+  const result = await pool.query(
+    `SELECT e.*, fl.name AS floc_name, fl.floc_code
+     FROM equipment e
+     LEFT JOIN functional_locations fl ON fl.floc_id = e.floc_id
+     WHERE e.equipment_id = $1`,
+    [equipmentId]
+  );
+  return result.rows[0] || null;
+};
+
 // ─── Work Order Checklist / Time (read) ──────────────────────────────────────
 
 const getChecklistItems = async (workOrderId) => {
@@ -434,23 +445,87 @@ const createFunctionalLocation = async ({ floc_code, name, parent_floc_id, criti
 
 const createEquipment = async ({
   equipment_code, name, model_number, manufacturer, floc_id,
-  parent_equipment_id, installation_date, food_contact_surface, status
+  parent_equipment_id, installation_date, food_contact_surface, status, cost_usd
 }) => {
   try {
     const result = await pool.query(
       `INSERT INTO equipment (
         equipment_code, name, model_number, manufacturer, floc_id,
-        parent_equipment_id, installation_date, food_contact_surface, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        parent_equipment_id, installation_date, food_contact_surface, status, cost_usd
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
       [equipment_code, name, model_number || null, manufacturer || null,
        floc_id || null, parent_equipment_id || null, installation_date || null,
-       food_contact_surface || false, status || 'OPERATIONAL']
+       food_contact_surface || false, status || 'OPERATIONAL',
+       cost_usd !== undefined && cost_usd !== null && cost_usd !== '' ? cost_usd : null]
     );
     return result.rows[0];
   } catch (error) {
     if (error.code === '23505') {
       throw new Error(`Equipment with code "${equipment_code}" already exists.`);
+    }
+    throw error;
+  }
+};
+
+// Only fields explicitly present in `updates` are touched -- a partial
+// PATCH body from the edit modal shouldn't accidentally null out fields
+// the user didn't intend to change.
+const UPDATABLE_EQUIPMENT_FIELDS = [
+  'name', 'model_number', 'manufacturer', 'floc_id', 'parent_equipment_id',
+  'installation_date', 'food_contact_surface', 'status', 'cost_usd',
+];
+
+const updateEquipment = async (equipmentId, updates) => {
+  const setClauses = [];
+  const params = [];
+  for (const field of UPDATABLE_EQUIPMENT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(updates, field)) {
+      params.push(updates[field] === '' ? null : updates[field]);
+      setClauses.push(`${field} = $${params.length}`);
+    }
+  }
+  if (setClauses.length === 0) {
+    const err = new Error('No updatable fields were provided.');
+    err.statusCode = 400;
+    throw err;
+  }
+  params.push(equipmentId);
+  const result = await pool.query(
+    `UPDATE equipment SET ${setClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
+     WHERE equipment_id = $${params.length}
+     RETURNING *`,
+    params
+  );
+  if (result.rows.length === 0) {
+    const err = new Error('Equipment not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+  return result.rows[0];
+};
+
+const deleteEquipment = async (equipmentId) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM equipment WHERE equipment_id = $1 RETURNING equipment_id`,
+      [equipmentId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('Equipment not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    return result.rows[0];
+  } catch (error) {
+    // FK references from work_orders, maintenance_notifications, pm_plans,
+    // measuring_points, equipment_boms, or a child equipment's
+    // parent_equipment_id -- a real maintenance history shouldn't silently
+    // disappear along with the asset record that anchors it.
+    if (error.code === '23503') {
+      const err = new Error('This equipment cannot be deleted -- it has linked work orders, notifications, PM plans, or other records. Retire it via status instead.');
+      err.statusCode = 409;
+      throw err;
     }
     throw error;
   }
@@ -786,6 +861,9 @@ module.exports = {
   addChecklistItems,
   listFunctionalLocations,
   listEquipment,
+  getEquipmentById,
+  updateEquipment,
+  deleteEquipment,
   getChecklistItems,
   getTimeConfirmations,
   listSpareParts,
