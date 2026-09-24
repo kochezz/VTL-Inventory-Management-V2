@@ -136,10 +136,44 @@ async function uploadTestEvidence(itemId, headers) {
   return axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, fd, headers);
 }
 
-async function createComplianceCategory({ name, regulator = 'TEST', recurrence_type = 'ONE_OFF_EXPIRY' }) {
+// Back-compat shim: every existing call site across the test suite passes
+// only `recurrence_type` (the pre-flexible-cadence field) -- this derives
+// the new cadence_type/interval_months/due_day_of_month/anchor_date from
+// it automatically so none of those call sites need to change, while still
+// allowing a test to pass the new fields directly when it specifically
+// wants to exercise a custom interval.
+async function createComplianceCategory({
+  name, regulator = 'TEST', recurrence_type = 'ONE_OFF_EXPIRY',
+  cadence_type, interval_months, due_day_of_month, anchor_date,
+}) {
+  if (cadence_type === undefined) {
+    if (recurrence_type === 'ONE_OFF_EXPIRY') {
+      cadence_type = 'ONE_OFF';
+    } else if (recurrence_type === 'MONTHLY_RECURRING') {
+      cadence_type = 'RECURRING';
+      interval_months = interval_months ?? 1;
+    } else if (recurrence_type === 'ANNUAL_RECURRING') {
+      cadence_type = 'RECURRING';
+      interval_months = interval_months ?? 12;
+    }
+  }
+  // A real anchor/due-day so a RECURRING test category is immediately
+  // usable by createComplianceItem/the scheduler without every test having
+  // to set these explicitly -- today's date is as good a default as any
+  // for a disposable test fixture. Uses strict `undefined` checks (not `??`)
+  // so a caller CAN explicitly pass anchor_date: null to opt out and get an
+  // unconfigured RECURRING category on purpose (e.g. to test the "cadence
+  // isn't configured yet" rejection).
+  if (cadence_type === 'RECURRING') {
+    const today = new Date();
+    if (anchor_date === undefined) anchor_date = today.toISOString().split('T')[0];
+    if (due_day_of_month === undefined) due_day_of_month = today.getUTCDate();
+  }
+
   const result = await pool.query(
-    `INSERT INTO compliance_categories (name, regulator, recurrence_type) VALUES ($1, $2, $3) RETURNING category_id`,
-    [name, regulator, recurrence_type]
+    `INSERT INTO compliance_categories (name, regulator, recurrence_type, cadence_type, interval_months, due_day_of_month, anchor_date)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING category_id`,
+    [name, regulator, recurrence_type, cadence_type, interval_months ?? null, due_day_of_month ?? null, anchor_date ?? null]
   );
   return result.rows[0].category_id;
 }
@@ -219,10 +253,10 @@ async function callScheduler({ dryRun = false, secret, omitSecret = false } = {}
 // design; sent_date always defaults to CURRENT_DATE on insert), needed only
 // to simulate "yesterday's escalation already went out" without literally
 // waiting a day in a test.
-async function backdateReminderLog(itemId, tier, sentDate) {
+async function backdateReminderLog(itemId, tierType, sentDate) {
   await pool.query(
-    `UPDATE compliance_reminder_log SET sent_date = $1, sent_at = $1::date WHERE item_id = $2 AND tier = $3`,
-    [sentDate, itemId, tier]
+    `UPDATE compliance_reminder_log SET sent_date = $1, sent_at = $1::date WHERE item_id = $2 AND tier_type = $3`,
+    [sentDate, itemId, tierType]
   );
 }
 

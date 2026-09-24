@@ -53,7 +53,7 @@ async function createCategory(headers, nameSuffix) {
     `${BASE_URL}/api/compliance/categories`,
     {
       name: `TEST SUITE - category approval ${nameSuffix}`,
-      recurrence_type: 'ONE_OFF_EXPIRY',
+      cadence_type: 'ONE_OFF',
       reminder_ladder_days: [30, 15, 5],
     },
     headers
