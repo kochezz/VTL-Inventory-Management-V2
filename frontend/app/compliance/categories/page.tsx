@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { Gavel, Plus, X, Save, AlertCircle, Power, PowerOff, CalendarClock, Pencil } from 'lucide-react';
+import { Gavel, Plus, X, Save, AlertCircle, Power, PowerOff, CalendarClock, Pencil, Undo2, Send } from 'lucide-react';
 
 // junior_accountant and manager can now PROPOSE a category (backend:
 // authorize(['junior_accountant','manager','admin','cfo','ceo']) on POST
@@ -70,8 +70,9 @@ interface ComplianceCategory {
   anchor_date: string | null;
   reminder_ladder_days: number[];
   is_active: boolean;
-  status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED';
+  status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'RETURNED';
   rejection_reason: string | null;
+  created_by: string;
 }
 
 // status (has this been vetted at all) vs is_active (still in use) are
@@ -80,6 +81,7 @@ interface ComplianceCategory {
 const STATUS_STYLES: Record<string, string> = {
   PENDING_APPROVAL: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
   ACTIVE: 'bg-green-500/10 text-green-400 border-green-500/20',
+  RETURNED: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   REJECTED: 'bg-red-500/10 text-red-400 border-red-500/20',
 };
 
@@ -114,6 +116,17 @@ export default function ComplianceCategoriesPage() {
   const [editDueDayOfMonth, setEditDueDayOfMonth] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
+
+  // Creator's fix-and-resubmit flow for a RETURNED category -- separate
+  // from editingCategory above, which is the executive-only, any-status
+  // cadence edit (anchor_date/due_day_of_month). This one is name/
+  // regulator/reminder_ladder_days, RETURNED-only, creator-or-admin --
+  // enforced server-side by updateComplianceCategory, mirrored here only
+  // for which fields the form shows.
+  const [resubmitCategory, setResubmitCategory] = useState<ComplianceCategory | null>(null);
+  const [resubmitForm, setResubmitForm] = useState({ name: '', regulator: '', reminderLadderDays: '' });
+  const [resubmitLoading, setResubmitLoading] = useState(false);
+  const [resubmitError, setResubmitError] = useState('');
 
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {
@@ -274,6 +287,49 @@ export default function ComplianceCategoriesPage() {
     }
   };
 
+  const openResubmitModal = (category: ComplianceCategory) => {
+    setResubmitCategory(category);
+    setResubmitForm({
+      name: category.name,
+      regulator: category.regulator || '',
+      reminderLadderDays: category.reminder_ladder_days.join(','),
+    });
+    setResubmitError('');
+  };
+
+  const handleFixAndResubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resubmitCategory) return;
+    try {
+      setResubmitLoading(true);
+      setResubmitError('');
+
+      const ladder = resubmitForm.reminderLadderDays
+        .split(',')
+        .map((d) => parseInt(d.trim(), 10))
+        .filter((d) => !isNaN(d));
+      if (ladder.length === 0) {
+        setResubmitError('Reminder ladder must have at least one valid number of days.');
+        setResubmitLoading(false);
+        return;
+      }
+
+      await api.patch(`/compliance/categories/${resubmitCategory.category_id}`, {
+        name: resubmitForm.name,
+        regulator: resubmitForm.regulator || null,
+        reminder_ladder_days: ladder,
+      });
+      await api.post(`/compliance/categories/${resubmitCategory.category_id}/resubmit`);
+
+      setResubmitCategory(null);
+      fetchCategories();
+    } catch (err: any) {
+      setResubmitError(err.response?.data?.message || 'Failed to save changes and resubmit this category.');
+    } finally {
+      setResubmitLoading(false);
+    }
+  };
+
   const toggleActive = async (category: ComplianceCategory) => {
     try {
       await api.patch(`/compliance/categories/${category.category_id}`, { is_active: !category.is_active });
@@ -372,8 +428,8 @@ export default function ComplianceCategoriesPage() {
                         <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[cat.status]}`}>
                           {cat.status.replace('_', ' ')}
                         </span>
-                        {cat.status === 'REJECTED' && cat.rejection_reason && (
-                          <p className="text-xs text-gray-500 mt-1 max-w-[160px] mx-auto">{cat.rejection_reason}</p>
+                        {(cat.status === 'REJECTED' || cat.status === 'RETURNED') && cat.rejection_reason && (
+                          <p className={`text-xs mt-1 max-w-[160px] mx-auto ${cat.status === 'RETURNED' ? 'text-orange-300' : 'text-gray-500'}`}>{cat.rejection_reason}</p>
                         )}
                       </td>
                       <td className="py-4 px-6 text-center">
@@ -394,6 +450,16 @@ export default function ComplianceCategoriesPage() {
                             the backend restricts to admin/cfo/ceo -- hidden here rather
                             than shown-then-403'd for a junior_accountant viewer. */}
                         <div className="flex items-center justify-end gap-2">
+                          {cat.status === 'RETURNED' && cat.created_by === user?.user_id && (
+                            <button
+                              onClick={() => openResubmitModal(cat)}
+                              className="p-2 text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                              title="Fix and resubmit this category"
+                            >
+                              <Undo2 className="w-4 h-4" />
+                              Fix &amp; Resubmit
+                            </button>
+                          )}
                           {isExecutive && cat.cadence_type === 'RECURRING' && (
                             <button
                               onClick={() => openEditModal(cat)}
@@ -612,6 +678,73 @@ export default function ComplianceCategoriesPage() {
                 <button type="button" onClick={() => setEditingCategory(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
                 <button type="submit" disabled={editLoading} className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 disabled:opacity-50">
                   {editLoading ? 'Saving...' : <><Save className="w-5 h-5" /> Save</>}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {resubmitCategory && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Undo2 className="w-5 h-5 text-orange-400" />
+                Fix &amp; Resubmit -- {resubmitCategory.name}
+              </h2>
+              <button onClick={() => setResubmitCategory(null)} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+            </div>
+
+            <form onSubmit={handleFixAndResubmit} className="p-6 space-y-5">
+              {resubmitCategory.rejection_reason && (
+                <p className="text-sm text-orange-300 bg-orange-500/5 border border-orange-500/20 rounded-lg px-3 py-2">
+                  <span className="font-bold">Why it was returned:</span> {resubmitCategory.rejection_reason}
+                </p>
+              )}
+              {resubmitError && (
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <p>{resubmitError}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Name</label>
+                <input
+                  type="text" required
+                  value={resubmitForm.name}
+                  onChange={(e) => setResubmitForm({ ...resubmitForm, name: e.target.value })}
+                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Regulator (optional)</label>
+                <input
+                  type="text"
+                  value={resubmitForm.regulator}
+                  onChange={(e) => setResubmitForm({ ...resubmitForm, regulator: e.target.value })}
+                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Reminder Ladder (days before due, comma-separated)</label>
+                <input
+                  type="text" required
+                  value={resubmitForm.reminderLadderDays}
+                  onChange={(e) => setResubmitForm({ ...resubmitForm, reminderLadderDays: e.target.value })}
+                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono focus:border-primary-500"
+                />
+              </div>
+
+              <p className="text-xs text-gray-500">Cadence can't be changed here -- deactivate and recreate the category if that needs to change.</p>
+
+              <div className="pt-4 border-t border-dark-700 flex justify-end gap-3">
+                <button type="button" onClick={() => setResubmitCategory(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
+                <button type="submit" disabled={resubmitLoading} className="px-8 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-bold flex items-center gap-2 disabled:opacity-50">
+                  {resubmitLoading ? 'Saving...' : <><Send className="w-5 h-5" /> Save &amp; Resubmit</>}
                 </button>
               </div>
             </form>

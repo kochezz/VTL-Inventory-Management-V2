@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { ListChecks, AlertCircle, CheckCircle2, XCircle, X, FileText, Eye, Gavel, Bell } from 'lucide-react';
+import { ListChecks, AlertCircle, CheckCircle2, XCircle, X, FileText, Eye, Gavel, Bell, Undo2 } from 'lucide-react';
 
 // Same standard as /pricing and /compliance/categories -- a route guard,
 // not just a hidden nav link.
@@ -49,7 +49,7 @@ export default function ComplianceApprovalsPage() {
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
 
-  const [actionModal, setActionModal] = useState<{ target: ActionTarget; type: 'approve' | 'reject' } | null>(null);
+  const [actionModal, setActionModal] = useState<{ target: ActionTarget; type: 'approve' | 'reject' | 'return' } | null>(null);
   const [justification, setJustification] = useState('');
   const [reason, setReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
@@ -124,6 +124,14 @@ export default function ComplianceApprovalsPage() {
     setReason('');
     setActionModal({ target, type: 'reject' });
   };
+  // Return sends it back to the creator to fix, instead of rejecting it
+  // outright -- same reason requirement as reject (server enforces >=10
+  // characters either way), just a different resulting status.
+  const openReturn = (target: ActionTarget) => {
+    setActionError('');
+    setReason('');
+    setActionModal({ target, type: 'return' });
+  };
 
   const confirmAction = async () => {
     if (!actionModal) return;
@@ -134,8 +142,8 @@ export default function ComplianceApprovalsPage() {
       setActionError('Justification is required when approving your own submission.');
       return;
     }
-    if (type === 'reject' && !reason.trim()) {
-      setActionError('A rejection reason is required.');
+    if ((type === 'reject' || type === 'return') && reason.trim().length < 10) {
+      setActionError(`A ${type} reason of at least 10 characters is required.`);
       return;
     }
 
@@ -148,7 +156,7 @@ export default function ComplianceApprovalsPage() {
       if (type === 'approve') {
         await api.post(`${basePath}/${id}/approve`, selfApproval ? { justification } : {});
       } else {
-        await api.post(`${basePath}/${id}/reject`, { reason });
+        await api.post(`${basePath}/${id}/${type}`, { reason });
       }
       setActionModal(null);
       fetchQueue();
@@ -242,6 +250,13 @@ export default function ComplianceApprovalsPage() {
                               <CheckCircle2 className="w-4 h-4" /> Approve
                             </button>
                             <button
+                              onClick={() => openReturn({ kind: 'category', entity: cat })}
+                              className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                              title="Send back to the creator to fix, instead of rejecting outright"
+                            >
+                              <Undo2 className="w-4 h-4" /> Return
+                            </button>
+                            <button
                               onClick={() => openReject({ kind: 'category', entity: cat })}
                               className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
                             >
@@ -330,6 +345,13 @@ export default function ComplianceApprovalsPage() {
                               <CheckCircle2 className="w-4 h-4" /> Approve
                             </button>
                             <button
+                              onClick={() => openReturn({ kind: 'item', entity: item })}
+                              className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+                              title="Send back to the creator to fix, instead of rejecting outright"
+                            >
+                              <Undo2 className="w-4 h-4" /> Return
+                            </button>
+                            <button
                               onClick={() => openReject({ kind: 'item', entity: item })}
                               className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
                             >
@@ -352,7 +374,7 @@ export default function ComplianceApprovalsPage() {
           <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
               <h2 className="text-xl font-bold text-white">
-                {actionModal.type === 'approve' ? 'Approve' : 'Reject'} {actionModal.target.kind === 'item' ? 'Item' : 'Category'}
+                {actionModal.type === 'approve' ? 'Approve' : actionModal.type === 'return' ? 'Return' : 'Reject'} {actionModal.target.kind === 'item' ? 'Item' : 'Category'}
               </h2>
               <button onClick={() => setActionModal(null)} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
             </div>
@@ -424,14 +446,18 @@ export default function ComplianceApprovalsPage() {
                 </div>
               )}
 
-              {actionModal.type === 'reject' && (
+              {(actionModal.type === 'reject' || actionModal.type === 'return') && (
                 <div>
-                  <label className="block text-sm font-bold text-gray-300 mb-2">Rejection Reason</label>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">
+                    {actionModal.type === 'return' ? 'Return Reason' : 'Rejection Reason'} (at least 10 characters)
+                  </label>
                   <textarea
                     required rows={3}
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="Why is this being rejected?"
+                    placeholder={actionModal.type === 'return'
+                      ? 'What needs to be fixed before this can be resubmitted?'
+                      : 'Why is this being rejected?'}
                     className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
                   />
                 </div>
@@ -442,9 +468,13 @@ export default function ComplianceApprovalsPage() {
                 <button
                   onClick={confirmAction}
                   disabled={actionLoading}
-                  className={`px-6 py-2.5 text-white rounded-lg font-bold disabled:opacity-50 ${actionModal.type === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+                  className={`px-6 py-2.5 text-white rounded-lg font-bold disabled:opacity-50 ${
+                    actionModal.type === 'approve' ? 'bg-green-600 hover:bg-green-700'
+                      : actionModal.type === 'return' ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-red-600 hover:bg-red-700'
+                  }`}
                 >
-                  {actionLoading ? 'Working...' : actionModal.type === 'approve' ? 'Confirm Approve' : 'Confirm Reject'}
+                  {actionLoading ? 'Working...' : actionModal.type === 'approve' ? 'Confirm Approve' : actionModal.type === 'return' ? 'Confirm Return' : 'Confirm Reject'}
                 </button>
               </div>
             </div>
