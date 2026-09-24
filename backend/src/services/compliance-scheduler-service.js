@@ -246,6 +246,52 @@ async function processReapprovalReminders(dryRun, summary) {
   }
 }
 
+// ── Step 5: RETURNED item gone stale (Phase C) ──────────────────────────────
+// A RETURNED item is deliberately excluded from processReminderLadder/
+// processNonCompliantAndEscalations above (both only ever look at
+// status = 'APPROVED') -- no reminders, no escalation, while it's waiting
+// on the creator to fix and resubmit it. This is the one exception: if
+// it's sat RETURNED for more than 7 days with nobody resubmitting it,
+// Admin gets a nudge so it doesn't just quietly rot. Scoped to items only,
+// not categories -- categories have no due date or reminder ladder to
+// reason about urgency around, and the spec this was built from ties this
+// specifically to "reminders/escalation," machinery that only exists for
+// items. Same once-per-day dedup shape as OVERDUE_ESCALATION.
+async function processReturnedStaleNotifications(dryRun, summary) {
+  const staleItems = await pool.query(`
+    SELECT item_id FROM compliance_items
+    WHERE status = 'RETURNED' AND updated_at <= (CURRENT_TIMESTAMP - INTERVAL '7 days')
+  `);
+
+  if (staleItems.rows.length === 0) return;
+
+  const emails = await NotificationService.getComplianceNotificationEmails(['admin']);
+
+  for (const row of staleItems.rows) {
+    if (!dryRun) {
+      const inserted = await pool.query(
+        `INSERT INTO compliance_reminder_log (item_id, tier_type) VALUES ($1, 'RETURNED_STALE')
+         ON CONFLICT (item_id, tier_type, days_before, sent_date) DO NOTHING
+         RETURNING reminder_log_id`,
+        [row.item_id]
+      );
+      if (inserted.rows.length === 0) continue; // already notified today
+
+      summary.returned_stale_notified.push({ item_id: row.item_id, recipients: emails });
+      const html = `<p>A compliance item was returned for revision more than 7 days ago and has not been resubmitted.</p>
+        <p>Please follow up with the creator, or review it directly in the Vilagio ERP Compliance module.</p>`;
+      NotificationService.sendEmail(emails, `Compliance Item Returned 7+ Days Ago — Needs Follow-up`, html).catch(console.error);
+    } else {
+      const already = await pool.query(
+        `SELECT 1 FROM compliance_reminder_log WHERE item_id = $1 AND tier_type = 'RETURNED_STALE' AND sent_date = CURRENT_DATE LIMIT 1`,
+        [row.item_id]
+      );
+      if (already.rows.length > 0) continue;
+      summary.returned_stale_notified.push({ item_id: row.item_id, recipients: emails });
+    }
+  }
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 async function runScheduler({ dryRun = false } = {}) {
@@ -256,12 +302,14 @@ async function runScheduler({ dryRun = false } = {}) {
     escalations_sent: [],
     recurring_items_generated: [],
     reapproval_reminders_sent: [],
+    returned_stale_notified: [],
   };
 
   await processReminderLadder(dryRun, summary);
   await processNonCompliantAndEscalations(dryRun, summary);
   await processRecurrence(dryRun, summary);
   await processReapprovalReminders(dryRun, summary);
+  await processReturnedStaleNotifications(dryRun, summary);
 
   return summary;
 }

@@ -43,6 +43,73 @@ function toDateOnlyString(date) {
   return date.toISOString().split('T')[0];
 }
 
+// Shared minimum for a return/reject reason (Phase C) -- long enough to
+// force an actual explanation, not a one-word brush-off like "no".
+const MIN_REASON_LENGTH = 10;
+
+function validateReason(reason, action) {
+  if (!reason || reason.trim().length < MIN_REASON_LENGTH) {
+    const err = new Error(`A ${action} reason of at least ${MIN_REASON_LENGTH} characters is required.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return reason.trim();
+}
+
+// Runs `work(client)` inside BEGIN/COMMIT/ROLLBACK with the same crash-safe
+// client.on('error') handler approveComplianceItem has always needed (see
+// its own comment for why: a client checked out via pool.connect() emits
+// connection-level errors directly on itself, which pool-level handlers
+// never see -- unhandled, that's an uncaught exception that crashes the
+// whole process, confirmed live once already in this codebase's history).
+// Centralised here since Phase C adds several more manual-transaction
+// functions (return/resubmit/edit, for both categories and items) that all
+// need the identical protection.
+const withTransaction = async (work) => {
+  const client = await pool.connect();
+  client.on('error', (err) => {
+    console.error('❌ Unexpected error on compliance client connection:', err.message);
+  });
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+// Every approve/return/reject/resubmit/edit writes one of these in the same
+// transaction as its status/field change, per Phase C's explicit
+// requirement -- reuses the existing, already-append-only audit_log table
+// rather than a new one (confirmed via grep before this session: nothing
+// in this codebase ever UPDATEs or DELETEs an audit_log row).
+const writeAuditLog = async (client, { tableName, recordId, action, oldValues, newValues, userId }) => {
+  await client.query(
+    `INSERT INTO audit_log (table_name, record_id, action, old_values, new_values, performed_by, user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+    [
+      tableName, recordId, action,
+      oldValues ? JSON.stringify(oldValues) : null,
+      newValues ? JSON.stringify(newValues) : null,
+      userId,
+    ]
+  );
+};
+
+// Shallow-picks a subset of keys from a row for an audit_log old/new
+// snapshot -- narrows to just the fields a given edit actually touched
+// rather than dumping the entire row both ways.
+function pickFields(row, keys) {
+  const out = {};
+  for (const k of keys) out[k] = row[k];
+  return out;
+}
+
 // ─── Categories (Phase 5) ───────────────────────────────────────────────────
 // Categories were previously only ever created by direct DB insert (see
 // tests/helpers/test-helper.js's createComplianceCategory, and every ad hoc
@@ -174,78 +241,180 @@ const listComplianceCategories = async ({ activeOnly, status } = {}) => {
 // crash-risk class for (see approveComplianceItem's client.on('error') fix
 // and why it was needed).
 const approveComplianceCategory = async (categoryId, approverId, approverRole, justification) => {
-  const categoryRes = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
-  if (categoryRes.rows.length === 0) {
-    const err = new Error('Compliance category not found.');
-    err.statusCode = 404;
-    throw err;
-  }
-  const category = categoryRes.rows[0];
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const category = categoryRes.rows[0];
 
-  if (category.status !== 'PENDING_APPROVAL') {
-    const err = new Error(`Category is currently ${category.status}; must be PENDING_APPROVAL to approve.`);
-    err.statusCode = 400;
-    throw err;
-  }
+    if (category.status !== 'PENDING_APPROVAL') {
+      const err = new Error(`Category is currently ${category.status}; must be PENDING_APPROVAL to approve.`);
+      err.statusCode = 400;
+      throw err;
+    }
 
-  const isSelfApproval = category.created_by === approverId;
-  if (isSelfApproval && !EXECUTIVE_ROLES.includes(approverRole)) {
-    const err = new Error('Cannot approve your own submission.');
-    err.statusCode = 403;
-    throw err;
-  }
-  if (isSelfApproval && (!justification || !justification.trim())) {
-    const err = new Error('Justification is required for self-approval.');
-    err.statusCode = 400;
-    throw err;
-  }
+    const isSelfApproval = category.created_by === approverId;
+    if (isSelfApproval && !EXECUTIVE_ROLES.includes(approverRole)) {
+      const err = new Error('Cannot approve your own submission.');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (isSelfApproval && (!justification || !justification.trim())) {
+      const err = new Error('Justification is required for self-approval.');
+      err.statusCode = 400;
+      throw err;
+    }
 
-  const result = await pool.query(
-    `UPDATE compliance_categories
-     SET status = 'ACTIVE', approved_by = $1, approved_at = CURRENT_TIMESTAMP,
-         is_self_approved = $2, self_approval_justification = $3, updated_at = CURRENT_TIMESTAMP
-     WHERE category_id = $4 AND status = 'PENDING_APPROVAL'
-     RETURNING *`,
-    [approverId, isSelfApproval, isSelfApproval ? justification : null, categoryId]
-  );
-  if (result.rows.length === 0) {
-    const err = new Error('This category was already processed (approved or rejected) by someone else.');
-    err.statusCode = 409;
-    throw err;
-  }
-  return { category: result.rows[0], isSelfApproval };
+    const result = await client.query(
+      `UPDATE compliance_categories
+       SET status = 'ACTIVE', approved_by = $1, approved_at = CURRENT_TIMESTAMP,
+           is_self_approved = $2, self_approval_justification = $3, updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $4 AND status = 'PENDING_APPROVAL'
+       RETURNING *`,
+      [approverId, isSelfApproval, isSelfApproval ? justification : null, categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This category was already processed (approved or rejected) by someone else.');
+      err.statusCode = 409;
+      throw err;
+    }
+    const category2 = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'APPROVED',
+      oldValues: { status: category.status },
+      newValues: { status: category2.status, is_self_approved: category2.is_self_approved },
+      userId: approverId,
+    });
+    return { category: category2, isSelfApproval };
+  });
 };
 
-const rejectComplianceCategory = async (categoryId, reason) => {
-  if (!reason || !reason.trim()) {
-    const err = new Error('A rejection reason is required.');
-    err.statusCode = 400;
-    throw err;
-  }
+const rejectComplianceCategory = async (categoryId, reason, actorId) => {
+  const cleanReason = validateReason(reason, 'rejection');
 
-  const categoryRes = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
-  if (categoryRes.rows.length === 0) {
-    const err = new Error('Compliance category not found.');
-    err.statusCode = 404;
-    throw err;
-  }
-  if (categoryRes.rows[0].status !== 'PENDING_APPROVAL') {
-    const err = new Error(`Category is currently ${categoryRes.rows[0].status}; must be PENDING_APPROVAL to reject.`);
-    err.statusCode = 400;
-    throw err;
-  }
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = categoryRes.rows[0];
+    if (before.status !== 'PENDING_APPROVAL') {
+      const err = new Error(`Category is currently ${before.status}; must be PENDING_APPROVAL to reject.`);
+      err.statusCode = 400;
+      throw err;
+    }
 
-  const result = await pool.query(
-    `UPDATE compliance_categories SET status = 'REJECTED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
-     WHERE category_id = $2 AND status = 'PENDING_APPROVAL' RETURNING *`,
-    [reason, categoryId]
-  );
-  if (result.rows.length === 0) {
-    const err = new Error('This category was already processed (approved or rejected) by someone else.');
-    err.statusCode = 409;
-    throw err;
-  }
-  return result.rows[0];
+    const result = await client.query(
+      `UPDATE compliance_categories SET status = 'REJECTED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $2 AND status = 'PENDING_APPROVAL' RETURNING *`,
+      [cleanReason, categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This category was already processed (approved or rejected) by someone else.');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'REJECTED',
+      oldValues: { status: before.status }, newValues: { status: after.status, rejection_reason: after.rejection_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// New Phase C action: send a PENDING_APPROVAL category back to its creator
+// instead of an outright reject. Same reason-length bar as reject, same
+// atomic status-guard/409/audit_log shape -- the only difference from
+// reject is the resulting status (RETURNED, not REJECTED) and that a
+// RETURNED category can come back via resubmitComplianceCategory below,
+// where a rejected one cannot.
+const returnComplianceCategory = async (categoryId, reason, actorId) => {
+  const cleanReason = validateReason(reason, 'return');
+
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = categoryRes.rows[0];
+    if (before.status !== 'PENDING_APPROVAL') {
+      const err = new Error(`Category is currently ${before.status}; must be PENDING_APPROVAL to return.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_categories SET status = 'RETURNED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $2 AND status = 'PENDING_APPROVAL' RETURNING *`,
+      [cleanReason, categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This category was already processed (approved, rejected, or returned) by someone else.');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'RETURNED',
+      oldValues: { status: before.status }, newValues: { status: after.status, rejection_reason: after.rejection_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// RETURNED -> PENDING_APPROVAL. Creator or admin only (server-side
+// enforced, not just a hidden button). Clears every previous-decision
+// field so the next approver sees a clean slate, not stale approval/
+// rejection data from before the return -- self-approval rules apply
+// unchanged on the resubmitted category's eventual approval, same as any
+// other PENDING_APPROVAL category.
+const resubmitComplianceCategory = async (categoryId, actorId, isAdmin) => {
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = categoryRes.rows[0];
+    if (before.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can resubmit this category.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_categories
+       SET status = 'PENDING_APPROVAL', approved_by = NULL, approved_at = NULL,
+           is_self_approved = false, self_approval_justification = NULL, rejection_reason = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $1 AND status = 'RETURNED'
+       RETURNING *`,
+      [categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error(`Category is currently ${before.status}; must be RETURNED to resubmit.`);
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'RESUBMITTED',
+      oldValues: { status: before.status }, newValues: { status: after.status },
+      userId: actorId,
+    });
+    return after;
+  });
 };
 
 // Deliberately does not allow changing cadence_type/interval_months
@@ -267,93 +436,145 @@ const rejectComplianceCategory = async (categoryId, reason) => {
 // let someone silently reactivate a REJECTED category, or flip a still-
 // PENDING one straight to ACTIVE without ever going through approve() --
 // exactly the conflation the session asked to avoid.
-const updateComplianceCategory = async (categoryId, updates) => {
-  const existing = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
-  if (existing.rows.length === 0) {
-    const err = new Error('Compliance category not found.');
-    err.statusCode = 404;
-    throw err;
-  }
-  const category = existing.rows[0];
+// actorId/actorRole are optional (test-helper/scripted callers that
+// pre-date Phase C omit them) -- when omitted, this behaves exactly as
+// before: unrestricted by requester identity, any status. Passing them is
+// what enables Phase C's second, narrower edit path: the category's own
+// creator, editing while it's RETURNED, to fix it up before resubmitting.
+// Executives keep the original, unrestricted-by-status access this
+// function has always given them (e.g. backfilling anchor_date on an
+// ACTIVE category) -- Phase C's "editable ONLY when RETURNED" rule adds a
+// new allowance for the creator, it does not narrow the executive one.
+const updateComplianceCategory = async (categoryId, updates, actorId, actorRole) => {
+  return withTransaction(async (client) => {
+    const existing = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (existing.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const category = existing.rows[0];
 
-  for (const locked of ['recurrence_type', 'cadence_type', 'interval_months']) {
-    if (locked in updates) {
-      const err = new Error(`${locked} cannot be changed after creation. Deactivate this category and create a new one instead.`);
-      err.statusCode = 400;
-      throw err;
+    for (const locked of ['recurrence_type', 'cadence_type', 'interval_months']) {
+      if (locked in updates) {
+        const err = new Error(`${locked} cannot be changed after creation. Deactivate this category and create a new one instead.`);
+        err.statusCode = 400;
+        throw err;
+      }
     }
-  }
 
-  const fields = [];
-  const values = [];
-  let i = 1;
+    const isExecutive = actorRole != null && EXECUTIVE_ROLES.includes(actorRole);
+    let requireReturnedStatus = false;
+    if (actorId !== undefined && !isExecutive) {
+      if (category.created_by !== actorId) {
+        const err = new Error('Only the creator or an executive can edit this category.');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (category.status !== 'RETURNED') {
+        const err = new Error(`Category is currently ${category.status}; the creator can only edit it while RETURNED.`);
+        err.statusCode = 400;
+        throw err;
+      }
+      if ('is_active' in updates) {
+        const err = new Error('is_active can only be changed by an executive.');
+        err.statusCode = 403;
+        throw err;
+      }
+      requireReturnedStatus = true;
+    }
 
-  if ('name' in updates) {
-    if (!updates.name || !updates.name.trim()) {
-      const err = new Error('name cannot be empty.');
-      err.statusCode = 400;
-      throw err;
-    }
-    fields.push(`name = $${i++}`); values.push(updates.name.trim());
-  }
-  if ('regulator' in updates) {
-    fields.push(`regulator = $${i++}`); values.push(updates.regulator || null);
-  }
-  if ('reminder_ladder_days' in updates) {
-    const ladder = updates.reminder_ladder_days;
-    if (!Array.isArray(ladder) || ladder.length === 0 || !ladder.every((d) => Number.isInteger(d) && d > 0)) {
-      const err = new Error('reminder_ladder_days must be a non-empty array of positive integers.');
-      err.statusCode = 400;
-      throw err;
-    }
-    fields.push(`reminder_ladder_days = $${i++}`); values.push(ladder);
-  }
-  if ('is_active' in updates) {
-    fields.push(`is_active = $${i++}`); values.push(!!updates.is_active);
-  }
-  if ('anchor_date' in updates || 'due_day_of_month' in updates) {
-    if (category.cadence_type !== 'RECURRING') {
-      const err = new Error('anchor_date/due_day_of_month only apply to a RECURRING category.');
-      err.statusCode = 400;
-      throw err;
-    }
-    const anchorDate = 'anchor_date' in updates ? updates.anchor_date : category.anchor_date;
-    if (!anchorDate) {
-      const err = new Error('anchor_date cannot be cleared once set.');
-      err.statusCode = 400;
-      throw err;
-    }
-    const parsedAnchor = new Date(anchorDate);
-    if (isNaN(parsedAnchor.getTime())) {
-      const err = new Error('anchor_date is not a valid date.');
-      err.statusCode = 400;
-      throw err;
-    }
-    const dueDayOfMonth = 'due_day_of_month' in updates && updates.due_day_of_month != null
-      ? Number(updates.due_day_of_month)
-      : parsedAnchor.getUTCDate();
-    if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
-      const err = new Error('due_day_of_month must be an integer between 1 and 31.');
-      err.statusCode = 400;
-      throw err;
-    }
-    fields.push(`anchor_date = $${i++}`); values.push(toDateOnlyString(parsedAnchor));
-    fields.push(`due_day_of_month = $${i++}`); values.push(dueDayOfMonth);
-  }
+    const fields = [];
+    const values = [];
+    let i = 1;
 
-  if (fields.length === 0) {
-    const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active, anchor_date, due_day_of_month).');
-    err.statusCode = 400;
-    throw err;
-  }
+    if ('name' in updates) {
+      if (!updates.name || !updates.name.trim()) {
+        const err = new Error('name cannot be empty.');
+        err.statusCode = 400;
+        throw err;
+      }
+      fields.push(`name = $${i++}`); values.push(updates.name.trim());
+    }
+    if ('regulator' in updates) {
+      fields.push(`regulator = $${i++}`); values.push(updates.regulator || null);
+    }
+    if ('reminder_ladder_days' in updates) {
+      const ladder = updates.reminder_ladder_days;
+      if (!Array.isArray(ladder) || ladder.length === 0 || !ladder.every((d) => Number.isInteger(d) && d > 0)) {
+        const err = new Error('reminder_ladder_days must be a non-empty array of positive integers.');
+        err.statusCode = 400;
+        throw err;
+      }
+      fields.push(`reminder_ladder_days = $${i++}`); values.push(ladder);
+    }
+    if ('is_active' in updates) {
+      fields.push(`is_active = $${i++}`); values.push(!!updates.is_active);
+    }
+    if ('anchor_date' in updates || 'due_day_of_month' in updates) {
+      if (category.cadence_type !== 'RECURRING') {
+        const err = new Error('anchor_date/due_day_of_month only apply to a RECURRING category.');
+        err.statusCode = 400;
+        throw err;
+      }
+      const anchorDate = 'anchor_date' in updates ? updates.anchor_date : category.anchor_date;
+      if (!anchorDate) {
+        const err = new Error('anchor_date cannot be cleared once set.');
+        err.statusCode = 400;
+        throw err;
+      }
+      const parsedAnchor = new Date(anchorDate);
+      if (isNaN(parsedAnchor.getTime())) {
+        const err = new Error('anchor_date is not a valid date.');
+        err.statusCode = 400;
+        throw err;
+      }
+      const dueDayOfMonth = 'due_day_of_month' in updates && updates.due_day_of_month != null
+        ? Number(updates.due_day_of_month)
+        : parsedAnchor.getUTCDate();
+      if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
+        const err = new Error('due_day_of_month must be an integer between 1 and 31.');
+        err.statusCode = 400;
+        throw err;
+      }
+      fields.push(`anchor_date = $${i++}`); values.push(toDateOnlyString(parsedAnchor));
+      fields.push(`due_day_of_month = $${i++}`); values.push(dueDayOfMonth);
+    }
 
-  fields.push(`updated_at = CURRENT_TIMESTAMP`);
-  values.push(categoryId);
-  const result = await pool.query(
-    `UPDATE compliance_categories SET ${fields.join(', ')} WHERE category_id = $${i} RETURNING *`,
-    values
-  );
-  return result.rows[0];
+    if (fields.length === 0) {
+      const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active, anchor_date, due_day_of_month).');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(categoryId);
+    const whereClause = requireReturnedStatus
+      ? `WHERE category_id = $${i} AND status = 'RETURNED'`
+      : `WHERE category_id = $${i}`;
+    const result = await client.query(
+      `UPDATE compliance_categories SET ${fields.join(', ')} ${whereClause} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) {
+      // Only reachable via the creator-while-RETURNED path -- the
+      // executive path has no status condition in its WHERE clause, so it
+      // can only ever return 0 rows via the earlier not-found check.
+      const err = new Error('This category is no longer RETURNED (status changed by someone else).');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    if (actorId !== undefined) {
+      await writeAuditLog(client, {
+        tableName: 'compliance_categories', recordId: categoryId, action: 'EDITED',
+        oldValues: pickFields(category, Object.keys(updates)),
+        newValues: pickFields(after, Object.keys(updates)),
+        userId: actorId,
+      });
+    }
+    return after;
+  });
 };
 
 // ─── Items ──────────────────────────────────────────────────────────────────
@@ -460,7 +681,7 @@ const listComplianceItems = async ({ role, userId, status, needsAcknowledgement,
 
   const result = await pool.query(
     `SELECT ci.*,
-            cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.reminder_ladder_days,
+            cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.cadence_type, cc.reminder_ladder_days,
             (ci.due_date - CURRENT_DATE) AS days_until_due,
             (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
             COALESCE(
@@ -551,24 +772,7 @@ const getComplianceEvidence = async (itemId) => {
 // of creation" recurrence-rule bootstrap for MONTHLY_RECURRING /
 // ANNUAL_RECURRING categories.
 const approveComplianceItem = async (itemId, approverId, approverRole, justification) => {
-  const client = await pool.connect();
-  // A pool-level pool.on('error', ...) only catches errors on IDLE clients
-  // sitting in the pool -- a client actively checked out via pool.connect()
-  // (this manual BEGIN/COMMIT transaction) emits its own 'error' event
-  // directly on itself if the underlying connection drops mid-transaction,
-  // and with no listener here that becomes an uncaught exception that
-  // crashes the whole process (confirmed live: a real Neon connection drop
-  // during this exact transaction did exactly that). Log-and-continue, same
-  // policy as every pool-level handler elsewhere in this codebase -- the
-  // surrounding try/catch below already handles ROLLBACK for the normal
-  // query-promise-rejection path; this only covers the async, out-of-band
-  // connection-level error pg-pool doesn't route through that promise.
-  client.on('error', (err) => {
-    console.error('❌ Unexpected error on compliance-approval client connection:', err.message);
-  });
-  try {
-    await client.query('BEGIN');
-
+  return withTransaction(async (client) => {
     const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
     if (itemRes.rows.length === 0) {
       const err = new Error('Compliance item not found');
@@ -655,14 +859,15 @@ const approveComplianceItem = async (itemId, approverId, approverRole, justifica
       }
     }
 
-    await client.query('COMMIT');
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'APPROVED',
+      oldValues: { status: item.status },
+      newValues: { status: updatedItem.status, is_self_approved: updatedItem.is_self_approved },
+      userId: approverId,
+    });
+
     return { item: updatedItem, isSelfApproval, recurrenceRuleCreated };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 };
 
 // Single-item version of listComplianceItems's joined shape -- used for a
@@ -672,7 +877,7 @@ const approveComplianceItem = async (itemId, approverId, approverRole, justifica
 const getComplianceItemDetail = async (itemId) => {
   const result = await pool.query(
     `SELECT ci.*,
-            cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.reminder_ladder_days,
+            cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.cadence_type, cc.reminder_ladder_days,
             (ci.due_date - CURRENT_DATE) AS days_until_due,
             (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
             COALESCE(
@@ -692,32 +897,229 @@ const getComplianceItemDetail = async (itemId) => {
   return result.rows[0];
 };
 
-const rejectComplianceItem = async (itemId, reason) => {
-  if (!reason || !reason.trim()) {
-    const err = new Error('A rejection reason is required.');
-    err.statusCode = 400;
-    throw err;
-  }
+// Reason now requires >=10 characters (Phase C), and this now runs as a
+// proper atomic transaction with a status-guard + audit_log write --
+// fixing a real gap the earlier version had: its final UPDATE's WHERE
+// clause DID include status = 'PENDING_APPROVAL', but nothing checked the
+// UPDATE's row count afterward, so a concurrent approve winning the race
+// would silently return undefined (result.rows[0] on an empty array)
+// instead of a clean 409. Found while building Phase C's concurrent-
+// double-decision tests, not by a live incident.
+const rejectComplianceItem = async (itemId, reason, actorId) => {
+  const cleanReason = validateReason(reason, 'rejection');
 
-  const itemRes = await pool.query(`SELECT * FROM compliance_items WHERE item_id = $1`, [itemId]);
-  if (itemRes.rows.length === 0) {
-    const err = new Error('Compliance item not found');
-    err.statusCode = 404;
-    throw err;
-  }
-  const item = itemRes.rows[0];
-  if (item.status !== 'PENDING_APPROVAL') {
-    const err = new Error(`Item is currently ${item.status}; must be PENDING_APPROVAL to reject.`);
-    err.statusCode = 400;
-    throw err;
-  }
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = itemRes.rows[0];
+    if (before.status !== 'PENDING_APPROVAL') {
+      const err = new Error(`Item is currently ${before.status}; must be PENDING_APPROVAL to reject.`);
+      err.statusCode = 400;
+      throw err;
+    }
 
-  const result = await pool.query(
-    `UPDATE compliance_items SET status = 'REJECTED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
-     WHERE item_id = $2 RETURNING *`,
-    [reason, itemId]
-  );
-  return result.rows[0];
+    const result = await client.query(
+      `UPDATE compliance_items SET status = 'REJECTED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $2 AND status = 'PENDING_APPROVAL' RETURNING *`,
+      [cleanReason, itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This item was already processed (approved, rejected, or returned) by someone else.');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'REJECTED',
+      oldValues: { status: before.status }, newValues: { status: after.status, rejection_reason: after.rejection_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// New Phase C action: send a PENDING_APPROVAL item back to its creator
+// instead of an outright reject. Same shape as rejectComplianceItem
+// (reason >=10 chars, atomic status-guard, audit_log) -- only the
+// resulting status differs (RETURNED, not REJECTED), and only a RETURNED
+// item can come back via resubmitComplianceItem below.
+const returnComplianceItem = async (itemId, reason, actorId) => {
+  const cleanReason = validateReason(reason, 'return');
+
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = itemRes.rows[0];
+    if (before.status !== 'PENDING_APPROVAL') {
+      const err = new Error(`Item is currently ${before.status}; must be PENDING_APPROVAL to return.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_items SET status = 'RETURNED', rejection_reason = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $2 AND status = 'PENDING_APPROVAL' RETURNING *`,
+      [cleanReason, itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This item was already processed (approved, rejected, or returned) by someone else.');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'RETURNED',
+      oldValues: { status: before.status }, newValues: { status: after.status, rejection_reason: after.rejection_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// RETURNED -> PENDING_APPROVAL. Creator or admin only, server-side
+// enforced. Clears every previous-decision field (a clean slate for the
+// next approver) and re-checks the evidence requirement -- the whole
+// point of a return is "fix something," which for an item most often
+// means replacing the evidence PDF (POST /items/:id/evidence already
+// upserts regardless of status, so that part needed no change), and a
+// resubmit without ever having re-attached one would silently skip
+// straight back to PENDING_APPROVAL with nothing actually fixed. Self-
+// approval rules apply unchanged on the resubmitted item's eventual
+// approval, same as submitComplianceItem's original DRAFT->PENDING_
+// APPROVAL transition.
+const resubmitComplianceItem = async (itemId, actorId, isAdmin) => {
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = itemRes.rows[0];
+    if (before.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can resubmit this item.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const evidenceCheck = await client.query(`SELECT 1 FROM compliance_item_evidence WHERE item_id = $1`, [itemId]);
+    if (evidenceCheck.rows.length === 0) {
+      const err = new Error('A PDF evidence file must be attached before this item can be resubmitted.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_items
+       SET status = 'PENDING_APPROVAL', approved_by = NULL, approved_at = NULL,
+           is_self_approved = false, self_approval_justification = NULL, rejection_reason = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $1 AND status = 'RETURNED'
+       RETURNING *`,
+      [itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error(`Item is currently ${before.status}; must be RETURNED to resubmit.`);
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'RESUBMITTED',
+      oldValues: { status: before.status }, newValues: { status: after.status },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// New Phase C route (PATCH /items/:id didn't exist before this). Creator
+// or admin only, and only while RETURNED -- server-side enforced, not
+// just a hidden button, mirroring updateComplianceCategory's creator-path
+// exactly. due_date is only editable for a ONE_OFF category (a RECURRING
+// one still computes it server-side, same rule as creation/registration);
+// evidence_file_ref is just the human-readable label, the actual PDF goes
+// through the existing (unchanged) evidence upload endpoint.
+const updateComplianceItem = async (itemId, updates, actorId, isAdmin) => {
+  return withTransaction(async (client) => {
+    const existing = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (existing.rows.length === 0) {
+      const err = new Error('Compliance item not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const item = existing.rows[0];
+
+    if (item.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can edit this item.');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (item.status !== 'RETURNED') {
+      const err = new Error(`Item is currently ${item.status}; can only be edited while RETURNED.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const fields = [];
+    const values = [];
+    let i = 1;
+
+    if ('issued_date' in updates) {
+      fields.push(`issued_date = $${i++}`); values.push(updates.issued_date || null);
+    }
+    if ('due_date' in updates) {
+      const catRes = await client.query(`SELECT cadence_type FROM compliance_categories WHERE category_id = $1`, [item.category_id]);
+      if (catRes.rows[0]?.cadence_type === 'RECURRING') {
+        const err = new Error('due_date cannot be edited for a RECURRING category -- it is computed from the category cadence.');
+        err.statusCode = 400;
+        throw err;
+      }
+      if (!updates.due_date) {
+        const err = new Error('due_date cannot be cleared.');
+        err.statusCode = 400;
+        throw err;
+      }
+      fields.push(`due_date = $${i++}`); values.push(updates.due_date);
+    }
+    if ('evidence_file_ref' in updates) {
+      fields.push(`evidence_file_ref = $${i++}`); values.push(updates.evidence_file_ref || null);
+    }
+
+    if (fields.length === 0) {
+      const err = new Error('No updatable fields provided (issued_date, due_date, evidence_file_ref).');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(itemId);
+    const result = await client.query(
+      `UPDATE compliance_items SET ${fields.join(', ')} WHERE item_id = $${i} AND status = 'RETURNED' RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This item is no longer RETURNED (status changed by someone else).');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'EDITED',
+      oldValues: pickFields(item, Object.keys(updates)),
+      newValues: pickFields(after, Object.keys(updates)),
+      userId: actorId,
+    });
+    return after;
+  });
 };
 
 module.exports = {
@@ -734,6 +1136,8 @@ module.exports = {
   updateComplianceCategory,
   approveComplianceCategory,
   rejectComplianceCategory,
+  returnComplianceCategory,
+  resubmitComplianceCategory,
   createComplianceItem,
   getComplianceItem,
   getComplianceItemDetail,
@@ -741,6 +1145,9 @@ module.exports = {
   submitComplianceItem,
   approveComplianceItem,
   rejectComplianceItem,
+  returnComplianceItem,
+  resubmitComplianceItem,
+  updateComplianceItem,
   uploadComplianceEvidence,
   getComplianceEvidence,
 };

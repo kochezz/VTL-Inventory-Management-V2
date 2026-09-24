@@ -106,9 +106,15 @@ router.get('/categories', authorize(['junior_accountant', 'manager', 'admin', 'c
   }
 });
 
-router.patch('/categories/:id', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+// Widened from admin/cfo/ceo-only: Phase C lets a category's own creator
+// edit it too, but ONLY while it's RETURNED (the service layer enforces
+// that -- and the executive-only, any-status edit access this route has
+// always had, e.g. backfilling anchor_date on an ACTIVE category, is
+// unaffected). authorize() here just gets the request past the door; who
+// can actually change what is decided by updateComplianceCategory itself.
+router.patch('/categories/:id', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const category = await complianceService.updateComplianceCategory(req.params.id, req.body);
+    const category = await complianceService.updateComplianceCategory(req.params.id, req.body, req.user.user_id, req.user.role);
     res.json(category);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
@@ -121,6 +127,38 @@ router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async
     const { category, isSelfApproval } = await complianceService.approveComplianceCategory(
       req.params.id, req.user.user_id, req.user.role, justification
     );
+
+    // Categories previously sent NO notification email on any decision --
+    // Phase C's "category emails must match items" requirement closes
+    // that gap, mirroring items' approve email exactly (self-approval ->
+    // other executives; ordinary approval -> the creator).
+    if (isSelfApproval) {
+      const otherExecutiveRoles = complianceService.EXECUTIVE_ROLES.filter(r => r !== req.user.role);
+      const emails = await NotificationService.getComplianceNotificationEmails(otherExecutiveRoles);
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Self-Approved — Review</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>A compliance category was self-approved by <strong>${req.user.full_name}</strong> (${req.user.role.toUpperCase()}).</p>
+            <p><strong>Justification:</strong> ${category.self_approval_justification}</p>
+            <p>Please log in to the Vilagio ERP Compliance module to review.</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail(emails, `Self-Approved — Review Required`, html).catch(console.error);
+    } else {
+      const creatorEmail = await getUserEmail(category.created_by);
+      if (creatorEmail) {
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+            <div style="background-color:#4ade80;padding:20px;text-align:center;color:white;"><h2>Compliance Category Approved</h2></div>
+            <div style="padding:20px;color:#334155;">
+              <p>Your compliance category <strong>${category.name}</strong> has been approved.</p>
+            </div>
+          </div>`;
+        NotificationService.sendEmail([creatorEmail], `Compliance Category Approved`, html).catch(console.error);
+      }
+    }
+
     res.json({ category, is_self_approved: isSelfApproval });
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
@@ -130,7 +168,70 @@ router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async
 router.post('/categories/:id/reject', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { reason } = req.body;
-    const category = await complianceService.rejectComplianceCategory(req.params.id, reason);
+    const category = await complianceService.rejectComplianceCategory(req.params.id, reason, req.user.user_id);
+
+    const creatorEmail = await getUserEmail(category.created_by);
+    if (creatorEmail) {
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Compliance Category Rejected</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>Your compliance category <strong>${category.name}</strong> was rejected.</p>
+            <p><strong>Reason:</strong> ${category.rejection_reason}</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail([creatorEmail], `Compliance Category Rejected`, html).catch(console.error);
+    }
+
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// ─── Return for revision / Resubmit (Phase C) ──────────────────────────────
+
+router.post('/categories/:id/return', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const category = await complianceService.returnComplianceCategory(req.params.id, reason, req.user.user_id);
+
+    const creatorEmail = await getUserEmail(category.created_by);
+    if (creatorEmail) {
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Compliance Category Returned for Revision</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>Your compliance category <strong>${category.name}</strong> was returned for revision, not rejected.</p>
+            <p><strong>Reason:</strong> ${category.rejection_reason}</p>
+            <p>Edit it on the Categories page and resubmit once fixed.</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail([creatorEmail], `Compliance Category Returned for Revision`, html).catch(console.error);
+    }
+
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/categories/:id/resubmit', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const isAdmin = req.user.role === 'admin';
+    const category = await complianceService.resubmitComplianceCategory(req.params.id, req.user.user_id, isAdmin);
+
+    const emails = await NotificationService.getComplianceNotificationEmails(['admin', 'cfo', 'ceo']);
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <div style="background-color:#3b82f6;padding:20px;text-align:center;color:white;"><h2>Compliance Category Resubmitted for Approval</h2></div>
+        <div style="padding:20px;color:#334155;">
+          <p>A previously-returned compliance category, <strong>${category.name}</strong>, has been fixed and resubmitted.</p>
+          <p>Please log in to the Vilagio ERP Compliance module to review.</p>
+        </div>
+      </div>`;
+    NotificationService.sendEmail(emails, `Action Required: Compliance Category Resubmitted for Approval`, html).catch(console.error);
+
     res.json(category);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
@@ -325,7 +426,7 @@ router.post('/items/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req
 router.post('/items/:id/reject', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { reason } = req.body;
-    const item = await complianceService.rejectComplianceItem(req.params.id, reason);
+    const item = await complianceService.rejectComplianceItem(req.params.id, reason, req.user.user_id);
 
     const creatorEmail = await getUserEmail(item.created_by);
     if (creatorEmail) {
@@ -340,6 +441,71 @@ router.post('/items/:id/reject', authorize(['admin', 'cfo', 'ceo']), async (req,
       NotificationService.sendEmail([creatorEmail], `Compliance Item Rejected`, html).catch(console.error);
     }
 
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// ─── Return for revision / Resubmit / Edit (Phase C) ───────────────────────
+
+router.post('/items/:id/return', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const item = await complianceService.returnComplianceItem(req.params.id, reason, req.user.user_id);
+
+    const creatorEmail = await getUserEmail(item.created_by);
+    if (creatorEmail) {
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Compliance Item Returned for Revision</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>Your compliance item was returned for revision, not rejected.</p>
+            <p><strong>Reason:</strong> ${item.rejection_reason}</p>
+            <p>Fix it under My Tasks &rarr; Returned to You, and resubmit once fixed.</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail([creatorEmail], `Compliance Item Returned for Revision`, html).catch(console.error);
+    }
+
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/items/:id/resubmit', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const isAdmin = req.user.role === 'admin';
+    const item = await complianceService.resubmitComplianceItem(req.params.id, req.user.user_id, isAdmin);
+
+    const emails = await NotificationService.getComplianceNotificationEmails(['admin', 'cfo', 'ceo']);
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+        <div style="background-color:#3b82f6;padding:20px;text-align:center;color:white;"><h2>Compliance Item Resubmitted for Approval</h2></div>
+        <div style="padding:20px;color:#334155;">
+          <p>A previously-returned compliance item has been fixed and resubmitted.</p>
+          <p><strong>Due date:</strong> ${item.due_date}</p>
+          <p>Please log in to the Vilagio ERP Compliance module to review.</p>
+        </div>
+      </div>`;
+    NotificationService.sendEmail(emails, `Action Required: Compliance Item Resubmitted for Approval`, html).catch(console.error);
+
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// New Phase C route -- did not exist before. Creator-or-admin, RETURNED-
+// only, server-side enforced inside updateComplianceItem itself, not just
+// hidden by the route's role list (which stays the same broad create/
+// submit role set; the fine-grained check happens in the service layer,
+// same pattern as PATCH /categories/:id).
+router.patch('/items/:id', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const isAdmin = req.user.role === 'admin';
+    const item = await complianceService.updateComplianceItem(req.params.id, req.body, req.user.user_id, isAdmin);
     res.json(item);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
