@@ -3,8 +3,45 @@
 const { pool } = require('./auth-service');
 
 const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
+
+// Deprecated (unread by anything below) -- kept only because the column
+// itself is kept for one release per the flexible-cadence migration. New
+// code validates against CADENCE_TYPES instead.
 const RECURRENCE_TYPES = ['ONE_OFF_EXPIRY', 'MONTHLY_RECURRING', 'ANNUAL_RECURRING'];
-const DEFAULT_REMINDER_LADDER_DAYS = [30, 15, 10, 5];
+
+const CADENCE_TYPES = ['ONE_OFF', 'RECURRING'];
+const MIN_INTERVAL_MONTHS = 1;
+const MAX_INTERVAL_MONTHS = 60;
+
+// Single config object for the reminder-ladder DEFAULT pre-filled at
+// category creation -- interval only ever sets the starting point; the
+// ladder itself stays per-category and freely overridable afterward (see
+// createComplianceCategory below, which accepts an explicit
+// reminder_ladder_days and only falls back to this when none is given).
+function defaultReminderLadderForCadence(cadenceType, intervalMonths) {
+  if (cadenceType === 'RECURRING' && intervalMonths === 1) return [5];
+  if (cadenceType === 'RECURRING' && intervalMonths >= 2 && intervalMonths <= 5) return [14, 7, 3];
+  return [30, 15, 10]; // ONE_OFF, or RECURRING >= 6 months
+}
+
+// The one and only place "next due = previous + interval, day clamped to
+// month end" is computed -- shared by manual item registration
+// (createComplianceItem below) and the scheduler's auto-generation
+// (compliance-scheduler-service.js), so the two can never drift apart.
+// `baseDate` is a real JS Date (UTC, date-only); returns a Date, also UTC
+// date-only. Correctly handles month-index overflow (Date.UTC normalizes
+// month > 11 into the following year on its own).
+function nextDueDateClamped(baseDate, intervalMonths, dueDayOfMonth) {
+  const year = baseDate.getUTCFullYear();
+  const month = baseDate.getUTCMonth() + intervalMonths;
+  const lastDayOfTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const day = Math.min(dueDayOfMonth, lastDayOfTargetMonth);
+  return new Date(Date.UTC(year, month, day));
+}
+
+function toDateOnlyString(date) {
+  return date.toISOString().split('T')[0];
+}
 
 // ─── Categories (Phase 5) ───────────────────────────────────────────────────
 // Categories were previously only ever created by direct DB insert (see
@@ -23,19 +60,60 @@ const DEFAULT_REMINDER_LADDER_DAYS = [30, 15, 10, 5];
 // deliberate-approval step, not a rubber stamp -- but a hard block on
 // self-approval would risk a real bottleneck given this org currently has
 // only two active executives (admin, cfo) and zero active ceo.
-const createComplianceCategory = async ({ name, regulator, recurrence_type, reminder_ladder_days, created_by }) => {
+const createComplianceCategory = async ({
+  name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date,
+  reminder_ladder_days, created_by,
+}) => {
   if (!name || !name.trim()) {
     const err = new Error('name is required.');
     err.statusCode = 400;
     throw err;
   }
-  if (!RECURRENCE_TYPES.includes(recurrence_type)) {
-    const err = new Error(`recurrence_type must be one of: ${RECURRENCE_TYPES.join(', ')}.`);
+  if (!CADENCE_TYPES.includes(cadence_type)) {
+    const err = new Error(`cadence_type must be one of: ${CADENCE_TYPES.join(', ')}.`);
     err.statusCode = 400;
     throw err;
   }
 
-  const ladder = reminder_ladder_days ?? DEFAULT_REMINDER_LADDER_DAYS;
+  let intervalMonths = null;
+  let dueDayOfMonth = null;
+  let anchorDate = null;
+
+  if (cadence_type === 'RECURRING') {
+    intervalMonths = Number(interval_months);
+    if (!Number.isInteger(intervalMonths) || intervalMonths < MIN_INTERVAL_MONTHS || intervalMonths > MAX_INTERVAL_MONTHS) {
+      const err = new Error(`interval_months is required for a RECURRING category and must be an integer between ${MIN_INTERVAL_MONTHS} and ${MAX_INTERVAL_MONTHS}.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    // anchor_date is the source of truth for "first due date" -- required
+    // at the API layer (not just the UI) so frontend and backend can never
+    // drift on this, the same standard this project's own retrospective on
+    // the junior_accountant access bug asked for. due_day_of_month is
+    // auto-derived from anchor_date's own day-of-month unless the caller
+    // explicitly overrides it (kept as its own column for the scheduler's
+    // clamping math, not because it's independently meaningful).
+    if (!anchor_date) {
+      const err = new Error('anchor_date (first due date) is required for a RECURRING category.');
+      err.statusCode = 400;
+      throw err;
+    }
+    const parsedAnchor = new Date(anchor_date);
+    if (isNaN(parsedAnchor.getTime())) {
+      const err = new Error('anchor_date is not a valid date.');
+      err.statusCode = 400;
+      throw err;
+    }
+    anchorDate = toDateOnlyString(parsedAnchor);
+    dueDayOfMonth = due_day_of_month != null ? Number(due_day_of_month) : parsedAnchor.getUTCDate();
+    if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
+      const err = new Error('due_day_of_month must be an integer between 1 and 31.');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  const ladder = reminder_ladder_days ?? defaultReminderLadderForCadence(cadence_type, intervalMonths);
   if (!Array.isArray(ladder) || ladder.length === 0 || !ladder.every((d) => Number.isInteger(d) && d > 0)) {
     const err = new Error('reminder_ladder_days must be a non-empty array of positive integers.');
     err.statusCode = 400;
@@ -43,11 +121,30 @@ const createComplianceCategory = async ({ name, regulator, recurrence_type, remi
   }
 
   const result = await pool.query(
-    `INSERT INTO compliance_categories (name, regulator, recurrence_type, reminder_ladder_days, created_by)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [name.trim(), regulator || null, recurrence_type, ladder, created_by]
+    `INSERT INTO compliance_categories
+       (name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [name.trim(), regulator || null, cadence_type, intervalMonths, dueDayOfMonth, anchorDate, ladder, created_by]
   );
   return result.rows[0];
+};
+
+// Next occurrence for a RECURRING category that has no upcoming item yet --
+// either its very first occurrence (anchor_date itself, if nothing has ever
+// been registered) or one interval past the most recent existing item.
+// Shared by createComplianceItem (manual registration) and the scheduler's
+// auto-generation, so the two never compute a different answer for the
+// same category.
+const nextDueDateForCategory = async (category) => {
+  const mostRecent = await pool.query(
+    `SELECT due_date FROM compliance_items WHERE category_id = $1 ORDER BY due_date DESC LIMIT 1`,
+    [category.category_id]
+  );
+  if (mostRecent.rows.length === 0) {
+    return new Date(category.anchor_date);
+  }
+  const base = new Date(mostRecent.rows[0].due_date);
+  return nextDueDateClamped(base, category.interval_months, category.due_day_of_month);
 };
 
 // status filter powers three different views with one function:
@@ -151,13 +248,16 @@ const rejectComplianceCategory = async (categoryId, reason) => {
   return result.rows[0];
 };
 
-// Deliberately does not allow changing recurrence_type: the scheduler
-// (compliance-scheduler-service.js) and the approval-time recurrence-rule
-// bootstrap both key their logic off a category's recurrence_type at the
-// moment each item/rule was created. Changing it out from under existing
-// items/rules would leave their behavior inconsistent with a category that
-// no longer describes them -- a category whose cadence was set up wrong
-// should be deactivated and recreated, not mutated in place.
+// Deliberately does not allow changing cadence_type/interval_months
+// (formerly recurrence_type): the scheduler and the approval-time
+// recurrence-rule bootstrap both key their logic off a category's cadence
+// at the moment each item/rule was created. Changing it out from under
+// existing items/rules would leave their behavior inconsistent with a
+// category that no longer describes them -- a category whose cadence was
+// set up wrong should be deactivated and recreated, not mutated in place.
+// due_day_of_month/anchor_date CAN be edited (e.g. filling in the 7
+// categories the flexible-cadence migration left NULL), since that's
+// completing configuration, not changing the cadence's shape.
 //
 // Also deliberately does not accept `status` -- status only ever moves via
 // approveComplianceCategory/rejectComplianceCategory below. is_active and
@@ -174,11 +274,14 @@ const updateComplianceCategory = async (categoryId, updates) => {
     err.statusCode = 404;
     throw err;
   }
+  const category = existing.rows[0];
 
-  if ('recurrence_type' in updates) {
-    const err = new Error('recurrence_type cannot be changed after creation. Deactivate this category and create a new one instead.');
-    err.statusCode = 400;
-    throw err;
+  for (const locked of ['recurrence_type', 'cadence_type', 'interval_months']) {
+    if (locked in updates) {
+      const err = new Error(`${locked} cannot be changed after creation. Deactivate this category and create a new one instead.`);
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
   const fields = [];
@@ -208,9 +311,38 @@ const updateComplianceCategory = async (categoryId, updates) => {
   if ('is_active' in updates) {
     fields.push(`is_active = $${i++}`); values.push(!!updates.is_active);
   }
+  if ('anchor_date' in updates || 'due_day_of_month' in updates) {
+    if (category.cadence_type !== 'RECURRING') {
+      const err = new Error('anchor_date/due_day_of_month only apply to a RECURRING category.');
+      err.statusCode = 400;
+      throw err;
+    }
+    const anchorDate = 'anchor_date' in updates ? updates.anchor_date : category.anchor_date;
+    if (!anchorDate) {
+      const err = new Error('anchor_date cannot be cleared once set.');
+      err.statusCode = 400;
+      throw err;
+    }
+    const parsedAnchor = new Date(anchorDate);
+    if (isNaN(parsedAnchor.getTime())) {
+      const err = new Error('anchor_date is not a valid date.');
+      err.statusCode = 400;
+      throw err;
+    }
+    const dueDayOfMonth = 'due_day_of_month' in updates && updates.due_day_of_month != null
+      ? Number(updates.due_day_of_month)
+      : parsedAnchor.getUTCDate();
+    if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
+      const err = new Error('due_day_of_month must be an integer between 1 and 31.');
+      err.statusCode = 400;
+      throw err;
+    }
+    fields.push(`anchor_date = $${i++}`); values.push(toDateOnlyString(parsedAnchor));
+    fields.push(`due_day_of_month = $${i++}`); values.push(dueDayOfMonth);
+  }
 
   if (fields.length === 0) {
-    const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active).');
+    const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active, anchor_date, due_day_of_month).');
     err.statusCode = 400;
     throw err;
   }
@@ -226,16 +358,18 @@ const updateComplianceCategory = async (categoryId, updates) => {
 
 // ─── Items ──────────────────────────────────────────────────────────────────
 
-// day_of_month_due is required (1-31) when the item's category is
-// MONTHLY_RECURRING -- enforced here at the application layer rather than a
-// column-level NOT NULL, since the column is legitimately NULL for
-// ONE_OFF_EXPIRY/ANNUAL_RECURRING items. This is the only point in the
-// item's lifecycle where the creator (who knows the cadence) provides it;
-// approveComplianceItem's recurrence-rule bootstrap below just carries it
-// forward onto compliance_recurrence_rule, it doesn't collect it.
-const createComplianceItem = async ({ category_id, issued_date, due_date, evidence_file_ref, day_of_month_due, created_by }) => {
+// due_date is no longer collected from the caller for a RECURRING category
+// -- it's computed from the category's own cadence (nextDueDateForCategory,
+// shared with the scheduler), so a manually-registered item can never drift
+// from what the category actually defines. ONE_OFF categories are
+// unchanged: due_date is required, freely chosen by the creator, since
+// there's no cadence to compute from. day_of_month_due is no longer
+// collected either -- due day now lives on the category (see the flexible-
+// cadence migration); the column stays on compliance_items only so the 3
+// pre-migration items remain readable, nothing new writes to it.
+const createComplianceItem = async ({ category_id, issued_date, due_date, evidence_file_ref, created_by }) => {
   const categoryRes = await pool.query(
-    `SELECT recurrence_type FROM compliance_categories WHERE category_id = $1`,
+    `SELECT * FROM compliance_categories WHERE category_id = $1`,
     [category_id]
   );
   const category = categoryRes.rows[0];
@@ -245,21 +379,31 @@ const createComplianceItem = async ({ category_id, issued_date, due_date, eviden
     throw err;
   }
 
-  let dayOfMonthDue = day_of_month_due ?? null;
-  if (category.recurrence_type === 'MONTHLY_RECURRING') {
-    dayOfMonthDue = Number(day_of_month_due);
-    if (!Number.isInteger(dayOfMonthDue) || dayOfMonthDue < 1 || dayOfMonthDue > 31) {
-      const err = new Error('day_of_month_due (1-31) is required for MONTHLY_RECURRING categories.');
+  let computedDueDate;
+  if (category.cadence_type === 'RECURRING') {
+    if (!category.anchor_date || !category.due_day_of_month) {
+      const err = new Error(
+        `This category's cadence isn't fully configured yet (missing anchor date / due day). ` +
+        `An executive needs to set this on the Categories page before items can be registered against it.`
+      );
       err.statusCode = 400;
       throw err;
     }
+    computedDueDate = toDateOnlyString(await nextDueDateForCategory(category));
+  } else {
+    if (!due_date) {
+      const err = new Error('due_date is required for a one-off category.');
+      err.statusCode = 400;
+      throw err;
+    }
+    computedDueDate = due_date;
   }
 
   const result = await pool.query(
-    `INSERT INTO compliance_items (category_id, issued_date, due_date, evidence_file_ref, day_of_month_due, created_by, status)
-     VALUES ($1, $2, $3, $4, $5, $6, 'DRAFT')
+    `INSERT INTO compliance_items (category_id, issued_date, due_date, evidence_file_ref, created_by, status)
+     VALUES ($1, $2, $3, $4, $5, 'DRAFT')
      RETURNING *`,
-    [category_id, issued_date || null, due_date, evidence_file_ref || null, dayOfMonthDue, created_by]
+    [category_id, issued_date || null, computedDueDate, evidence_file_ref || null, created_by]
   );
   return result.rows[0];
 };
@@ -320,7 +464,11 @@ const listComplianceItems = async ({ role, userId, status, needsAcknowledgement,
             (ci.due_date - CURRENT_DATE) AS days_until_due,
             (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
             COALESCE(
-              (SELECT array_agg(DISTINCT crl.tier ORDER BY crl.tier) FROM compliance_reminder_log crl WHERE crl.item_id = ci.item_id),
+              (SELECT array_agg(tier_label ORDER BY tier_label) FROM (
+                 SELECT DISTINCT
+                   (CASE WHEN crl.tier_type = 'DAYS_BEFORE' THEN crl.days_before::text || '_DAY' ELSE crl.tier_type END) AS tier_label
+                 FROM compliance_reminder_log crl WHERE crl.item_id = ci.item_id
+               ) t),
               ARRAY[]::varchar[]
             ) AS reminder_tiers_fired
      FROM compliance_items ci
@@ -468,31 +616,34 @@ const approveComplianceItem = async (itemId, approverId, approverRole, justifica
     // rule the first time a recurring category's item is approved. The
     // UNIQUE(category_id) constraint is the backstop; this check-before-
     // insert is what keeps a second approval under the same category from
-    // ever hitting it in the first place.
+    // ever hitting it in the first place. 12-month re-approval stays fixed
+    // regardless of interval_months, per the explicit decision to keep that
+    // rule unchanged.
     let recurrenceRuleCreated = null;
     const categoryRes = await client.query(
-      `SELECT recurrence_type FROM compliance_categories WHERE category_id = $1`,
+      `SELECT * FROM compliance_categories WHERE category_id = $1`,
       [item.category_id]
     );
     const category = categoryRes.rows[0];
 
-    if (category && (category.recurrence_type === 'MONTHLY_RECURRING' || category.recurrence_type === 'ANNUAL_RECURRING')) {
+    if (category && category.cadence_type === 'RECURRING') {
       const existingRule = await client.query(
         `SELECT rule_id FROM compliance_recurrence_rule WHERE category_id = $1`,
         [item.category_id]
       );
       if (existingRule.rows.length === 0) {
-        // item.day_of_month_due is set at creation time (required for
-        // MONTHLY_RECURRING, see createComplianceItem above) and carried
-        // straight onto the rule here -- this is what fixes the scheduler's
-        // Step 3 monthly-generation logic, which previously always found
-        // day_of_month_due NULL on every rule it bootstrapped.
+        // due_day_of_month/interval_months now come from the category (due
+        // day moved there in the flexible-cadence migration) rather than
+        // the item -- copied onto the rule here the same way this table
+        // has always duplicated day_of_month_due, so the scheduler only
+        // ever needs to read this one row, not join back to the category
+        // for every generation check.
         const ruleRes = await client.query(
           `INSERT INTO compliance_recurrence_rule
-             (category_id, recurrence_type, day_of_month_due, next_reapproval_due, last_reapproved_at, last_reapproved_by)
+             (category_id, interval_months, day_of_month_due, next_reapproval_due, last_reapproved_at, last_reapproved_by)
            VALUES ($1, $2, $3, (CURRENT_DATE + INTERVAL '12 months'), CURRENT_TIMESTAMP, $4)
            RETURNING *`,
-          [item.category_id, category.recurrence_type, item.day_of_month_due, approverId]
+          [item.category_id, category.interval_months, category.due_day_of_month, approverId]
         );
         recurrenceRuleCreated = ruleRes.rows[0];
 
@@ -525,7 +676,11 @@ const getComplianceItemDetail = async (itemId) => {
             (ci.due_date - CURRENT_DATE) AS days_until_due,
             (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
             COALESCE(
-              (SELECT array_agg(DISTINCT crl.tier ORDER BY crl.tier) FROM compliance_reminder_log crl WHERE crl.item_id = ci.item_id),
+              (SELECT array_agg(tier_label ORDER BY tier_label) FROM (
+                 SELECT DISTINCT
+                   (CASE WHEN crl.tier_type = 'DAYS_BEFORE' THEN crl.days_before::text || '_DAY' ELSE crl.tier_type END) AS tier_label
+                 FROM compliance_reminder_log crl WHERE crl.item_id = ci.item_id
+               ) t),
               ARRAY[]::varchar[]
             ) AS reminder_tiers_fired
      FROM compliance_items ci
@@ -568,6 +723,12 @@ const rejectComplianceItem = async (itemId, reason) => {
 module.exports = {
   EXECUTIVE_ROLES,
   RECURRENCE_TYPES,
+  CADENCE_TYPES,
+  MIN_INTERVAL_MONTHS,
+  MAX_INTERVAL_MONTHS,
+  defaultReminderLadderForCadence,
+  nextDueDateClamped,
+  nextDueDateForCategory,
   createComplianceCategory,
   listComplianceCategories,
   updateComplianceCategory,
