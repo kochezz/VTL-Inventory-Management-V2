@@ -65,10 +65,12 @@ after(async () => {
 
 // Creates a real item through the real create->submit->approve flow
 // (junior_accountant creates, admin approves -- not a self-approval, so no
-// justification needed) and returns its final row.
-async function createApprovedItem(categoryId, dueDateOffsetDays, dayOfMonthDue) {
-  const body = { category_id: categoryId, due_date: isoDate(dueDateOffsetDays), evidence_file_ref: 'scheduler-test.pdf' };
-  if (dayOfMonthDue != null) body.day_of_month_due = dayOfMonthDue;
+// justification needed) and returns its final row. due_date only matters
+// for a ONE_OFF category -- a RECURRING category computes it server-side
+// from the category's own anchor_date/due_day_of_month and ignores this.
+async function createApprovedItem(categoryId, dueDateOffsetDays) {
+  const body = { category_id: categoryId, evidence_file_ref: 'scheduler-test.pdf' };
+  if (dueDateOffsetDays !== undefined) body.due_date = isoDate(dueDateOffsetDays);
   const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, body, jrHeaders);
   cleanup.trackItem(createRes.data.item_id);
   await uploadTestEvidence(createRes.data.item_id, jrHeaders);
@@ -82,10 +84,10 @@ async function getItemRow(itemId) {
   return r.rows[0];
 }
 
-async function reminderLogRows(itemId, tier) {
+async function reminderLogRows(itemId, tierType) {
   const r = await pool.query(
-    `SELECT tier, sent_date FROM compliance_reminder_log WHERE item_id = $1 AND tier = $2 ORDER BY sent_date`,
-    [itemId, tier]
+    `SELECT tier_type, days_before, sent_date FROM compliance_reminder_log WHERE item_id = $1 AND tier_type = $2 ORDER BY sent_date`,
+    [itemId, tierType]
   );
   return r.rows;
 }
@@ -129,11 +131,11 @@ test('item at all four ladder thresholds gets exactly one reminder per tier; a s
   const since = new Date();
   const run1 = await callScheduler({ dryRun: false });
   const mine1 = run1.data.reminders_sent.filter((r) => r.item_id === item.item_id);
-  const tiers1 = mine1.map((r) => r.tier).sort();
-  assert.deepEqual(tiers1, ['10_DAY', '15_DAY', '30_DAY', '5_DAY']);
+  const daysBefore1 = mine1.map((r) => r.days_before).sort((a, b) => a - b);
+  assert.deepEqual(daysBefore1, [5, 10, 15, 30]);
 
   const dbRows = await pool.query(
-    `SELECT tier FROM compliance_reminder_log WHERE item_id = $1 ORDER BY tier`,
+    `SELECT days_before FROM compliance_reminder_log WHERE item_id = $1 AND tier_type = 'DAYS_BEFORE' ORDER BY days_before`,
     [item.item_id]
   );
   assert.equal(dbRows.rows.length, 4, 'expected exactly 4 reminder_log rows after the first run');
@@ -141,15 +143,15 @@ test('item at all four ladder thresholds gets exactly one reminder per tier; a s
   // Precise check against what notification-service actually recorded, not
   // just the API summary/DB rows -- confirms a real sendEmail() call
   // happened with the exact subject the reminder ladder is supposed to use.
-  const mockedEmail = await waitForMockEmail({ subject: 'Compliance Reminder: 30 DAY — item due soon', sentAfter: since });
-  assert.ok(mockedEmail, 'expected a mocked "Compliance Reminder: 30 DAY" email to have been recorded');
+  const mockedEmail = await waitForMockEmail({ subject: 'Compliance Reminder: 30 days before due', sentAfter: since });
+  assert.ok(mockedEmail, 'expected a mocked "Compliance Reminder: 30 days before due" email to have been recorded');
 
   const run2 = await callScheduler({ dryRun: false });
   const mine2 = run2.data.reminders_sent.filter((r) => r.item_id === item.item_id);
   assert.equal(mine2.length, 0, 'a second same-day run must not re-send any already-sent tier');
 
   const dbRowsAfter = await pool.query(
-    `SELECT tier FROM compliance_reminder_log WHERE item_id = $1`,
+    `SELECT days_before FROM compliance_reminder_log WHERE item_id = $1 AND tier_type = 'DAYS_BEFORE'`,
     [item.item_id]
   );
   assert.equal(dbRowsAfter.rows.length, 4, 'row count must be unchanged after the second run');
@@ -198,27 +200,42 @@ test('overdue item with no ack flips to NON_COMPLIANT once, escalates once per d
 // ── 7d: monthly recurrence ────────────────────────────────────────────────────
 
 test('monthly recurrence: first run generates the next item, a same-day second run does not duplicate it', async () => {
-  const categoryId = await createComplianceCategory({ name: 'TEST SUITE - monthly recurrence', recurrence_type: 'MONTHLY_RECURRING' });
-  cleanup.trackCategory(categoryId);
-
-  // Pick a day-of-month that lands 5 days from today -- inside the 10-day
-  // generation window -- and provide it at item-creation time, same as a
-  // real user would. The approve-time rule bootstrap (Phase 2 logic) now
-  // carries this straight onto compliance_recurrence_rule.day_of_month_due,
-  // so this is a fresh, non-test-patched row exercising Phase 3's real
-  // generation logic end to end, not a row hand-fixed after the fact.
-  //
-  // The anchor's due_date must NOT satisfy the "already exists for the
-  // upcoming occurrence" check (due_date >= today), or generation would
-  // correctly (and intentionally) be skipped -- that check doesn't
+  // Target the occurrence the scheduler should generate: 5 days from today,
+  // inside the 10-day generation window. anchor_date is set to exactly ONE
+  // interval (1 month) before that target, same day-of-month (clamped to
+  // that month's end, mirroring nextDueDateClamped's own clamping) -- this
+  // guarantees the scheduler's "anchor + 1 month" computation lands back on
+  // `target` regardless of what day of the month "today" happens to be,
+  // instead of a fixed "-20 days" offset that only lines up near month-end.
+  // anchor_date being a month in the past also means it does NOT satisfy the
+  // "already exists for the upcoming occurrence" check (due_date >= today),
+  // so generation isn't skipped for that reason -- that check doesn't
   // distinguish the anchor from a genuinely-generated next occurrence, which
   // is correct: in real usage an anchor's due_date should already align
-  // with the rule's cadence. Backdating it here simulates "the current
-  // instance has already passed, time to generate the next one."
+  // with the rule's cadence. Using a month-old anchor here simulates "the
+  // current instance has already passed, time to generate the next one."
   const target = new Date();
   target.setUTCDate(target.getUTCDate() + 5);
   const dayOfMonthDue = target.getUTCDate();
-  const anchor = await createApprovedItem(categoryId, -20, dayOfMonthDue);
+
+  const anchorYear = target.getUTCFullYear();
+  const anchorMonth = target.getUTCMonth() - 1;
+  const lastDayOfAnchorMonth = new Date(Date.UTC(anchorYear, anchorMonth + 1, 0)).getUTCDate();
+  const anchorDate = new Date(Date.UTC(anchorYear, anchorMonth, Math.min(dayOfMonthDue, lastDayOfAnchorMonth)));
+
+  const categoryId = await createComplianceCategory({
+    name: 'TEST SUITE - monthly recurrence',
+    recurrence_type: 'MONTHLY_RECURRING',
+    anchor_date: anchorDate.toISOString().split('T')[0],
+    due_day_of_month: dayOfMonthDue,
+  });
+  cleanup.trackCategory(categoryId);
+
+  // The approve-time rule bootstrap (Phase 2 logic) carries the category's
+  // due_day_of_month straight onto compliance_recurrence_rule.day_of_month_due,
+  // so this is a fresh, non-test-patched row exercising Phase 3's real
+  // generation logic end to end, not a row hand-fixed after the fact.
+  const anchor = await createApprovedItem(categoryId);
 
   const ruleRes = await pool.query(`SELECT rule_id, day_of_month_due FROM compliance_recurrence_rule WHERE category_id = $1`, [categoryId]);
   assert.equal(ruleRes.rows.length, 1, 'expected the first approval to bootstrap exactly one recurrence rule');
@@ -271,14 +288,14 @@ test('12-month re-approval reminder: two scheduler runs same day send exactly on
   const mockedEmail = await waitForMockEmail({ subject: 'Compliance Re-Approval Due Within 30 Days', sentAfter: since });
   assert.ok(mockedEmail, 'expected the reapproval reminder email to have actually been recorded');
 
-  const logRows1 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier = 'REAPPROVAL_REMINDER'`, [ruleId]);
+  const logRows1 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier_type = 'REAPPROVAL_REMINDER'`, [ruleId]);
   assert.equal(logRows1.rows.length, 1, 'expected exactly one REAPPROVAL_REMINDER log row after the first run');
 
   const run2 = await callScheduler({ dryRun: false });
   const mine2 = run2.data.reapproval_reminders_sent.filter((r) => r.rule_id === ruleId);
   assert.equal(mine2.length, 0, 'a second same-day run must not send a duplicate reapproval reminder');
 
-  const logRows2 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier = 'REAPPROVAL_REMINDER'`, [ruleId]);
+  const logRows2 = await pool.query(`SELECT reminder_log_id FROM compliance_reminder_log WHERE rule_id = $1 AND tier_type = 'REAPPROVAL_REMINDER'`, [ruleId]);
   assert.equal(logRows2.rows.length, 1, 'row count must be unchanged after the second same-day run');
 });
 

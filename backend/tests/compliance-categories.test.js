@@ -62,7 +62,7 @@ after(async () => {
 test('junior_accountant CAN create a category, landing PENDING_APPROVAL', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - jr create', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - jr create', cadence_type: 'ONE_OFF' },
     jrHeaders
   );
   cleanup.trackCategory(res.data.category_id);
@@ -74,15 +74,19 @@ test('junior_accountant CAN create a category, landing PENDING_APPROVAL', async 
 test('admin can create a category with default reminder_ladder_days (also lands PENDING_APPROVAL)', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - admin create', regulator: 'PACRA', recurrence_type: 'ANNUAL_RECURRING' },
+    {
+      name: 'TEST SUITE - admin create', regulator: 'PACRA',
+      cadence_type: 'RECURRING', interval_months: 12, anchor_date: '2027-03-01',
+    },
     adminHeaders
   );
   cleanup.trackCategory(res.data.category_id);
   assert.equal(res.status, 201);
   assert.equal(res.data.name, 'TEST SUITE - admin create');
   assert.equal(res.data.regulator, 'PACRA');
-  assert.equal(res.data.recurrence_type, 'ANNUAL_RECURRING');
-  assert.deepEqual(res.data.reminder_ladder_days, [30, 15, 10, 5]);
+  assert.equal(res.data.cadence_type, 'RECURRING');
+  assert.equal(res.data.interval_months, 12);
+  assert.deepEqual(res.data.reminder_ladder_days, [30, 15, 10]);
   assert.equal(res.data.is_active, true);
   // Locked design decision: no role-based branching at creation time --
   // even an admin's own category needs a (possibly different) executive
@@ -93,7 +97,11 @@ test('admin can create a category with default reminder_ladder_days (also lands 
 test('cfo can create a category with a custom reminder_ladder_days', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - cfo create', recurrence_type: 'MONTHLY_RECURRING', reminder_ladder_days: [14, 7, 1] },
+    {
+      name: 'TEST SUITE - cfo create',
+      cadence_type: 'RECURRING', interval_months: 1, anchor_date: '2027-03-15',
+      reminder_ladder_days: [14, 7, 1],
+    },
     cfoHeaders
   );
   cleanup.trackCategory(res.data.category_id);
@@ -102,11 +110,33 @@ test('cfo can create a category with a custom reminder_ladder_days', async () =>
   assert.equal(res.data.status, 'PENDING_APPROVAL');
 });
 
-test('creating a category with an invalid recurrence_type is rejected with 400', async () => {
+test('creating a category with an invalid cadence_type is rejected with 400', async () => {
   await assert.rejects(
     () => axios.post(
       `${BASE_URL}/api/compliance/categories`,
-      { name: 'TEST SUITE - bad recurrence', recurrence_type: 'WEEKLY_WHATEVER' },
+      { name: 'TEST SUITE - bad cadence', cadence_type: 'WEEKLY_WHATEVER' },
+      adminHeaders
+    ),
+    (err) => err.response?.status === 400
+  );
+});
+
+test('creating a RECURRING category without interval_months is rejected with 400', async () => {
+  await assert.rejects(
+    () => axios.post(
+      `${BASE_URL}/api/compliance/categories`,
+      { name: 'TEST SUITE - missing interval', cadence_type: 'RECURRING', anchor_date: '2027-03-01' },
+      adminHeaders
+    ),
+    (err) => err.response?.status === 400
+  );
+});
+
+test('creating a RECURRING category without anchor_date is rejected with 400', async () => {
+  await assert.rejects(
+    () => axios.post(
+      `${BASE_URL}/api/compliance/categories`,
+      { name: 'TEST SUITE - missing anchor', cadence_type: 'RECURRING', interval_months: 3 },
       adminHeaders
     ),
     (err) => err.response?.status === 400
@@ -122,7 +152,7 @@ test('creating a category with an invalid recurrence_type is rejected with 400',
 test('manager CAN create a category, landing PENDING_APPROVAL', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager create', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - manager create', cadence_type: 'ONE_OFF' },
     managerHeaders
   );
   cleanup.trackCategory(res.data.category_id);
@@ -134,7 +164,7 @@ test('manager CAN create a category, landing PENDING_APPROVAL', async () => {
 test('manager CAN list categories', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager list visibility', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - manager list visibility', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -147,7 +177,7 @@ test('manager CAN list categories', async () => {
 test('manager gets 403 updating, approving, or rejecting a category (create+list only, not executive actions)', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager blocked from executive actions', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - manager blocked from executive actions', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -180,7 +210,7 @@ test('manager CAN list and create items (widened to the full initiator tier)', a
 
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager items scope', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - manager items scope', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -200,7 +230,7 @@ test('manager CAN list and create items (widened to the full initiator tier)', a
 test('junior_accountant CAN list categories (needed for the item-registration picker)', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - list visibility', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - list visibility', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -213,7 +243,7 @@ test('junior_accountant CAN list categories (needed for the item-registration pi
 test('inactive categories are excluded by default, included with active_only=false', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - inactive filter', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - inactive filter', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -231,7 +261,7 @@ test('inactive categories are excluded by default, included with active_only=fal
 test('junior_accountant gets 403 updating a category', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - jr update blocked', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - jr update blocked', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -245,7 +275,7 @@ test('junior_accountant gets 403 updating a category', async () => {
 test('attempting to change recurrence_type via PATCH is rejected with 400', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - immutable recurrence', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - immutable recurrence', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -259,7 +289,7 @@ test('attempting to change recurrence_type via PATCH is rejected with 400', asyn
 test('admin can deactivate a category', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - deactivate', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - deactivate', cadence_type: 'ONE_OFF' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -274,7 +304,7 @@ test('admin can deactivate a category', async () => {
 test('GET /items: junior_accountant sees own item, not another junior_accountant\'s item they have no stake in', async () => {
   const categoryId = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - items scoping', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - items scoping', cadence_type: 'ONE_OFF' },
     adminHeaders
   ).then((r) => { cleanup.trackCategory(r.data.category_id); return r.data.category_id; });
 
@@ -303,7 +333,7 @@ test('GET /items: junior_accountant sees own item, not another junior_accountant
 test('GET /items: admin/cfo/ceo see everything, including items they did not create', async () => {
   const categoryId = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - executive visibility', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - executive visibility', cadence_type: 'ONE_OFF' },
     adminHeaders
   ).then((r) => { cleanup.trackCategory(r.data.category_id); return r.data.category_id; });
 
@@ -333,7 +363,7 @@ test('warehouse_manager (non-compliance role) gets 403 on every compliance route
 
   await t.test('POST /categories', async () => {
     await assert.rejects(
-      () => axios.post(`${BASE_URL}/api/compliance/categories`, { name: 'x', recurrence_type: 'ONE_OFF_EXPIRY' }, warehouseHeaders),
+      () => axios.post(`${BASE_URL}/api/compliance/categories`, { name: 'x', cadence_type: 'ONE_OFF' }, warehouseHeaders),
       (err) => err.response?.status === 403
     );
   });
@@ -356,7 +386,7 @@ test('warehouse_manager (non-compliance role) gets 403 on every compliance route
 test('GET /items/:id: 403 for a non-executive with no stake in the item', async () => {
   const categoryId = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - detail 403', recurrence_type: 'ONE_OFF_EXPIRY' },
+    { name: 'TEST SUITE - detail 403', cadence_type: 'ONE_OFF' },
     adminHeaders
   ).then((r) => { cleanup.trackCategory(r.data.category_id); return r.data.category_id; });
 

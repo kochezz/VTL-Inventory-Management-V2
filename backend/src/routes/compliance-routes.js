@@ -76,9 +76,9 @@ const getUserEmail = async (userId) => {
 
 router.post('/categories', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const { name, regulator, recurrence_type, reminder_ladder_days } = req.body;
+    const { name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days } = req.body;
     const category = await complianceService.createComplianceCategory({
-      name, regulator, recurrence_type, reminder_ladder_days,
+      name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days,
       created_by: req.user.user_id,
     });
     res.status(201).json(category);
@@ -235,12 +235,16 @@ router.get('/items/:id/evidence', authorize(['junior_accountant', 'manager', 'ad
 
 router.post('/items', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const { category_id, issued_date, due_date, evidence_file_ref, day_of_month_due } = req.body;
-    if (!category_id || !due_date) {
-      return res.status(400).json({ message: 'category_id and due_date are required.' });
+    const { category_id, issued_date, due_date, evidence_file_ref } = req.body;
+    // due_date is only required for ONE_OFF categories now -- a RECURRING
+    // category computes it server-side from its own cadence, so the route
+    // can't demand it up front the way it used to; createComplianceItem
+    // enforces the ONE_OFF case itself.
+    if (!category_id) {
+      return res.status(400).json({ message: 'category_id is required.' });
     }
     const item = await complianceService.createComplianceItem({
-      category_id, issued_date, due_date, evidence_file_ref, day_of_month_due,
+      category_id, issued_date, due_date, evidence_file_ref,
       created_by: req.user.user_id
     });
     res.status(201).json(item);
