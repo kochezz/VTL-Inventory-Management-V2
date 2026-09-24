@@ -13,7 +13,10 @@ interface ComplianceCategory {
   category_id: string;
   name: string;
   regulator: string | null;
-  recurrence_type: string;
+  cadence_type: 'ONE_OFF' | 'RECURRING' | null;
+  interval_months: number | null;
+  due_day_of_month: number | null;
+  anchor_date: string | null;
 }
 
 export default function ComplianceRegisterPage() {
@@ -30,7 +33,6 @@ export default function ComplianceRegisterPage() {
     category_id: '',
     issued_date: '',
     due_date: '',
-    day_of_month_due: '',
   });
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
@@ -68,7 +70,17 @@ export default function ComplianceRegisterPage() {
   };
 
   const selectedCategory = categories.find((c) => c.category_id === form.category_id);
-  const isMonthly = selectedCategory?.recurrence_type === 'MONTHLY_RECURRING';
+  const isRecurring = selectedCategory?.cadence_type === 'RECURRING';
+  // due_date now lives on the category for a RECURRING one -- the backend
+  // computes it server-side (nextDueDateForCategory in
+  // compliance-service.js) and ignores whatever this form would have sent,
+  // so the field is simply not shown for that case. A RECURRING category
+  // with no anchor_date yet (the flexible-cadence migration left 7 of them
+  // that way, to be filled in via the Categories page) can't accept items
+  // until an executive sets one -- blocked here with the same message the
+  // backend itself would 400 with, rather than letting the request round-
+  // trip just to fail.
+  const cadenceNotConfigured = isRecurring && !selectedCategory?.anchor_date;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError('');
@@ -94,8 +106,12 @@ export default function ComplianceRegisterPage() {
     setError('');
     setSuccess('');
 
-    if (isMonthly && !form.day_of_month_due) {
-      setError('day_of_month_due is required for a monthly-recurring category.');
+    if (cadenceNotConfigured) {
+      setError("This category's cadence isn't fully configured yet (missing first due date). An executive needs to set this on the Categories page before items can be registered against it.");
+      return;
+    }
+    if (!isRecurring && !form.due_date) {
+      setError('Due date is required for a one-off category.');
       return;
     }
     if (!evidenceFile) {
@@ -109,9 +125,8 @@ export default function ComplianceRegisterPage() {
       const createRes = await api.post('/compliance/items', {
         category_id: form.category_id,
         issued_date: form.issued_date || undefined,
-        due_date: form.due_date,
+        due_date: isRecurring ? undefined : form.due_date,
         evidence_file_ref: evidenceFile.name,
-        day_of_month_due: isMonthly ? parseInt(form.day_of_month_due, 10) : undefined,
       });
 
       const itemId = createRes.data.item_id;
@@ -123,7 +138,7 @@ export default function ComplianceRegisterPage() {
       await api.post(`/compliance/items/${itemId}/submit`);
 
       setSuccess('Item registered, evidence attached, and submitted for approval.');
-      setForm({ category_id: form.category_id, issued_date: '', due_date: '', day_of_month_due: '' });
+      setForm({ category_id: form.category_id, issued_date: '', due_date: '' });
       setEvidenceFile(null);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to register this item.');
@@ -179,7 +194,7 @@ export default function ComplianceRegisterPage() {
                   required
                   name="category_id"
                   value={form.category_id}
-                  onChange={(e) => setForm({ ...form, category_id: e.target.value, day_of_month_due: '' })}
+                  onChange={(e) => setForm({ ...form, category_id: e.target.value, due_date: '' })}
                   className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
                 >
                   {categories.map((c) => (
@@ -190,40 +205,54 @@ export default function ComplianceRegisterPage() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-bold text-gray-300 mb-2">Issued Date (optional)</label>
-                  <input
-                    type="date"
-                    name="issued_date"
-                    value={form.issued_date}
-                    onChange={(e) => setForm({ ...form, issued_date: e.target.value })}
-                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                  />
+              {cadenceNotConfigured && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400 text-sm flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <p>This category's first due date hasn't been set yet. Ask an admin, cfo, or ceo to configure it under Compliance &rarr; Categories before registering an item here.</p>
                 </div>
-                <div>
-                  <label className="block text-sm font-bold text-gray-300 mb-2">Due Date</label>
-                  <input
-                    type="date" required
-                    name="due_date"
-                    value={form.due_date}
-                    onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                  />
-                </div>
-              </div>
+              )}
 
-              {isMonthly && (
-                <div>
-                  <label className="block text-sm font-bold text-gray-300 mb-2">Day of Month Due</label>
-                  <input
-                    type="number" min={1} max={31} required
-                    value={form.day_of_month_due}
-                    onChange={(e) => setForm({ ...form, day_of_month_due: e.target.value })}
-                    placeholder="e.g. 15"
-                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                  />
-                  <p className="text-xs text-amber-400 mt-1.5">Required for this category's monthly-recurring cadence -- drives future auto-generation once approved.</p>
+              {isRecurring ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-300 mb-2">Issued Date (optional)</label>
+                    <input
+                      type="date"
+                      name="issued_date"
+                      value={form.issued_date}
+                      onChange={(e) => setForm({ ...form, issued_date: e.target.value })}
+                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-gray-300 mb-2">Due Date</label>
+                    <div className="w-full px-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-gray-400 text-sm">
+                      Computed automatically{selectedCategory?.due_day_of_month ? ` (day ${selectedCategory.due_day_of_month} of the cadence's next occurrence)` : ''}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-300 mb-2">Issued Date (optional)</label>
+                    <input
+                      type="date"
+                      name="issued_date"
+                      value={form.issued_date}
+                      onChange={(e) => setForm({ ...form, issued_date: e.target.value })}
+                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-gray-300 mb-2">Due Date</label>
+                    <input
+                      type="date" required
+                      name="due_date"
+                      value={form.due_date}
+                      onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                    />
+                  </div>
                 </div>
               )}
 
@@ -253,7 +282,7 @@ export default function ComplianceRegisterPage() {
               <div className="pt-4 border-t border-dark-700 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || cadenceNotConfigured}
                   className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 disabled:opacity-50"
                 >
                   {submitting ? 'Submitting...' : <><Send className="w-5 h-5" /> Register &amp; Submit for Approval</>}
