@@ -127,6 +127,57 @@ function pickFields(row, keys) {
 // deliberate-approval step, not a rubber stamp -- but a hard block on
 // self-approval would risk a real bottleneck given this org currently has
 // only two active executives (admin, cfo) and zero active ceo.
+// Shared between createComplianceCategory and updateComplianceCategory's
+// RETURNED-only cadence-edit path (Bug 2, Phase C addendum) -- "editable,
+// validated by the same rules as creation" means literally the same
+// function, not a re-typed copy that could quietly drift from it.
+// Returns the normalized { cadenceType, intervalMonths, dueDayOfMonth,
+// anchorDate } to persist, or throws a 400.
+function validateCadenceFields({ cadence_type, interval_months, anchor_date, due_day_of_month }) {
+  if (!CADENCE_TYPES.includes(cadence_type)) {
+    const err = new Error(`cadence_type must be one of: ${CADENCE_TYPES.join(', ')}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (cadence_type === 'ONE_OFF') {
+    return { cadenceType: 'ONE_OFF', intervalMonths: null, dueDayOfMonth: null, anchorDate: null };
+  }
+
+  const intervalMonths = Number(interval_months);
+  if (!Number.isInteger(intervalMonths) || intervalMonths < MIN_INTERVAL_MONTHS || intervalMonths > MAX_INTERVAL_MONTHS) {
+    const err = new Error(`interval_months is required for a RECURRING category and must be an integer between ${MIN_INTERVAL_MONTHS} and ${MAX_INTERVAL_MONTHS}.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  // anchor_date is the source of truth for "first due date" -- required
+  // at the API layer (not just the UI) so frontend and backend can never
+  // drift on this, the same standard this project's own retrospective on
+  // the junior_accountant access bug asked for. due_day_of_month is
+  // auto-derived from anchor_date's own day-of-month unless the caller
+  // explicitly overrides it (kept as its own column for the scheduler's
+  // clamping math, not because it's independently meaningful).
+  if (!anchor_date) {
+    const err = new Error('anchor_date (first due date) is required for a RECURRING category.');
+    err.statusCode = 400;
+    throw err;
+  }
+  const parsedAnchor = new Date(anchor_date);
+  if (isNaN(parsedAnchor.getTime())) {
+    const err = new Error('anchor_date is not a valid date.');
+    err.statusCode = 400;
+    throw err;
+  }
+  const anchorDate = toDateOnlyString(parsedAnchor);
+  const dueDayOfMonth = due_day_of_month != null ? Number(due_day_of_month) : parsedAnchor.getUTCDate();
+  if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
+    const err = new Error('due_day_of_month must be an integer between 1 and 31.');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { cadenceType: 'RECURRING', intervalMonths, dueDayOfMonth, anchorDate };
+}
+
 const createComplianceCategory = async ({
   name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date,
   reminder_ladder_days, created_by,
@@ -136,49 +187,11 @@ const createComplianceCategory = async ({
     err.statusCode = 400;
     throw err;
   }
-  if (!CADENCE_TYPES.includes(cadence_type)) {
-    const err = new Error(`cadence_type must be one of: ${CADENCE_TYPES.join(', ')}.`);
-    err.statusCode = 400;
-    throw err;
-  }
 
-  let intervalMonths = null;
-  let dueDayOfMonth = null;
-  let anchorDate = null;
-
-  if (cadence_type === 'RECURRING') {
-    intervalMonths = Number(interval_months);
-    if (!Number.isInteger(intervalMonths) || intervalMonths < MIN_INTERVAL_MONTHS || intervalMonths > MAX_INTERVAL_MONTHS) {
-      const err = new Error(`interval_months is required for a RECURRING category and must be an integer between ${MIN_INTERVAL_MONTHS} and ${MAX_INTERVAL_MONTHS}.`);
-      err.statusCode = 400;
-      throw err;
-    }
-    // anchor_date is the source of truth for "first due date" -- required
-    // at the API layer (not just the UI) so frontend and backend can never
-    // drift on this, the same standard this project's own retrospective on
-    // the junior_accountant access bug asked for. due_day_of_month is
-    // auto-derived from anchor_date's own day-of-month unless the caller
-    // explicitly overrides it (kept as its own column for the scheduler's
-    // clamping math, not because it's independently meaningful).
-    if (!anchor_date) {
-      const err = new Error('anchor_date (first due date) is required for a RECURRING category.');
-      err.statusCode = 400;
-      throw err;
-    }
-    const parsedAnchor = new Date(anchor_date);
-    if (isNaN(parsedAnchor.getTime())) {
-      const err = new Error('anchor_date is not a valid date.');
-      err.statusCode = 400;
-      throw err;
-    }
-    anchorDate = toDateOnlyString(parsedAnchor);
-    dueDayOfMonth = due_day_of_month != null ? Number(due_day_of_month) : parsedAnchor.getUTCDate();
-    if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
-      const err = new Error('due_day_of_month must be an integer between 1 and 31.');
-      err.statusCode = 400;
-      throw err;
-    }
-  }
+  const { cadenceType: cadence_type_v, intervalMonths, dueDayOfMonth, anchorDate } = validateCadenceFields({
+    cadence_type, interval_months, anchor_date, due_day_of_month,
+  });
+  cadence_type = cadence_type_v;
 
   const ladder = reminder_ladder_days ?? defaultReminderLadderForCadence(cadence_type, intervalMonths);
   if (!Array.isArray(ladder) || ladder.length === 0 || !ladder.every((d) => Number.isInteger(d) && d > 0)) {
@@ -417,16 +430,22 @@ const resubmitComplianceCategory = async (categoryId, actorId, isAdmin) => {
   });
 };
 
-// Deliberately does not allow changing cadence_type/interval_months
-// (formerly recurrence_type): the scheduler and the approval-time
-// recurrence-rule bootstrap both key their logic off a category's cadence
-// at the moment each item/rule was created. Changing it out from under
-// existing items/rules would leave their behavior inconsistent with a
-// category that no longer describes them -- a category whose cadence was
-// set up wrong should be deactivated and recreated, not mutated in place.
-// due_day_of_month/anchor_date CAN be edited (e.g. filling in the 7
-// categories the flexible-cadence migration left NULL), since that's
-// completing configuration, not changing the cadence's shape.
+// cadence_type/interval_months are locked EXCEPT while the category is
+// RETURNED (Bug 2, Phase C addendum). The original reasoning still holds
+// for everything else: the scheduler and the approval-time recurrence-
+// rule bootstrap key their logic off a category's cadence at the moment
+// each item/rule was created, so changing it out from under existing
+// items/rules would leave their behavior inconsistent with a category
+// that no longer describes them -- once ACTIVE, a category whose cadence
+// was set up wrong should still be deactivated and recreated, not mutated
+// in place. But a RETURNED category can never have gotten that far: the
+// status graph only reaches RETURNED from PENDING_APPROVAL, and ACTIVE is
+// terminal (nothing transitions a category back out of it), so a
+// recurrence rule or generated item can only exist under a category that
+// has already been ACTIVE at least once -- a RETURNED category, by
+// construction, has never been approved and so has neither. Fixing its
+// cadence there is equivalent to fixing it before creation, not mutating
+// something downstream already depends on.
 //
 // Also deliberately does not accept `status` -- status only ever moves via
 // approveComplianceCategory/rejectComplianceCategory below. is_active and
@@ -455,12 +474,19 @@ const updateComplianceCategory = async (categoryId, updates, actorId, actorRole)
     }
     const category = existing.rows[0];
 
-    for (const locked of ['recurrence_type', 'cadence_type', 'interval_months']) {
-      if (locked in updates) {
-        const err = new Error(`${locked} cannot be changed after creation. Deactivate this category and create a new one instead.`);
-        err.statusCode = 400;
-        throw err;
-      }
+    // recurrence_type is deprecated and unread -- always locked, no
+    // exception (nothing should ever set it again; see Bug 1's "delete
+    // every frontend read of recurrence_type").
+    if ('recurrence_type' in updates) {
+      const err = new Error('recurrence_type is deprecated and cannot be set.');
+      err.statusCode = 400;
+      throw err;
+    }
+    const editingCadenceShape = 'cadence_type' in updates || 'interval_months' in updates;
+    if (editingCadenceShape && category.status !== 'RETURNED') {
+      const err = new Error('cadence_type/interval_months cannot be changed after creation unless the category is RETURNED. Deactivate this category and create a new one instead.');
+      err.statusCode = 400;
+      throw err;
     }
 
     const isExecutive = actorRole != null && EXECUTIVE_ROLES.includes(actorRole);
@@ -511,38 +537,40 @@ const updateComplianceCategory = async (categoryId, updates, actorId, actorRole)
     if ('is_active' in updates) {
       fields.push(`is_active = $${i++}`); values.push(!!updates.is_active);
     }
-    if ('anchor_date' in updates || 'due_day_of_month' in updates) {
-      if (category.cadence_type !== 'RECURRING') {
+    if (editingCadenceShape || 'anchor_date' in updates || 'due_day_of_month' in updates) {
+      // Same validation as creation (validateCadenceFields), fed with the
+      // EFFECTIVE cadence: whatever this request is changing, falling back
+      // to the category's existing values for anything it isn't. This is
+      // what lets "just move the first due date" (Phase B's existing
+      // executive-only anchor_date edit on an ACTIVE category) keep working
+      // exactly as before -- cadence_type/interval_months aren't in that
+      // request, so the effective values are just the category's own,
+      // already-valid ones -- while also correctly handling a RETURNED
+      // category's cadence_type actually changing shape (e.g. ONE_OFF ->
+      // RECURRING now requires anchor_date; RECURRING -> ONE_OFF clears it).
+      const effective = {
+        cadence_type: 'cadence_type' in updates ? updates.cadence_type : category.cadence_type,
+        interval_months: 'interval_months' in updates ? updates.interval_months : category.interval_months,
+        anchor_date: 'anchor_date' in updates ? updates.anchor_date : category.anchor_date,
+        due_day_of_month: 'due_day_of_month' in updates ? updates.due_day_of_month : category.due_day_of_month,
+      };
+      // Preserves the pre-existing guard: setting anchor_date/due_day_of_month
+      // on a category that is (and remains) ONE_OFF is still rejected, not
+      // silently discarded by the validator's own ONE_OFF short-circuit.
+      if (!editingCadenceShape && ('anchor_date' in updates || 'due_day_of_month' in updates) && effective.cadence_type !== 'RECURRING') {
         const err = new Error('anchor_date/due_day_of_month only apply to a RECURRING category.');
         err.statusCode = 400;
         throw err;
       }
-      const anchorDate = 'anchor_date' in updates ? updates.anchor_date : category.anchor_date;
-      if (!anchorDate) {
-        const err = new Error('anchor_date cannot be cleared once set.');
-        err.statusCode = 400;
-        throw err;
-      }
-      const parsedAnchor = new Date(anchorDate);
-      if (isNaN(parsedAnchor.getTime())) {
-        const err = new Error('anchor_date is not a valid date.');
-        err.statusCode = 400;
-        throw err;
-      }
-      const dueDayOfMonth = 'due_day_of_month' in updates && updates.due_day_of_month != null
-        ? Number(updates.due_day_of_month)
-        : parsedAnchor.getUTCDate();
-      if (!Number.isInteger(dueDayOfMonth) || dueDayOfMonth < 1 || dueDayOfMonth > 31) {
-        const err = new Error('due_day_of_month must be an integer between 1 and 31.');
-        err.statusCode = 400;
-        throw err;
-      }
-      fields.push(`anchor_date = $${i++}`); values.push(toDateOnlyString(parsedAnchor));
+      const { cadenceType, intervalMonths, dueDayOfMonth, anchorDate } = validateCadenceFields(effective);
+      fields.push(`cadence_type = $${i++}`); values.push(cadenceType);
+      fields.push(`interval_months = $${i++}`); values.push(intervalMonths);
+      fields.push(`anchor_date = $${i++}`); values.push(anchorDate);
       fields.push(`due_day_of_month = $${i++}`); values.push(dueDayOfMonth);
     }
 
     if (fields.length === 0) {
-      const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active, anchor_date, due_day_of_month).');
+      const err = new Error('No updatable fields provided (name, regulator, reminder_ladder_days, is_active, cadence_type, interval_months, anchor_date, due_day_of_month).');
       err.statusCode = 400;
       throw err;
     }

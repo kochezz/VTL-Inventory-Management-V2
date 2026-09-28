@@ -203,15 +203,212 @@ function CategoryTableRow({
   );
 }
 
-const CREATE_FORM_DEFAULTS = {
-  name: '',
-  regulator: '',
+// The cadence sub-form's own state shape, used by BOTH the create-category
+// modal and the RETURNED-category fix-and-resubmit modal (Bug 2) -- one
+// component (CadenceFieldsForm below), not two hand-kept-in-sync copies of
+// the preset/preview/reminder-ladder logic.
+interface CadenceFormState {
+  cadencePreset: string;
+  customIntervalMonths: string;
+  anchorDate: string;
+  dueDayOfMonth: string;
+  reminderLadderDays: string;
+}
+
+const CADENCE_FORM_DEFAULTS: CadenceFormState = {
   cadencePreset: 'ONE_OFF',
   customIntervalMonths: '3',
   anchorDate: '',
   dueDayOfMonth: '',
   reminderLadderDays: defaultReminderLadder('ONE_OFF', null).join(','),
 };
+
+const CREATE_FORM_DEFAULTS = {
+  name: '',
+  regulator: '',
+  ...CADENCE_FORM_DEFAULTS,
+};
+
+function isRecurringPreset(form: CadenceFormState) {
+  return form.cadencePreset !== 'ONE_OFF';
+}
+
+function effectiveIntervalMonths(form: CadenceFormState): number | null {
+  const preset = CADENCE_PRESETS.find((p) => p.value === form.cadencePreset)!;
+  return form.cadencePreset === 'CUSTOM' ? (parseInt(form.customIntervalMonths, 10) || null) : preset.intervalMonths;
+}
+
+// Reverse of the preset -> interval_months mapping -- used to pre-fill the
+// resubmit modal's cadence preset from a category's existing cadence_type/
+// interval_months (e.g. a category created with a 3-month CUSTOM interval
+// opens back up as QUARTERLY, since that preset also maps to 3).
+function presetForCadence(cadenceType: 'ONE_OFF' | 'RECURRING' | null, intervalMonths: number | null): string {
+  if (cadenceType !== 'RECURRING') return 'ONE_OFF';
+  const match = CADENCE_PRESETS.find((p) => p.value !== 'ONE_OFF' && p.value !== 'CUSTOM' && p.intervalMonths === intervalMonths);
+  return match ? match.value : 'CUSTOM';
+}
+
+// Maps the form's UI-friendly shape onto the exact fields
+// createComplianceCategory/updateComplianceCategory validate -- the one
+// place that translation happens, used by both the create and resubmit
+// submit handlers so they can never drift on it.
+function cadenceFormToApiFields(form: CadenceFormState) {
+  const recurring = isRecurringPreset(form);
+  const interval = effectiveIntervalMonths(form);
+  return {
+    cadence_type: recurring ? ('RECURRING' as const) : ('ONE_OFF' as const),
+    interval_months: recurring ? (interval ?? undefined) : undefined,
+    anchor_date: recurring ? (form.anchorDate || undefined) : undefined,
+    due_day_of_month: recurring && form.dueDayOfMonth ? parseInt(form.dueDayOfMonth, 10) : undefined,
+  };
+}
+
+// A real, standalone component (see the RowErrorBoundary comment above for
+// why that matters elsewhere on this page) covering presets, the custom-
+// interval input, first due date + due-day override, the 3-date preview,
+// and the reminder ladder -- everything Phase B's create-category form
+// had, now shared with Bug 2's resubmit-with-fixed-cadence form. `onPatch`
+// (not a direct value setter) is what lets one component work against two
+// different parent state shapes (newCategory has name/regulator alongside
+// these fields; resubmitForm does too) without either needing to know the
+// other's full shape.
+function CadenceFieldsForm({
+  value, onPatch,
+}: {
+  value: CadenceFormState;
+  onPatch: (patch: Partial<CadenceFormState>) => void;
+}) {
+  const isCustomPreset = value.cadencePreset === 'CUSTOM';
+  const isRecurring = isRecurringPreset(value);
+  const interval = effectiveIntervalMonths(value);
+
+  // Live preview of the next 3 due dates -- purely a UI convenience so
+  // whoever is creating/fixing the category can sanity-check "every 3
+  // months from this date" actually lands where they expect.
+  const previewDates = useMemo(() => {
+    if (!isRecurring || !value.anchorDate || !interval) return [];
+    const anchor = new Date(value.anchorDate + 'T00:00:00Z');
+    if (isNaN(anchor.getTime())) return [];
+    const dueDay = value.dueDayOfMonth ? parseInt(value.dueDayOfMonth, 10) : anchor.getUTCDate();
+    if (!dueDay || dueDay < 1 || dueDay > 31) return [];
+    const dates = [anchor];
+    let cur = anchor;
+    for (let i = 0; i < 2; i++) {
+      cur = nextDueDateClamped(cur, interval, dueDay);
+      dates.push(cur);
+    }
+    return dates;
+  }, [isRecurring, value.anchorDate, value.dueDayOfMonth, interval]);
+
+  // Reminder ladder re-derives its default every time the cadence changes,
+  // per "pre-filled from interval default, editable" -- it stays editable
+  // after that (a manual edit isn't preserved across a further cadence
+  // change, matching "pre-filled," not "remembered").
+  const handleCadenceChange = (presetValue: string) => {
+    const preset = CADENCE_PRESETS.find((p) => p.value === presetValue)!;
+    const cadenceType = presetValue === 'ONE_OFF' ? 'ONE_OFF' : 'RECURRING';
+    const intervalMonths = presetValue === 'CUSTOM'
+      ? (parseInt(value.customIntervalMonths, 10) || null)
+      : preset.intervalMonths;
+    onPatch({
+      cadencePreset: presetValue,
+      reminderLadderDays: defaultReminderLadder(cadenceType, intervalMonths).join(','),
+    });
+  };
+
+  const handleCustomIntervalChange = (v: string) => {
+    const intervalMonths = parseInt(v, 10) || null;
+    onPatch({
+      customIntervalMonths: v,
+      reminderLadderDays: defaultReminderLadder('RECURRING', intervalMonths).join(','),
+    });
+  };
+
+  return (
+    <>
+      <div>
+        <label className="block text-sm font-bold text-gray-300 mb-2">Cadence</label>
+        <select
+          required
+          value={value.cadencePreset}
+          onChange={(e) => handleCadenceChange(e.target.value)}
+          className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+        >
+          {CADENCE_PRESETS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {isCustomPreset && (
+        <div>
+          <label className="block text-sm font-bold text-gray-300 mb-2">Every how many months?</label>
+          <input
+            type="number" required min={1} max={60}
+            value={value.customIntervalMonths}
+            onChange={(e) => handleCustomIntervalChange(e.target.value)}
+            className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+          />
+        </div>
+      )}
+
+      {isRecurring && (
+        <>
+          <div>
+            <label className="block text-sm font-bold text-gray-300 mb-2">First due date</label>
+            <input
+              type="date" required
+              value={value.anchorDate}
+              onChange={(e) => onPatch({ anchorDate: e.target.value })}
+              className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+            />
+            <p className="text-xs text-gray-500 mt-1.5">Every future occurrence is calculated from this date. Required for a recurring category.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-300 mb-2">Due day of month (optional override)</label>
+            <input
+              type="number" min={1} max={31}
+              value={value.dueDayOfMonth}
+              onChange={(e) => onPatch({ dueDayOfMonth: e.target.value })}
+              placeholder={value.anchorDate ? String(new Date(value.anchorDate + 'T00:00:00Z').getUTCDate()) : 'defaults to first due date’s day'}
+              className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+            />
+            <p className="text-xs text-gray-500 mt-1.5">Leave blank to use the first due date's own day of month.</p>
+          </div>
+
+          {previewDates.length > 0 && (
+            <div className="p-4 bg-dark-900/60 border border-dark-700 rounded-xl">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <CalendarClock className="w-3.5 h-3.5" />
+                Next 3 due dates
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {previewDates.map((d, i) => (
+                  <span key={i} className="px-3 py-1 bg-dark-950 border border-dark-600 rounded-lg text-sm text-white font-mono">
+                    {formatDate(d)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <div>
+        <label className="block text-sm font-bold text-gray-300 mb-2">Reminder Ladder (days before due, comma-separated)</label>
+        <input
+          type="text" required
+          value={value.reminderLadderDays}
+          onChange={(e) => onPatch({ reminderLadderDays: e.target.value })}
+          placeholder="30,15,10,5"
+          className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono focus:border-primary-500"
+        />
+        <p className="text-xs text-gray-500 mt-1.5">Pre-filled from the cadence you picked -- edit freely.</p>
+      </div>
+    </>
+  );
+}
 
 export default function ComplianceCategoriesPage() {
   const router = useRouter();
@@ -240,7 +437,9 @@ export default function ComplianceCategoriesPage() {
   // enforced server-side by updateComplianceCategory, mirrored here only
   // for which fields the form shows.
   const [resubmitCategory, setResubmitCategory] = useState<ComplianceCategory | null>(null);
-  const [resubmitForm, setResubmitForm] = useState({ name: '', regulator: '', reminderLadderDays: '' });
+  const [resubmitForm, setResubmitForm] = useState<CadenceFormState & { name: string; regulator: string }>({
+    name: '', regulator: '', ...CADENCE_FORM_DEFAULTS,
+  });
   const [resubmitLoading, setResubmitLoading] = useState(false);
   const [resubmitError, setResubmitError] = useState('');
 
@@ -269,57 +468,6 @@ export default function ComplianceCategoriesPage() {
     }
   };
 
-  const selectedPreset = CADENCE_PRESETS.find((p) => p.value === newCategory.cadencePreset)!;
-  const isCustomPreset = newCategory.cadencePreset === 'CUSTOM';
-  const isRecurringPreset = newCategory.cadencePreset !== 'ONE_OFF';
-  const effectiveIntervalMonths = isCustomPreset
-    ? (parseInt(newCategory.customIntervalMonths, 10) || null)
-    : selectedPreset.intervalMonths;
-
-  // Live preview of the next 3 due dates -- purely a UI convenience so
-  // whoever is creating the category can sanity-check "every 3 months from
-  // this date" actually lands where they expect, before submitting.
-  const previewDates = useMemo(() => {
-    if (!isRecurringPreset || !newCategory.anchorDate || !effectiveIntervalMonths) return [];
-    const anchor = new Date(newCategory.anchorDate + 'T00:00:00Z');
-    if (isNaN(anchor.getTime())) return [];
-    const dueDay = newCategory.dueDayOfMonth ? parseInt(newCategory.dueDayOfMonth, 10) : anchor.getUTCDate();
-    if (!dueDay || dueDay < 1 || dueDay > 31) return [];
-    const dates = [anchor];
-    let cur = anchor;
-    for (let i = 0; i < 2; i++) {
-      cur = nextDueDateClamped(cur, effectiveIntervalMonths, dueDay);
-      dates.push(cur);
-    }
-    return dates;
-  }, [isRecurringPreset, newCategory.anchorDate, newCategory.dueDayOfMonth, effectiveIntervalMonths]);
-
-  // Reminder ladder re-derives its default every time the cadence changes,
-  // per "pre-filled from interval default, editable" -- it stays editable
-  // after that (a manual edit isn't preserved across a further cadence
-  // change, matching "pre-filled," not "remembered").
-  const handleCadenceChange = (presetValue: string) => {
-    const preset = CADENCE_PRESETS.find((p) => p.value === presetValue)!;
-    const cadenceType = presetValue === 'ONE_OFF' ? 'ONE_OFF' : 'RECURRING';
-    const intervalMonths = presetValue === 'CUSTOM'
-      ? (parseInt(newCategory.customIntervalMonths, 10) || null)
-      : preset.intervalMonths;
-    setNewCategory({
-      ...newCategory,
-      cadencePreset: presetValue,
-      reminderLadderDays: defaultReminderLadder(cadenceType, intervalMonths).join(','),
-    });
-  };
-
-  const handleCustomIntervalChange = (value: string) => {
-    const intervalMonths = parseInt(value, 10) || null;
-    setNewCategory({
-      ...newCategory,
-      customIntervalMonths: value,
-      reminderLadderDays: defaultReminderLadder('RECURRING', intervalMonths).join(','),
-    });
-  };
-
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -337,13 +485,13 @@ export default function ComplianceCategoriesPage() {
         return;
       }
 
-      if (isRecurringPreset && !effectiveIntervalMonths) {
+      const recurring = isRecurringPreset(newCategory);
+      if (recurring && !effectiveIntervalMonths(newCategory)) {
         setCreateError('Enter a valid number of months (1-60) for a custom cadence.');
         setCreateLoading(false);
         return;
       }
-
-      if (isRecurringPreset && !newCategory.anchorDate) {
+      if (recurring && !newCategory.anchorDate) {
         setCreateError('First due date is required for a recurring category.');
         setCreateLoading(false);
         return;
@@ -352,10 +500,7 @@ export default function ComplianceCategoriesPage() {
       await api.post('/compliance/categories', {
         name: newCategory.name,
         regulator: newCategory.regulator || undefined,
-        cadence_type: isRecurringPreset ? 'RECURRING' : 'ONE_OFF',
-        interval_months: isRecurringPreset ? effectiveIntervalMonths : undefined,
-        anchor_date: isRecurringPreset ? newCategory.anchorDate : undefined,
-        due_day_of_month: isRecurringPreset && newCategory.dueDayOfMonth ? parseInt(newCategory.dueDayOfMonth, 10) : undefined,
+        ...cadenceFormToApiFields(newCategory),
         reminder_ladder_days: ladder,
       });
 
@@ -405,9 +550,14 @@ export default function ComplianceCategoriesPage() {
 
   const openResubmitModal = (category: ComplianceCategory) => {
     setResubmitCategory(category);
+    const cadencePreset = presetForCadence(category.cadence_type, category.interval_months);
     setResubmitForm({
       name: category.name,
       regulator: category.regulator || '',
+      cadencePreset,
+      customIntervalMonths: cadencePreset === 'CUSTOM' && category.interval_months ? String(category.interval_months) : '3',
+      anchorDate: category.anchor_date ? category.anchor_date.slice(0, 10) : '',
+      dueDayOfMonth: category.due_day_of_month ? String(category.due_day_of_month) : '',
       reminderLadderDays: category.reminder_ladder_days.join(','),
     });
     setResubmitError('');
@@ -430,9 +580,28 @@ export default function ComplianceCategoriesPage() {
         return;
       }
 
+      const recurring = isRecurringPreset(resubmitForm);
+      if (recurring && !effectiveIntervalMonths(resubmitForm)) {
+        setResubmitError('Enter a valid number of months (1-60) for a custom cadence.');
+        setResubmitLoading(false);
+        return;
+      }
+      if (recurring && !resubmitForm.anchorDate) {
+        setResubmitError('First due date is required for a recurring category.');
+        setResubmitLoading(false);
+        return;
+      }
+
+      // Every field here -- including cadence_type/interval_months/
+      // anchor_date/due_day_of_month when they've changed -- lands in the
+      // same PATCH request, so updateComplianceCategory's own audit_log
+      // write (keyed off Object.keys(updates)) captures the cadence change
+      // with old/new values automatically; nothing extra needed here for
+      // that (Bug 2, item 4).
       await api.patch(`/compliance/categories/${resubmitCategory.category_id}`, {
         name: resubmitForm.name,
         regulator: resubmitForm.regulator || null,
+        ...cadenceFormToApiFields(resubmitForm),
         reminder_ladder_days: ladder,
       });
       await api.post(`/compliance/categories/${resubmitCategory.category_id}/resubmit`);
@@ -582,86 +751,10 @@ export default function ComplianceCategoriesPage() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-gray-300 mb-2">Cadence</label>
-                <select
-                  required
-                  value={newCategory.cadencePreset}
-                  onChange={(e) => handleCadenceChange(e.target.value)}
-                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                >
-                  {CADENCE_PRESETS.map((p) => (
-                    <option key={p.value} value={p.value}>{p.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {isCustomPreset && (
-                <div>
-                  <label className="block text-sm font-bold text-gray-300 mb-2">Every how many months?</label>
-                  <input
-                    type="number" required min={1} max={60}
-                    value={newCategory.customIntervalMonths}
-                    onChange={(e) => handleCustomIntervalChange(e.target.value)}
-                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                  />
-                </div>
-              )}
-
-              {isRecurringPreset && (
-                <>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-2">First due date</label>
-                    <input
-                      type="date" required
-                      value={newCategory.anchorDate}
-                      onChange={(e) => setNewCategory({ ...newCategory, anchorDate: e.target.value })}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                    />
-                    <p className="text-xs text-gray-500 mt-1.5">Every future occurrence is calculated from this date. Required for a recurring category.</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-2">Due day of month (optional override)</label>
-                    <input
-                      type="number" min={1} max={31}
-                      value={newCategory.dueDayOfMonth}
-                      onChange={(e) => setNewCategory({ ...newCategory, dueDayOfMonth: e.target.value })}
-                      placeholder={newCategory.anchorDate ? String(new Date(newCategory.anchorDate + 'T00:00:00Z').getUTCDate()) : 'defaults to first due date’s day'}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                    />
-                    <p className="text-xs text-gray-500 mt-1.5">Leave blank to use the first due date's own day of month.</p>
-                  </div>
-
-                  {previewDates.length > 0 && (
-                    <div className="p-4 bg-dark-900/60 border border-dark-700 rounded-xl">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                        <CalendarClock className="w-3.5 h-3.5" />
-                        Next 3 due dates
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {previewDates.map((d, i) => (
-                          <span key={i} className="px-3 py-1 bg-dark-950 border border-dark-600 rounded-lg text-sm text-white font-mono">
-                            {formatDate(d)}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div>
-                <label className="block text-sm font-bold text-gray-300 mb-2">Reminder Ladder (days before due, comma-separated)</label>
-                <input
-                  type="text" required
-                  value={newCategory.reminderLadderDays}
-                  onChange={(e) => setNewCategory({ ...newCategory, reminderLadderDays: e.target.value })}
-                  placeholder="30,15,10,5"
-                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono focus:border-primary-500"
-                />
-                <p className="text-xs text-gray-500 mt-1.5">Pre-filled from the cadence you picked -- edit freely.</p>
-              </div>
+              <CadenceFieldsForm
+                value={newCategory}
+                onPatch={(patch) => setNewCategory({ ...newCategory, ...patch })}
+              />
 
               <div className="pt-4 border-t border-dark-700 flex justify-end gap-3">
                 <button type="button" onClick={() => setShowCreateModal(false)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
@@ -773,17 +866,14 @@ export default function ComplianceCategoriesPage() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-gray-300 mb-2">Reminder Ladder (days before due, comma-separated)</label>
-                <input
-                  type="text" required
-                  value={resubmitForm.reminderLadderDays}
-                  onChange={(e) => setResubmitForm({ ...resubmitForm, reminderLadderDays: e.target.value })}
-                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white font-mono focus:border-primary-500"
-                />
-              </div>
+              <CadenceFieldsForm
+                value={resubmitForm}
+                onPatch={(patch) => setResubmitForm({ ...resubmitForm, ...patch })}
+              />
 
-              <p className="text-xs text-gray-500">Cadence can't be changed here -- deactivate and recreate the category if that needs to change.</p>
+              <p className="text-xs text-gray-500">
+                Cadence is editable here because this category has never been approved yet -- once approved, it's locked (deactivate and recreate instead).
+              </p>
 
               <div className="pt-4 border-t border-dark-700 flex justify-end gap-3">
                 <button type="button" onClick={() => setResubmitCategory(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>

@@ -449,6 +449,9 @@ export default function ComplianceMyTasksPage() {
                   {editingItem.cadence_type === 'RECURRING' ? (
                     <div className="w-full px-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-gray-400 text-sm">
                       Computed automatically
+                      <p className="text-xs text-gray-500 mt-1">
+                        Cadence is set on the category. If it is wrong, the approver should return the category.
+                      </p>
                     </div>
                   ) : (
                     <input
