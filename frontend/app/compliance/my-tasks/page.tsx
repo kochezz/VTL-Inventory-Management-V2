@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Inbox, AlertCircle, CheckCircle2, ShieldAlert, Eye, Undo2, X, Send, Upload, FileText } from 'lucide-react';
+import { RowErrorBoundary } from '@/components/compliance/RowErrorBoundary';
 
 const CAN_VIEW_ROLES = ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'];
 
@@ -31,6 +32,132 @@ const STATUS_STYLES: Record<string, string> = {
   NON_COMPLIANT: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   RETURNED: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
 };
+
+// Real, standalone components -- not inline arrow functions invoked
+// directly inside returnedItems.map()/otherItems.map() -- because
+// RowErrorBoundary can only catch an error React itself throws while
+// rendering a distinct child component. An error thrown while the PARENT
+// is still constructing its own JSX (e.g. evaluating
+// item.reminder_tiers_fired.map(...) directly inside a <div>) is
+// attributed to the parent, since the boundary hasn't been invoked yet at
+// that point -- confirmed by a regression test on the Approvals page that
+// initially made this exact mistake.
+function ReturnedItemCard({
+  item, previewingId, onPreview, onFixAndResubmit,
+}: {
+  item: ComplianceItem;
+  previewingId: string | null;
+  onPreview: () => void;
+  onFixAndResubmit: () => void;
+}) {
+  return (
+    <div className="bg-dark-800 border border-amber-500/30 rounded-xl p-5 shadow-lg">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-bold text-white text-lg">{item.category_name}</p>
+            <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[item.status] || ''}`}>
+              {item.status}
+            </span>
+          </div>
+          {item.regulator && <p className="text-xs text-gray-500 mt-0.5">{item.regulator}</p>}
+          {item.rejection_reason && (
+            <p className="text-sm text-amber-300 mt-2 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+              <span className="font-bold">Why it was returned:</span> {item.rejection_reason}
+            </p>
+          )}
+          <button
+            onClick={onPreview}
+            disabled={previewingId === item.item_id}
+            className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 text-xs font-medium mt-2 disabled:opacity-50"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            {previewingId === item.item_id ? 'Opening...' : (item.evidence_file_ref || 'View evidence')}
+          </button>
+        </div>
+        <button
+          onClick={onFixAndResubmit}
+          className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 md:w-56"
+        >
+          <Undo2 className="w-4 h-4" />
+          Fix &amp; Resubmit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TaskItemCard({
+  item, previewingId, ackNoteValue, ackingId, onPreview, onAckNoteChange, onAcknowledge,
+}: {
+  item: ComplianceItem;
+  previewingId: string | null;
+  ackNoteValue: string;
+  ackingId: string | null;
+  onPreview: () => void;
+  onAckNoteChange: (value: string) => void;
+  onAcknowledge: () => void;
+}) {
+  return (
+    <div className="bg-dark-800 border border-dark-700 rounded-xl p-5 shadow-lg">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-bold text-white text-lg">{item.category_name}</p>
+            <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[item.status] || ''}`}>
+              {item.status.replace(/_/g, ' ')}
+            </span>
+          </div>
+          {item.regulator && <p className="text-xs text-gray-500 mt-0.5">{item.regulator}</p>}
+          <p className="text-sm text-gray-400 mt-2">
+            Due {new Date(item.due_date).toLocaleDateString()} —{' '}
+            <span className={item.days_until_due < 0 ? 'text-red-400 font-bold' : 'text-gray-400'}>
+              {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
+            </span>
+          </p>
+          {item.reminder_tiers_fired.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap mt-2">
+              <span className="text-xs text-gray-500 mr-1">Reminders sent:</span>
+              {item.reminder_tiers_fired.map((tier) => (
+                <span key={tier} className="px-2 py-0.5 bg-dark-900 border border-dark-600 rounded text-xs font-mono text-gray-300">
+                  {tier.replace('_', ' ')}
+                </span>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={onPreview}
+            disabled={previewingId === item.item_id}
+            className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 text-xs font-medium mt-2 disabled:opacity-50"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            {previewingId === item.item_id ? 'Opening...' : (item.evidence_file_ref || 'View evidence')}
+          </button>
+        </div>
+
+        {item.status === 'NON_COMPLIANT' && !item.is_acknowledged && (
+          <div className="flex flex-col gap-2 md:w-80">
+            <input
+              type="text"
+              value={ackNoteValue}
+              onChange={(e) => onAckNoteChange(e.target.value)}
+              placeholder="Optional note..."
+              className="px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500"
+            />
+            <button
+              onClick={onAcknowledge}
+              disabled={ackingId === item.item_id}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              {ackingId === item.item_id ? 'Acknowledging...' : 'Acknowledge'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function ComplianceMyTasksPage() {
   const router = useRouter();
@@ -235,39 +362,22 @@ export default function ComplianceMyTasksPage() {
                 </h2>
                 <div className="space-y-4 mb-6">
                   {returnedItems.map((item) => (
-                    <div key={item.item_id} className="bg-dark-800 border border-amber-500/30 rounded-xl p-5 shadow-lg">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-bold text-white text-lg">{item.category_name}</p>
-                            <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[item.status] || ''}`}>
-                              {item.status}
-                            </span>
-                          </div>
-                          {item.regulator && <p className="text-xs text-gray-500 mt-0.5">{item.regulator}</p>}
-                          {item.rejection_reason && (
-                            <p className="text-sm text-amber-300 mt-2 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
-                              <span className="font-bold">Why it was returned:</span> {item.rejection_reason}
-                            </p>
-                          )}
-                          <button
-                            onClick={() => previewEvidence(item.item_id)}
-                            disabled={previewingId === item.item_id}
-                            className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 text-xs font-medium mt-2 disabled:opacity-50"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            {previewingId === item.item_id ? 'Opening...' : (item.evidence_file_ref || 'View evidence')}
-                          </button>
+                    <RowErrorBoundary
+                      key={item.item_id}
+                      fallback={
+                        <div className="bg-dark-800 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                          This item ({item.category_name || item.item_id}) failed to render. Refresh, or contact support if this persists.
                         </div>
-                        <button
-                          onClick={() => openEdit(item)}
-                          className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 md:w-56"
-                        >
-                          <Undo2 className="w-4 h-4" />
-                          Fix &amp; Resubmit
-                        </button>
-                      </div>
-                    </div>
+                      }
+                    >
+                      <ReturnedItemCard
+                        item={item}
+                        previewingId={previewingId}
+                        onPreview={() => previewEvidence(item.item_id)}
+                        onFixAndResubmit={() => openEdit(item)}
+                      />
+                    </RowErrorBoundary>
                   ))}
                 </div>
               </div>
@@ -275,63 +385,25 @@ export default function ComplianceMyTasksPage() {
 
           <div className="space-y-4">
             {otherItems.map((item) => (
-              <div key={item.item_id} className="bg-dark-800 border border-dark-700 rounded-xl p-5 shadow-lg">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-bold text-white text-lg">{item.category_name}</p>
-                      <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[item.status] || ''}`}>
-                        {item.status.replace(/_/g, ' ')}
-                      </span>
-                    </div>
-                    {item.regulator && <p className="text-xs text-gray-500 mt-0.5">{item.regulator}</p>}
-                    <p className="text-sm text-gray-400 mt-2">
-                      Due {new Date(item.due_date).toLocaleDateString()} —{' '}
-                      <span className={item.days_until_due < 0 ? 'text-red-400 font-bold' : 'text-gray-400'}>
-                        {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
-                      </span>
-                    </p>
-                    {item.reminder_tiers_fired.length > 0 && (
-                      <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                        <span className="text-xs text-gray-500 mr-1">Reminders sent:</span>
-                        {item.reminder_tiers_fired.map((tier) => (
-                          <span key={tier} className="px-2 py-0.5 bg-dark-900 border border-dark-600 rounded text-xs font-mono text-gray-300">
-                            {tier.replace('_', ' ')}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <button
-                      onClick={() => previewEvidence(item.item_id)}
-                      disabled={previewingId === item.item_id}
-                      className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 text-xs font-medium mt-2 disabled:opacity-50"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      {previewingId === item.item_id ? 'Opening...' : (item.evidence_file_ref || 'View evidence')}
-                    </button>
+              <RowErrorBoundary
+                key={item.item_id}
+                fallback={
+                  <div className="bg-dark-800 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    This item ({item.category_name || item.item_id}) failed to render. Refresh, or contact support if this persists.
                   </div>
-
-                  {item.status === 'NON_COMPLIANT' && !item.is_acknowledged && (
-                    <div className="flex flex-col gap-2 md:w-80">
-                      <input
-                        type="text"
-                        value={ackNote[item.item_id] || ''}
-                        onChange={(e) => setAckNote({ ...ackNote, [item.item_id]: e.target.value })}
-                        placeholder="Optional note..."
-                        className="px-3 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white text-sm focus:border-primary-500"
-                      />
-                      <button
-                        onClick={() => handleAcknowledge(item.item_id)}
-                        disabled={ackingId === item.item_id}
-                        className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <ShieldAlert className="w-4 h-4" />
-                        {ackingId === item.item_id ? 'Acknowledging...' : 'Acknowledge'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
+                }
+              >
+                <TaskItemCard
+                  item={item}
+                  previewingId={previewingId}
+                  ackNoteValue={ackNote[item.item_id] || ''}
+                  ackingId={ackingId}
+                  onPreview={() => previewEvidence(item.item_id)}
+                  onAckNoteChange={(value) => setAckNote({ ...ackNote, [item.item_id]: value })}
+                  onAcknowledge={() => handleAcknowledge(item.item_id)}
+                />
+              </RowErrorBoundary>
             ))}
           </div>
           </>

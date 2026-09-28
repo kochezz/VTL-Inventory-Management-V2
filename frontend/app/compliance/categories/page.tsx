@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Gavel, Plus, X, Save, AlertCircle, Power, PowerOff, CalendarClock, Pencil, Undo2, Send } from 'lucide-react';
+import { formatCadence } from '@/utils/complianceUtils';
+import { RowErrorBoundary } from '@/components/compliance/RowErrorBoundary';
 
 // junior_accountant and manager can now PROPOSE a category (backend:
 // authorize(['junior_accountant','manager','admin','cfo','ceo']) on POST
@@ -63,7 +65,6 @@ interface ComplianceCategory {
   category_id: string;
   name: string;
   regulator: string | null;
-  recurrence_type: string | null;
   cadence_type: 'ONE_OFF' | 'RECURRING' | null;
   interval_months: number | null;
   due_day_of_month: number | null;
@@ -86,6 +87,121 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
+
+// formatCadence is the one shared source of truth for turning
+// cadence_type/interval_months into a display string (used here and on
+// the Approvals page) -- this just appends the due-day suffix this page
+// additionally wants. Every category has had cadence_type backfilled
+// since the flexible-cadence migration, so there's no longer a
+// recurrence_type fallback case left to handle.
+function cadenceLabel(cat: ComplianceCategory): string {
+  const base = formatCadence(cat.cadence_type, cat.interval_months);
+  return cat.cadence_type === 'RECURRING' && cat.due_day_of_month ? `${base} (day ${cat.due_day_of_month})` : base;
+}
+
+function needsCadenceSetup(cat: ComplianceCategory) {
+  return cat.cadence_type === 'RECURRING' && !cat.anchor_date;
+}
+
+// A real, standalone component -- not an inline arrow function invoked
+// directly inside categories.map() -- because RowErrorBoundary can only
+// catch an error React itself throws while rendering a distinct child
+// component. An error thrown while the PARENT is still constructing its
+// own JSX (e.g. evaluating cat.reminder_ladder_days.join(...) directly
+// inside a <td>) is attributed to the parent, since the boundary hasn't
+// been invoked yet at that point -- confirmed by a regression test on the
+// Approvals page that initially made this exact mistake.
+function CategoryTableRow({
+  cat, isExecutive, currentUserId, onResubmit, onEditCadence, onToggleActive,
+}: {
+  cat: ComplianceCategory;
+  isExecutive: boolean;
+  currentUserId: string | undefined;
+  onResubmit: () => void;
+  onEditCadence: () => void;
+  onToggleActive: () => void;
+}) {
+  return (
+    <tr className="hover:bg-dark-700/50 transition-colors">
+      <td className="py-4 px-6 font-bold text-white">{cat.name}</td>
+      <td className="py-4 px-6 text-gray-300">{cat.regulator || '—'}</td>
+      <td className="py-4 px-6 text-gray-300">
+        {cadenceLabel(cat)}
+        {needsCadenceSetup(cat) && (
+          <div className="flex items-center gap-1.5 mt-1 text-amber-400 text-xs">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            First due date not set -- items can't be registered yet
+          </div>
+        )}
+      </td>
+      <td className="py-4 px-6 text-gray-300 font-mono text-sm">{cat.reminder_ladder_days.join(', ')} days</td>
+      <td className="py-4 px-6 text-center">
+        <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[cat.status]}`}>
+          {cat.status.replace('_', ' ')}
+        </span>
+        {(cat.status === 'REJECTED' || cat.status === 'RETURNED') && cat.rejection_reason && (
+          <p className={`text-xs mt-1 max-w-[160px] mx-auto ${cat.status === 'RETURNED' ? 'text-orange-300' : 'text-gray-500'}`}>{cat.rejection_reason}</p>
+        )}
+      </td>
+      <td className="py-4 px-6 text-center">
+        {cat.status === 'ACTIVE' ? (
+          <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${
+            cat.is_active
+              ? 'bg-green-500/10 text-green-400 border-green-500/20'
+              : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
+          }`}>
+            {cat.is_active ? 'In Use' : 'Deactivated'}
+          </span>
+        ) : (
+          <span className="text-gray-600 text-xs">—</span>
+        )}
+      </td>
+      <td className="py-4 px-6 text-right">
+        {/* Edit-cadence/deactivate both hit PATCH /categories/:id, which
+            the backend restricts to admin/cfo/ceo -- hidden here rather
+            than shown-then-403'd for a junior_accountant viewer. */}
+        <div className="flex items-center justify-end gap-2">
+          {cat.status === 'RETURNED' && cat.created_by === currentUserId && (
+            <button
+              onClick={onResubmit}
+              className="p-2 text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+              title="Fix and resubmit this category"
+            >
+              <Undo2 className="w-4 h-4" />
+              Fix &amp; Resubmit
+            </button>
+          )}
+          {isExecutive && cat.cadence_type === 'RECURRING' && (
+            <button
+              onClick={onEditCadence}
+              className={`p-2 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold ${
+                needsCadenceSetup(cat)
+                  ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30'
+                  : 'text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600'
+              }`}
+              title="Edit first due date / due day"
+            >
+              <Pencil className="w-4 h-4" />
+              {needsCadenceSetup(cat) ? 'Set First Due Date' : 'Edit Cadence'}
+            </button>
+          )}
+          {cat.status === 'ACTIVE' && isExecutive ? (
+            <button
+              onClick={onToggleActive}
+              className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+              title={cat.is_active ? 'Deactivate' : 'Reactivate'}
+            >
+              {cat.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+              {cat.is_active ? 'Deactivate' : 'Reactivate'}
+            </button>
+          ) : cat.status === 'PENDING_APPROVAL' ? (
+            <span className="text-xs text-amber-400">{isExecutive ? 'Review in Approval Queue' : 'Awaiting executive approval'}</span>
+          ) : null}
+        </div>
+      </td>
+    </tr>
+  );
+}
 
 const CREATE_FORM_DEFAULTS = {
   name: '',
@@ -339,20 +455,6 @@ export default function ComplianceCategoriesPage() {
     }
   };
 
-  const cadenceLabel = (cat: ComplianceCategory): string => {
-    if (cat.cadence_type === 'ONE_OFF') return 'One-off / Expiry';
-    if (cat.cadence_type === 'RECURRING') {
-      const n = cat.interval_months;
-      const unit = n === 1 ? 'Every month' : `Every ${n} months`;
-      return cat.due_day_of_month ? `${unit} (day ${cat.due_day_of_month})` : unit;
-    }
-    // Pre-migration categories that haven't been touched since -- fall back
-    // to the deprecated field rather than show a blank cadence.
-    return (cat.recurrence_type || '—').replace(/_/g, ' ');
-  };
-
-  const needsCadenceSetup = (cat: ComplianceCategory) => cat.cadence_type === 'RECURRING' && !cat.anchor_date;
-
   if (user && !CAN_VIEW_ROLES.includes(user.role)) return null;
 
   return (
@@ -411,84 +513,26 @@ export default function ComplianceCategoriesPage() {
                   </td></tr>
                 ) : (
                   categories.map((cat) => (
-                    <tr key={cat.category_id} className="hover:bg-dark-700/50 transition-colors">
-                      <td className="py-4 px-6 font-bold text-white">{cat.name}</td>
-                      <td className="py-4 px-6 text-gray-300">{cat.regulator || '—'}</td>
-                      <td className="py-4 px-6 text-gray-300">
-                        {cadenceLabel(cat)}
-                        {needsCadenceSetup(cat) && (
-                          <div className="flex items-center gap-1.5 mt-1 text-amber-400 text-xs">
-                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                            First due date not set -- items can't be registered yet
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 text-gray-300 font-mono text-sm">{cat.reminder_ladder_days.join(', ')} days</td>
-                      <td className="py-4 px-6 text-center">
-                        <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[cat.status]}`}>
-                          {cat.status.replace('_', ' ')}
-                        </span>
-                        {(cat.status === 'REJECTED' || cat.status === 'RETURNED') && cat.rejection_reason && (
-                          <p className={`text-xs mt-1 max-w-[160px] mx-auto ${cat.status === 'RETURNED' ? 'text-orange-300' : 'text-gray-500'}`}>{cat.rejection_reason}</p>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 text-center">
-                        {cat.status === 'ACTIVE' ? (
-                          <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${
-                            cat.is_active
-                              ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                              : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
-                          }`}>
-                            {cat.is_active ? 'In Use' : 'Deactivated'}
-                          </span>
-                        ) : (
-                          <span className="text-gray-600 text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        {/* Edit-cadence/deactivate both hit PATCH /categories/:id, which
-                            the backend restricts to admin/cfo/ceo -- hidden here rather
-                            than shown-then-403'd for a junior_accountant viewer. */}
-                        <div className="flex items-center justify-end gap-2">
-                          {cat.status === 'RETURNED' && cat.created_by === user?.user_id && (
-                            <button
-                              onClick={() => openResubmitModal(cat)}
-                              className="p-2 text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
-                              title="Fix and resubmit this category"
-                            >
-                              <Undo2 className="w-4 h-4" />
-                              Fix &amp; Resubmit
-                            </button>
-                          )}
-                          {isExecutive && cat.cadence_type === 'RECURRING' && (
-                            <button
-                              onClick={() => openEditModal(cat)}
-                              className={`p-2 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold ${
-                                needsCadenceSetup(cat)
-                                  ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30'
-                                  : 'text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600'
-                              }`}
-                              title="Edit first due date / due day"
-                            >
-                              <Pencil className="w-4 h-4" />
-                              {needsCadenceSetup(cat) ? 'Set First Due Date' : 'Edit Cadence'}
-                            </button>
-                          )}
-                          {cat.status === 'ACTIVE' && isExecutive ? (
-                            <button
-                              onClick={() => toggleActive(cat)}
-                              className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
-                              title={cat.is_active ? 'Deactivate' : 'Reactivate'}
-                            >
-                              {cat.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-                              {cat.is_active ? 'Deactivate' : 'Reactivate'}
-                            </button>
-                          ) : cat.status === 'PENDING_APPROVAL' ? (
-                            <span className="text-xs text-amber-400">{isExecutive ? 'Review in Approval Queue' : 'Awaiting executive approval'}</span>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
+                    <RowErrorBoundary
+                      key={cat.category_id}
+                      fallback={
+                        <tr>
+                          <td colSpan={7} className="py-3 px-6 text-red-400 text-xs flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                            This category ({cat.name || cat.category_id}) failed to render. Refresh, or contact support if this persists.
+                          </td>
+                        </tr>
+                      }
+                    >
+                      <CategoryTableRow
+                        cat={cat}
+                        isExecutive={isExecutive}
+                        currentUserId={user?.user_id}
+                        onResubmit={() => openResubmitModal(cat)}
+                        onEditCadence={() => openEditModal(cat)}
+                        onToggleActive={() => toggleActive(cat)}
+                      />
+                    </RowErrorBoundary>
                   ))
                 )}
               </tbody>

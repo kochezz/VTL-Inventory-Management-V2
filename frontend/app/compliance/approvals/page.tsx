@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { api, useAuth } from '@/hooks/useAuth';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { ListChecks, AlertCircle, CheckCircle2, XCircle, X, FileText, Eye, Gavel, Bell, Undo2 } from 'lucide-react';
+import { formatCadence } from '@/utils/complianceUtils';
+import { RowErrorBoundary } from '@/components/compliance/RowErrorBoundary';
 
 // Same standard as /pricing and /compliance/categories -- a route guard,
 // not just a hidden nav link.
@@ -26,7 +28,8 @@ interface ComplianceCategory {
   category_id: string;
   name: string;
   regulator: string | null;
-  recurrence_type: string;
+  cadence_type: 'ONE_OFF' | 'RECURRING' | null;
+  interval_months: number | null;
   reminder_ladder_days: number[];
   created_by: string;
   status: string;
@@ -38,6 +41,141 @@ interface ComplianceCategory {
 type ActionTarget =
   | { kind: 'item'; entity: ComplianceItem }
   | { kind: 'category'; entity: ComplianceCategory };
+
+// Real, standalone components -- not inline arrow functions invoked
+// directly inside categories.map()/items.map() -- because RowErrorBoundary
+// can only catch an error React itself throws while rendering a distinct
+// child component. An error thrown while the PARENT is still constructing
+// its own JSX (evaluating an inline .map() expression like
+// cat.reminder_ladder_days.map(...) directly inside a <tr>) is attributed
+// to the parent, since the boundary component hasn't been invoked yet at
+// that point -- confirmed by a regression test that initially caught this
+// exact mistake (the boundary silently did nothing, and the error still
+// reached React with "no error boundary" attached).
+function CategoryRow({
+  cat, isSelfApproval, onApprove, onReturn, onReject,
+}: {
+  cat: ComplianceCategory;
+  isSelfApproval: boolean;
+  onApprove: () => void;
+  onReturn: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <tr className="hover:bg-dark-700/50 transition-colors">
+      <td className="py-4 px-6">
+        <p className="font-bold text-white">{cat.name}</p>
+        {cat.regulator && <p className="text-xs text-gray-500">{cat.regulator}</p>}
+        {isSelfApproval && (
+          <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own proposal</span>
+        )}
+      </td>
+      <td className="py-4 px-6 text-gray-300">{formatCadence(cat.cadence_type, cat.interval_months)}</td>
+      <td className="py-4 px-6">
+        {/* Step 4: the proposed ladder/cadence must be
+            visible right here, not just the category name --
+            an approver needs to consciously accept it. */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Bell className="w-3.5 h-3.5 text-gray-500" />
+          {cat.reminder_ladder_days.map((d) => (
+            <span key={d} className="px-2 py-0.5 bg-dark-900 border border-dark-600 rounded text-xs font-mono text-gray-300">{d}d</span>
+          ))}
+        </div>
+      </td>
+      <td className="py-4 px-6 text-right">
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onApprove}
+            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+          >
+            <CheckCircle2 className="w-4 h-4" /> Approve
+          </button>
+          <button
+            onClick={onReturn}
+            className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+            title="Send back to the creator to fix, instead of rejecting outright"
+          >
+            <Undo2 className="w-4 h-4" /> Return
+          </button>
+          <button
+            onClick={onReject}
+            className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+          >
+            <XCircle className="w-4 h-4" /> Reject
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function ItemRow({
+  item, isSelfApproval, previewingId, onPreview, onApprove, onReturn, onReject,
+}: {
+  item: ComplianceItem;
+  isSelfApproval: boolean;
+  previewingId: string | null;
+  onPreview: () => void;
+  onApprove: () => void;
+  onReturn: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <tr className="hover:bg-dark-700/50 transition-colors">
+      <td className="py-4 px-6">
+        <p className="font-bold text-white">{item.category_name}</p>
+        {item.regulator && <p className="text-xs text-gray-500">{item.regulator}</p>}
+        {isSelfApproval && (
+          <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own submission</span>
+        )}
+      </td>
+      <td className="py-4 px-6 text-gray-300">
+        {new Date(item.due_date).toLocaleDateString()}
+        <span className={`block text-xs mt-0.5 ${item.days_until_due < 0 ? 'text-red-400' : 'text-gray-500'}`}>
+          {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
+        </span>
+      </td>
+      <td className="py-4 px-6">
+        <button
+          onClick={onPreview}
+          disabled={previewingId === item.item_id}
+          className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
+          title="Open the evidence PDF in a new tab"
+        >
+          {previewingId === item.item_id ? (
+            <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-t-2 border-primary-400"></span>
+          ) : (
+            <Eye className="w-4 h-4" />
+          )}
+          <span className="truncate max-w-[160px]">{item.evidence_file_ref || 'View evidence'}</span>
+        </button>
+      </td>
+      <td className="py-4 px-6 text-right">
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onApprove}
+            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+          >
+            <CheckCircle2 className="w-4 h-4" /> Approve
+          </button>
+          <button
+            onClick={onReturn}
+            className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+            title="Send back to the creator to fix, instead of rejecting outright"
+          >
+            <Undo2 className="w-4 h-4" /> Return
+          </button>
+          <button
+            onClick={onReject}
+            className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
+          >
+            <XCircle className="w-4 h-4" /> Reject
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
 
 export default function ComplianceApprovalsPage() {
   const router = useRouter();
@@ -221,50 +359,25 @@ export default function ComplianceApprovalsPage() {
                     <tr><td colSpan={4} className="py-10 text-center text-gray-500 text-sm">No categories awaiting approval.</td></tr>
                   ) : (
                     categories.map((cat) => (
-                      <tr key={cat.category_id} className="hover:bg-dark-700/50 transition-colors">
-                        <td className="py-4 px-6">
-                          <p className="font-bold text-white">{cat.name}</p>
-                          {cat.regulator && <p className="text-xs text-gray-500">{cat.regulator}</p>}
-                          {isSelfApproval(cat) && (
-                            <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own proposal</span>
-                          )}
-                        </td>
-                        <td className="py-4 px-6 text-gray-300">{cat.recurrence_type.replace(/_/g, ' ')}</td>
-                        <td className="py-4 px-6">
-                          {/* Step 4: the proposed ladder/cadence must be
-                              visible right here, not just the category name --
-                              an approver needs to consciously accept it. */}
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <Bell className="w-3.5 h-3.5 text-gray-500" />
-                            {cat.reminder_ladder_days.map((d) => (
-                              <span key={d} className="px-2 py-0.5 bg-dark-900 border border-dark-600 rounded text-xs font-mono text-gray-300">{d}d</span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => openApprove({ kind: 'category', entity: cat })}
-                              className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                            >
-                              <CheckCircle2 className="w-4 h-4" /> Approve
-                            </button>
-                            <button
-                              onClick={() => openReturn({ kind: 'category', entity: cat })}
-                              className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                              title="Send back to the creator to fix, instead of rejecting outright"
-                            >
-                              <Undo2 className="w-4 h-4" /> Return
-                            </button>
-                            <button
-                              onClick={() => openReject({ kind: 'category', entity: cat })}
-                              className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                            >
-                              <XCircle className="w-4 h-4" /> Reject
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                      <RowErrorBoundary
+                        key={cat.category_id}
+                        fallback={
+                          <tr>
+                            <td colSpan={4} className="py-3 px-6 text-red-400 text-xs flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                              This category ({cat.name || cat.category_id}) failed to render. Refresh, or contact support if this persists.
+                            </td>
+                          </tr>
+                        }
+                      >
+                        <CategoryRow
+                          cat={cat}
+                          isSelfApproval={isSelfApproval(cat)}
+                          onApprove={() => openApprove({ kind: 'category', entity: cat })}
+                          onReturn={() => openReturn({ kind: 'category', entity: cat })}
+                          onReject={() => openReject({ kind: 'category', entity: cat })}
+                        />
+                      </RowErrorBoundary>
                     ))
                   )}
                 </tbody>
@@ -307,59 +420,27 @@ export default function ComplianceApprovalsPage() {
                     </td></tr>
                   ) : (
                     items.map((item) => (
-                      <tr key={item.item_id} className="hover:bg-dark-700/50 transition-colors">
-                        <td className="py-4 px-6">
-                          <p className="font-bold text-white">{item.category_name}</p>
-                          {item.regulator && <p className="text-xs text-gray-500">{item.regulator}</p>}
-                          {isSelfApproval(item) && (
-                            <span className="inline-block mt-1 px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-xs font-bold">Your own submission</span>
-                          )}
-                        </td>
-                        <td className="py-4 px-6 text-gray-300">
-                          {new Date(item.due_date).toLocaleDateString()}
-                          <span className={`block text-xs mt-0.5 ${item.days_until_due < 0 ? 'text-red-400' : 'text-gray-500'}`}>
-                            {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6">
-                          <button
-                            onClick={() => previewEvidence(item.item_id)}
-                            disabled={previewingId === item.item_id}
-                            className="flex items-center gap-2 text-primary-400 hover:text-primary-300 text-sm font-medium disabled:opacity-50"
-                            title="Open the evidence PDF in a new tab"
-                          >
-                            {previewingId === item.item_id ? (
-                              <span className="inline-block animate-spin rounded-full h-3.5 w-3.5 border-t-2 border-primary-400"></span>
-                            ) : (
-                              <Eye className="w-4 h-4" />
-                            )}
-                            <span className="truncate max-w-[160px]">{item.evidence_file_ref || 'View evidence'}</span>
-                          </button>
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              onClick={() => openApprove({ kind: 'item', entity: item })}
-                              className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                            >
-                              <CheckCircle2 className="w-4 h-4" /> Approve
-                            </button>
-                            <button
-                              onClick={() => openReturn({ kind: 'item', entity: item })}
-                              className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                              title="Send back to the creator to fix, instead of rejecting outright"
-                            >
-                              <Undo2 className="w-4 h-4" /> Return
-                            </button>
-                            <button
-                              onClick={() => openReject({ kind: 'item', entity: item })}
-                              className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5"
-                            >
-                              <XCircle className="w-4 h-4" /> Reject
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                      <RowErrorBoundary
+                        key={item.item_id}
+                        fallback={
+                          <tr>
+                            <td colSpan={4} className="py-3 px-6 text-red-400 text-xs flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                              This item ({item.category_name || item.item_id}) failed to render. Refresh, or contact support if this persists.
+                            </td>
+                          </tr>
+                        }
+                      >
+                        <ItemRow
+                          item={item}
+                          isSelfApproval={isSelfApproval(item)}
+                          previewingId={previewingId}
+                          onPreview={() => previewEvidence(item.item_id)}
+                          onApprove={() => openApprove({ kind: 'item', entity: item })}
+                          onReturn={() => openReturn({ kind: 'item', entity: item })}
+                          onReject={() => openReject({ kind: 'item', entity: item })}
+                        />
+                      </RowErrorBoundary>
                     ))
                   )}
                 </tbody>
@@ -419,7 +500,7 @@ export default function ComplianceApprovalsPage() {
                     <div className="bg-dark-900 border border-dark-700 rounded-xl p-4 space-y-2">
                       <p className="font-bold text-white text-lg">{category.name}</p>
                       {category.regulator && <p className="text-sm text-gray-400">{category.regulator}</p>}
-                      <p className="text-sm text-gray-300">Cadence: <span className="font-mono">{category.recurrence_type.replace(/_/g, ' ')}</span></p>
+                      <p className="text-sm text-gray-300">Cadence: <span className="font-mono">{formatCadence(category.cadence_type, category.interval_months)}</span></p>
                       <div>
                         <p className="text-sm text-gray-300 mb-1.5">Proposed reminder ladder (days before due):</p>
                         <div className="flex items-center gap-1.5 flex-wrap">
