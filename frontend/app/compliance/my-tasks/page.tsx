@@ -22,6 +22,9 @@ interface ComplianceItem {
   reminder_tiers_fired: string[];
   evidence_file_ref: string | null;
   rejection_reason: string | null;
+  archived_reason: string | null;
+  previous_status: string | null;
+  created_by: string;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -31,6 +34,7 @@ const STATUS_STYLES: Record<string, string> = {
   REJECTED: 'bg-red-500/10 text-red-400 border-red-500/20',
   NON_COMPLIANT: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   RETURNED: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  ARCHIVED: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
 };
 
 // Real, standalone components -- not inline arrow functions invoked
@@ -43,12 +47,13 @@ const STATUS_STYLES: Record<string, string> = {
 // that point -- confirmed by a regression test on the Approvals page that
 // initially made this exact mistake.
 function ReturnedItemCard({
-  item, previewingId, onPreview, onFixAndResubmit,
+  item, previewingId, onPreview, onFixAndResubmit, onWithdraw,
 }: {
   item: ComplianceItem;
   previewingId: string | null;
   onPreview: () => void;
   onFixAndResubmit: () => void;
+  onWithdraw: () => void;
 }) {
   return (
     <div className="bg-dark-800 border border-amber-500/30 rounded-xl p-5 shadow-lg">
@@ -75,31 +80,46 @@ function ReturnedItemCard({
             {previewingId === item.item_id ? 'Opening...' : (item.evidence_file_ref || 'View evidence')}
           </button>
         </div>
-        <button
-          onClick={onFixAndResubmit}
-          className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 md:w-56"
-        >
-          <Undo2 className="w-4 h-4" />
-          Fix &amp; Resubmit
-        </button>
+        <div className="flex flex-col gap-2 md:w-56">
+          <button
+            onClick={onFixAndResubmit}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2"
+          >
+            <Undo2 className="w-4 h-4" />
+            Fix &amp; Resubmit
+          </button>
+          <button
+            onClick={onWithdraw}
+            className="px-4 py-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-red-600 rounded-lg font-bold text-xs"
+            title="Archive this item instead of fixing and resubmitting"
+          >
+            Withdraw
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function TaskItemCard({
-  item, previewingId, ackNoteValue, ackingId, onPreview, onAckNoteChange, onAcknowledge,
+  item, previewingId, ackNoteValue, ackingId, isAuthor, isAdmin, onPreview, onAckNoteChange, onAcknowledge, onDelete, onArchive, onRestore,
 }: {
   item: ComplianceItem;
   previewingId: string | null;
   ackNoteValue: string;
   ackingId: string | null;
+  isAuthor: boolean;
+  isAdmin: boolean;
   onPreview: () => void;
   onAckNoteChange: (value: string) => void;
   onAcknowledge: () => void;
+  onDelete: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
 }) {
+  const archived = item.status === 'ARCHIVED';
   return (
-    <div className="bg-dark-800 border border-dark-700 rounded-xl p-5 shadow-lg">
+    <div className={`bg-dark-800 border border-dark-700 rounded-xl p-5 shadow-lg ${archived ? 'opacity-60' : ''}`}>
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -109,12 +129,24 @@ function TaskItemCard({
             </span>
           </div>
           {item.regulator && <p className="text-xs text-gray-500 mt-0.5">{item.regulator}</p>}
-          <p className="text-sm text-gray-400 mt-2">
-            Due {new Date(item.due_date).toLocaleDateString()} —{' '}
-            <span className={item.days_until_due < 0 ? 'text-red-400 font-bold' : 'text-gray-400'}>
-              {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
-            </span>
-          </p>
+          {item.status !== 'DRAFT' && (
+            <p className="text-sm text-gray-400 mt-2">
+              Due {new Date(item.due_date).toLocaleDateString()} —{' '}
+              <span className={item.days_until_due < 0 ? 'text-red-400 font-bold' : 'text-gray-400'}>
+                {item.days_until_due < 0 ? `${Math.abs(item.days_until_due)} days overdue` : `${item.days_until_due} days remaining`}
+              </span>
+            </p>
+          )}
+          {item.status === 'REJECTED' && item.rejection_reason && (
+            <p className="text-sm text-red-300 mt-2 bg-red-500/5 border border-red-500/20 rounded-lg px-3 py-2">
+              <span className="font-bold">Why it was rejected:</span> {item.rejection_reason}
+            </p>
+          )}
+          {archived && item.archived_reason && (
+            <p className="text-sm text-gray-400 mt-2 bg-dark-900 border border-dark-700 rounded-lg px-3 py-2">
+              <span className="font-bold">Archive reason:</span> {item.archived_reason}
+            </p>
+          )}
           {item.reminder_tiers_fired.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap mt-2">
               <span className="text-xs text-gray-500 mr-1">Reminders sent:</span>
@@ -154,6 +186,35 @@ function TaskItemCard({
             </button>
           </div>
         )}
+
+        {item.status === 'DRAFT' && (isAuthor || isAdmin) && (
+          <button
+            onClick={onDelete}
+            className="px-4 py-2.5 text-gray-400 hover:text-white bg-dark-900 hover:bg-red-600 rounded-lg font-bold text-sm md:w-40"
+          >
+            Delete
+          </button>
+        )}
+        {item.status === 'REJECTED' && (isAuthor || isAdmin) && (
+          <button
+            onClick={onArchive}
+            className="px-4 py-2.5 text-gray-400 hover:text-white bg-dark-900 hover:bg-red-600 rounded-lg font-bold text-sm md:w-40"
+          >
+            Archive
+          </button>
+        )}
+        {archived && (
+          isAdmin ? (
+            <button
+              onClick={onRestore}
+              className="px-4 py-2.5 text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg font-bold text-sm md:w-40"
+            >
+              Restore
+            </button>
+          ) : (
+            <span className="text-xs text-gray-600 md:w-40 text-right">Archived (read-only)</span>
+          )
+        )}
       </div>
     </div>
   );
@@ -176,6 +237,16 @@ export default function ComplianceMyTasksPage() {
   const [editFileError, setEditFileError] = useState('');
   const [editError, setEditError] = useState('');
   const [editLoading, setEditLoading] = useState(false);
+
+  const [showArchived, setShowArchived] = useState(false);
+
+  const [confirmAction, setConfirmAction] = useState<{
+    kind: 'withdraw' | 'archive' | 'restore' | 'delete';
+    item: ComplianceItem;
+  } | null>(null);
+  const [confirmReason, setConfirmReason] = useState('');
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
 
   // Same authenticated-blob-fetch pattern as app/qms/documents/[id]/page.tsx
   // and the Approvals page -- a plain href/src can't carry the Bearer token.
@@ -204,7 +275,7 @@ export default function ComplianceMyTasksPage() {
     if (user && CAN_VIEW_ROLES.includes(user.role)) {
       fetchTasks();
     }
-  }, [user]);
+  }, [user, showArchived]);
 
   // "My Tasks" combines two things worth seeing in one place: items I
   // personally created (any status, so I can track my own submissions
@@ -216,8 +287,8 @@ export default function ComplianceMyTasksPage() {
     try {
       setLoading(true);
       const [mineRes, needsAckRes] = await Promise.all([
-        api.get('/compliance/items?mine=true'),
-        api.get('/compliance/items?needs_acknowledgement=true'),
+        api.get(`/compliance/items?mine=true&show_archived=${showArchived}`),
+        api.get(`/compliance/items?needs_acknowledgement=true&show_archived=${showArchived}`),
       ]);
       const merged = new Map<string, ComplianceItem>();
       [...mineRes.data, ...needsAckRes.data].forEach((item: ComplianceItem) => merged.set(item.item_id, item));
@@ -239,6 +310,40 @@ export default function ComplianceMyTasksPage() {
       console.error('Failed to acknowledge item', err);
     } finally {
       setAckingId(null);
+    }
+  };
+
+  const openConfirm = (kind: 'withdraw' | 'archive' | 'restore' | 'delete', item: ComplianceItem) => {
+    setConfirmAction({ kind, item });
+    setConfirmReason('');
+    setConfirmError('');
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return;
+    const { kind, item } = confirmAction;
+
+    if (kind === 'withdraw' && confirmReason.trim().length < 10) {
+      setConfirmError('A withdrawal reason of at least 10 characters is required.');
+      return;
+    }
+
+    try {
+      setConfirmLoading(true);
+      setConfirmError('');
+      if (kind === 'delete') {
+        await api.delete(`/compliance/items/${item.item_id}`);
+      } else if (kind === 'restore') {
+        await api.post(`/compliance/items/${item.item_id}/restore`);
+      } else {
+        await api.post(`/compliance/items/${item.item_id}/${kind}`, { reason: confirmReason || undefined });
+      }
+      setConfirmAction(null);
+      fetchTasks();
+    } catch (err: any) {
+      setConfirmError(err.response?.data?.message || `Failed to ${kind} this item.`);
+    } finally {
+      setConfirmLoading(false);
     }
   };
 
@@ -325,12 +430,23 @@ export default function ComplianceMyTasksPage() {
     <DashboardLayout>
       <div className="p-6 max-w-[1400px] mx-auto space-y-6 pb-12">
 
-        <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <Inbox className="w-8 h-8 text-primary-500" />
-            My Compliance Tasks
-          </h1>
-          <p className="text-gray-400 mt-1">Items you've submitted, and any item currently open for acknowledgement.</p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+              <Inbox className="w-8 h-8 text-primary-500" />
+              My Compliance Tasks
+            </h1>
+            <p className="text-gray-400 mt-1">Items you've submitted, and any item currently open for acknowledgement.</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-primary-600 focus:ring-primary-500"
+            />
+            Show archived
+          </label>
         </div>
 
         {error && (
@@ -376,6 +492,7 @@ export default function ComplianceMyTasksPage() {
                         previewingId={previewingId}
                         onPreview={() => previewEvidence(item.item_id)}
                         onFixAndResubmit={() => openEdit(item)}
+                        onWithdraw={() => openConfirm('withdraw', item)}
                       />
                     </RowErrorBoundary>
                   ))}
@@ -399,9 +516,14 @@ export default function ComplianceMyTasksPage() {
                   previewingId={previewingId}
                   ackNoteValue={ackNote[item.item_id] || ''}
                   ackingId={ackingId}
+                  isAuthor={item.created_by === user?.user_id}
+                  isAdmin={user?.role === 'admin'}
                   onPreview={() => previewEvidence(item.item_id)}
                   onAckNoteChange={(value) => setAckNote({ ...ackNote, [item.item_id]: value })}
                   onAcknowledge={() => handleAcknowledge(item.item_id)}
+                  onDelete={() => openConfirm('delete', item)}
+                  onArchive={() => openConfirm('archive', item)}
+                  onRestore={() => openConfirm('restore', item)}
                 />
               </RowErrorBoundary>
             ))}
@@ -493,6 +615,66 @@ export default function ComplianceMyTasksPage() {
                   {editLoading ? 'Saving...' : <><Send className="w-5 h-5" /> Save &amp; Resubmit</>}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmAction && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-6 border-b border-dark-700">
+              <h2 className="text-xl font-bold text-white">
+                {confirmAction.kind === 'withdraw' && 'Withdraw this item?'}
+                {confirmAction.kind === 'archive' && 'Archive this item?'}
+                {confirmAction.kind === 'restore' && 'Restore this item?'}
+                {confirmAction.kind === 'delete' && 'Delete this draft item?'}
+              </h2>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-gray-300 text-sm">
+                {confirmAction.kind === 'withdraw' && (
+                  <>This item ({confirmAction.item.category_name}) will be archived instead of being fixed and resubmitted. It will be hidden from default lists and excluded from the scheduler. This can be undone by an admin later.</>
+                )}
+                {confirmAction.kind === 'archive' && (
+                  <>This item ({confirmAction.item.category_name}) will be archived. It will be hidden from default lists and excluded from the scheduler. This can be undone by an admin later.</>
+                )}
+                {confirmAction.kind === 'restore' && (
+                  <>This item ({confirmAction.item.category_name}) will be restored to its previous status ({confirmAction.item.previous_status || 'unknown'}) and become visible in lists again.</>
+                )}
+                {confirmAction.kind === 'delete' && (
+                  <>This draft item ({confirmAction.item.category_name}) will be permanently deleted. This cannot be undone.</>
+                )}
+              </p>
+
+              {(confirmAction.kind === 'withdraw' || confirmAction.kind === 'archive') && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">
+                    Reason {confirmAction.kind === 'withdraw' ? '(required)' : '(optional)'}
+                  </label>
+                  <textarea
+                    value={confirmReason}
+                    onChange={(e) => setConfirmReason(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                    placeholder={confirmAction.kind === 'withdraw' ? 'At least 10 characters...' : 'Optional...'}
+                  />
+                </div>
+              )}
+
+              {confirmError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">{confirmError}</div>
+              )}
+            </div>
+            <div className="p-6 border-t border-dark-700 flex justify-end gap-3">
+              <button onClick={() => setConfirmAction(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
+              <button
+                onClick={handleConfirmAction}
+                disabled={confirmLoading}
+                className="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold disabled:opacity-50"
+              >
+                {confirmLoading ? 'Working...' : 'Confirm'}
+              </button>
             </div>
           </div>
         </div>

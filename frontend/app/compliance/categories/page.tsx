@@ -71,8 +71,10 @@ interface ComplianceCategory {
   anchor_date: string | null;
   reminder_ladder_days: number[];
   is_active: boolean;
-  status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'RETURNED';
+  status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'RETURNED' | 'ARCHIVED';
   rejection_reason: string | null;
+  previous_status: string | null;
+  archived_reason: string | null;
   created_by: string;
 }
 
@@ -84,6 +86,7 @@ const STATUS_STYLES: Record<string, string> = {
   ACTIVE: 'bg-green-500/10 text-green-400 border-green-500/20',
   RETURNED: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   REJECTED: 'bg-red-500/10 text-red-400 border-red-500/20',
+  ARCHIVED: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
 };
 
 const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
@@ -99,8 +102,14 @@ function cadenceLabel(cat: ComplianceCategory): string {
   return cat.cadence_type === 'RECURRING' && cat.due_day_of_month ? `${base} (day ${cat.due_day_of_month})` : base;
 }
 
+// Only PENDING_APPROVAL/RETURNED categories are still awaiting the cadence
+// being finished off -- REJECTED/ARCHIVED are dead ends (nothing will ever
+// be registered against them again), so the "needs configuration" prompt
+// must never fire for those, even though they can still technically have
+// cadence_type === 'RECURRING' && !anchor_date.
 function needsCadenceSetup(cat: ComplianceCategory) {
-  return cat.cadence_type === 'RECURRING' && !cat.anchor_date;
+  return cat.cadence_type === 'RECURRING' && !cat.anchor_date
+    && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED');
 }
 
 // A real, standalone component -- not an inline arrow function invoked
@@ -112,18 +121,31 @@ function needsCadenceSetup(cat: ComplianceCategory) {
 // been invoked yet at that point -- confirmed by a regression test on the
 // Approvals page that initially made this exact mistake.
 function CategoryTableRow({
-  cat, isExecutive, currentUserId, onResubmit, onEditCadence, onToggleActive,
+  cat, isExecutive, currentUserId, isAdmin, onResubmit, onEditCadence, onToggleActive, onWithdraw, onArchive, onRestore, onOpenDetail,
 }: {
   cat: ComplianceCategory;
   isExecutive: boolean;
   currentUserId: string | undefined;
+  isAdmin: boolean;
   onResubmit: () => void;
   onEditCadence: () => void;
   onToggleActive: () => void;
+  onWithdraw: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
+  onOpenDetail: () => void;
 }) {
+  const isAuthor = cat.created_by === currentUserId;
+  const archived = cat.status === 'ARCHIVED';
   return (
-    <tr className="hover:bg-dark-700/50 transition-colors">
-      <td className="py-4 px-6 font-bold text-white">{cat.name}</td>
+    <tr className={`hover:bg-dark-700/50 transition-colors ${archived ? 'opacity-60' : ''}`}>
+      <td className="py-4 px-6 font-bold text-white">
+        {cat.status === 'ACTIVE' ? (
+          <button onClick={onOpenDetail} className="hover:text-primary-400 hover:underline text-left" title="View evidence history">
+            {cat.name}
+          </button>
+        ) : cat.name}
+      </td>
       <td className="py-4 px-6 text-gray-300">{cat.regulator || '—'}</td>
       <td className="py-4 px-6 text-gray-300">
         {cadenceLabel(cat)}
@@ -142,6 +164,9 @@ function CategoryTableRow({
         {(cat.status === 'REJECTED' || cat.status === 'RETURNED') && cat.rejection_reason && (
           <p className={`text-xs mt-1 max-w-[160px] mx-auto ${cat.status === 'RETURNED' ? 'text-orange-300' : 'text-gray-500'}`}>{cat.rejection_reason}</p>
         )}
+        {archived && cat.archived_reason && (
+          <p className="text-xs mt-1 max-w-[160px] mx-auto text-gray-500">{cat.archived_reason}</p>
+        )}
       </td>
       <td className="py-4 px-6 text-center">
         {cat.status === 'ACTIVE' ? (
@@ -159,44 +184,81 @@ function CategoryTableRow({
       <td className="py-4 px-6 text-right">
         {/* Edit-cadence/deactivate both hit PATCH /categories/:id, which
             the backend restricts to admin/cfo/ceo -- hidden here rather
-            than shown-then-403'd for a junior_accountant viewer. */}
+            than shown-then-403'd for a junior_accountant viewer. Archived
+            rows are read-only: the only action left is Restore, admin-only,
+            server-enforced the same way every other action here is. */}
         <div className="flex items-center justify-end gap-2">
-          {cat.status === 'RETURNED' && cat.created_by === currentUserId && (
-            <button
-              onClick={onResubmit}
-              className="p-2 text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
-              title="Fix and resubmit this category"
-            >
-              <Undo2 className="w-4 h-4" />
-              Fix &amp; Resubmit
-            </button>
+          {archived ? (
+            isAdmin ? (
+              <button
+                onClick={onRestore}
+                className="p-2 text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                title="Restore this category to its previous status"
+              >
+                <Undo2 className="w-4 h-4" />
+                Restore
+              </button>
+            ) : (
+              <span className="text-xs text-gray-600">Archived (read-only)</span>
+            )
+          ) : (
+            <>
+              {cat.status === 'RETURNED' && isAuthor && (
+                <button
+                  onClick={onResubmit}
+                  className="p-2 text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                  title="Fix and resubmit this category"
+                >
+                  <Undo2 className="w-4 h-4" />
+                  Fix &amp; Resubmit
+                </button>
+              )}
+              {cat.status === 'RETURNED' && (isAuthor || isAdmin) && (
+                <button
+                  onClick={onWithdraw}
+                  className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-red-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                  title="Withdraw this category (archive it instead of fixing and resubmitting)"
+                >
+                  Withdraw
+                </button>
+              )}
+              {cat.status === 'REJECTED' && (isAuthor || isAdmin) && (
+                <button
+                  onClick={onArchive}
+                  className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-red-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                  title="Archive this rejected category"
+                >
+                  Archive
+                </button>
+              )}
+              {isExecutive && cat.cadence_type === 'RECURRING' && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED' || cat.status === 'ACTIVE') && (
+                <button
+                  onClick={onEditCadence}
+                  className={`p-2 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold ${
+                    needsCadenceSetup(cat)
+                      ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30'
+                      : 'text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600'
+                  }`}
+                  title="Edit first due date / due day"
+                >
+                  <Pencil className="w-4 h-4" />
+                  {needsCadenceSetup(cat) ? 'Set First Due Date' : 'Edit Cadence'}
+                </button>
+              )}
+              {cat.status === 'ACTIVE' && isExecutive ? (
+                <button
+                  onClick={onToggleActive}
+                  className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
+                  title={cat.is_active ? 'Deactivate' : 'Reactivate'}
+                >
+                  {cat.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                  {cat.is_active ? 'Deactivate' : 'Reactivate'}
+                </button>
+              ) : cat.status === 'PENDING_APPROVAL' ? (
+                <span className="text-xs text-amber-400">{isExecutive ? 'Review in Approval Queue' : 'Awaiting executive approval'}</span>
+              ) : null}
+            </>
           )}
-          {isExecutive && cat.cadence_type === 'RECURRING' && (
-            <button
-              onClick={onEditCadence}
-              className={`p-2 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold ${
-                needsCadenceSetup(cat)
-                  ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30'
-                  : 'text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600'
-              }`}
-              title="Edit first due date / due day"
-            >
-              <Pencil className="w-4 h-4" />
-              {needsCadenceSetup(cat) ? 'Set First Due Date' : 'Edit Cadence'}
-            </button>
-          )}
-          {cat.status === 'ACTIVE' && isExecutive ? (
-            <button
-              onClick={onToggleActive}
-              className="p-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-primary-600 rounded-lg transition-all inline-flex items-center gap-1.5 text-xs font-bold"
-              title={cat.is_active ? 'Deactivate' : 'Reactivate'}
-            >
-              {cat.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-              {cat.is_active ? 'Deactivate' : 'Reactivate'}
-            </button>
-          ) : cat.status === 'PENDING_APPROVAL' ? (
-            <span className="text-xs text-amber-400">{isExecutive ? 'Review in Approval Queue' : 'Awaiting executive approval'}</span>
-          ) : null}
         </div>
       </td>
     </tr>
@@ -443,6 +505,19 @@ export default function ComplianceCategoriesPage() {
   const [resubmitLoading, setResubmitLoading] = useState(false);
   const [resubmitError, setResubmitError] = useState('');
 
+  const [showArchived, setShowArchived] = useState(false);
+
+  // One shared confirmation modal for withdraw/archive/restore -- each just
+  // a status transition plus an optional/required reason, so one dialog
+  // covers all three rather than three near-identical copies.
+  const [confirmAction, setConfirmAction] = useState<{
+    kind: 'withdraw' | 'archive' | 'restore';
+    category: ComplianceCategory;
+  } | null>(null);
+  const [confirmReason, setConfirmReason] = useState('');
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
+
   useEffect(() => {
     if (user && !CAN_VIEW_ROLES.includes(user.role)) {
       router.push('/dashboard');
@@ -453,12 +528,12 @@ export default function ComplianceCategoriesPage() {
     if (user && CAN_VIEW_ROLES.includes(user.role)) {
       fetchCategories();
     }
-  }, [user]);
+  }, [user, showArchived]);
 
   const fetchCategories = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/compliance/categories?active_only=false');
+      const res = await api.get(`/compliance/categories?active_only=false&show_archived=${showArchived}`);
       setCategories(res.data);
     } catch (err) {
       setError('Failed to load compliance categories.');
@@ -624,6 +699,38 @@ export default function ComplianceCategoriesPage() {
     }
   };
 
+  const openConfirm = (kind: 'withdraw' | 'archive' | 'restore', category: ComplianceCategory) => {
+    setConfirmAction({ kind, category });
+    setConfirmReason('');
+    setConfirmError('');
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return;
+    const { kind, category } = confirmAction;
+
+    if (kind === 'withdraw' && confirmReason.trim().length < 10) {
+      setConfirmError('A withdrawal reason of at least 10 characters is required.');
+      return;
+    }
+
+    try {
+      setConfirmLoading(true);
+      setConfirmError('');
+      if (kind === 'restore') {
+        await api.post(`/compliance/categories/${category.category_id}/restore`);
+      } else {
+        await api.post(`/compliance/categories/${category.category_id}/${kind}`, { reason: confirmReason || undefined });
+      }
+      setConfirmAction(null);
+      fetchCategories();
+    } catch (err: any) {
+      setConfirmError(err.response?.data?.message || `Failed to ${kind} this category.`);
+    } finally {
+      setConfirmLoading(false);
+    }
+  };
+
   if (user && !CAN_VIEW_ROLES.includes(user.role)) return null;
 
   return (
@@ -638,13 +745,24 @@ export default function ComplianceCategoriesPage() {
             </h1>
             <p className="text-gray-400 mt-1">Define the regulatory obligations items get registered against (e.g. PACRA Annual Return, ZRA Tax Clearance).</p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-bold shadow-lg shadow-primary-500/20"
-          >
-            <Plus className="w-5 h-5" />
-            New Category
-          </button>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="w-4 h-4 rounded border-dark-600 bg-dark-900 text-primary-600 focus:ring-primary-500"
+              />
+              Show archived
+            </label>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl transition-colors font-bold shadow-lg shadow-primary-500/20"
+            >
+              <Plus className="w-5 h-5" />
+              New Category
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -697,9 +815,14 @@ export default function ComplianceCategoriesPage() {
                         cat={cat}
                         isExecutive={isExecutive}
                         currentUserId={user?.user_id}
+                        isAdmin={user?.role === 'admin'}
                         onResubmit={() => openResubmitModal(cat)}
                         onEditCadence={() => openEditModal(cat)}
                         onToggleActive={() => toggleActive(cat)}
+                        onWithdraw={() => openConfirm('withdraw', cat)}
+                        onArchive={() => openConfirm('archive', cat)}
+                        onRestore={() => openConfirm('restore', cat)}
+                        onOpenDetail={() => router.push(`/compliance/categories/${cat.category_id}`)}
                       />
                     </RowErrorBoundary>
                   ))
@@ -882,6 +1005,62 @@ export default function ComplianceCategoriesPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {confirmAction && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-6 border-b border-dark-700">
+              <h2 className="text-xl font-bold text-white">
+                {confirmAction.kind === 'withdraw' && 'Withdraw this category?'}
+                {confirmAction.kind === 'archive' && 'Archive this category?'}
+                {confirmAction.kind === 'restore' && 'Restore this category?'}
+              </h2>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-gray-300 text-sm">
+                {confirmAction.kind === 'withdraw' && (
+                  <>&quot;{confirmAction.category.name}&quot; will be archived (soft-deleted) instead of being fixed and resubmitted. It will be hidden from default lists and excluded from the scheduler. This can be undone by an admin later.</>
+                )}
+                {confirmAction.kind === 'archive' && (
+                  <>&quot;{confirmAction.category.name}&quot; will be archived (soft-deleted). It will be hidden from default lists and excluded from the scheduler. This can be undone by an admin later.</>
+                )}
+                {confirmAction.kind === 'restore' && (
+                  <>&quot;{confirmAction.category.name}&quot; will be restored to its previous status ({confirmAction.category.previous_status || 'unknown'}) and become visible/active in lists again.</>
+                )}
+              </p>
+
+              {(confirmAction.kind === 'withdraw' || confirmAction.kind === 'archive') && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">
+                    Reason {confirmAction.kind === 'withdraw' ? '(required)' : '(optional)'}
+                  </label>
+                  <textarea
+                    value={confirmReason}
+                    onChange={(e) => setConfirmReason(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                    placeholder={confirmAction.kind === 'withdraw' ? 'At least 10 characters...' : 'Optional...'}
+                  />
+                </div>
+              )}
+
+              {confirmError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">{confirmError}</div>
+              )}
+            </div>
+            <div className="p-6 border-t border-dark-700 flex justify-end gap-3">
+              <button onClick={() => setConfirmAction(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
+              <button
+                onClick={handleConfirmAction}
+                disabled={confirmLoading}
+                className="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold disabled:opacity-50"
+              >
+                {confirmLoading ? 'Working...' : 'Confirm'}
+              </button>
+            </div>
           </div>
         </div>
       )}

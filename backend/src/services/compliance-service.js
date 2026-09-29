@@ -232,17 +232,26 @@ const nextDueDateForCategory = async (category) => {
 //     is_active -- both must hold, see the route for how they're combined).
 //   - Categories management page: no status filter, everything.
 //   - Approval queue: status: 'PENDING_APPROVAL'.
-const listComplianceCategories = async ({ activeOnly, status } = {}) => {
+const listComplianceCategories = async ({ activeOnly, status, showArchived } = {}) => {
   const conditions = [];
   const values = [];
   let i = 1;
 
   if (activeOnly) conditions.push(`is_active = true`);
   if (status) { conditions.push(`status = $${i++}`); values.push(status); }
+  // ARCHIVED is hidden from every default list -- a caller sees it only by
+  // explicitly asking for it (showArchived) or by filtering to that exact
+  // status, same "off by default" rule the spec asks for on every list.
+  if (!showArchived && !status) conditions.push(`status != 'ARCHIVED'`);
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const result = await pool.query(`SELECT * FROM compliance_categories ${whereClause} ORDER BY name`, values);
   return result.rows;
+};
+
+const getComplianceCategoryDetail = async (categoryId) => {
+  const result = await pool.query(`SELECT * FROM compliance_categories WHERE category_id = $1`, [categoryId]);
+  return result.rows[0];
 };
 
 // Atomic single-query status transition -- WHERE status = 'PENDING_APPROVAL'
@@ -423,6 +432,139 @@ const resubmitComplianceCategory = async (categoryId, actorId, isAdmin) => {
     const after = result.rows[0];
     await writeAuditLog(client, {
       tableName: 'compliance_categories', recordId: categoryId, action: 'RESUBMITTED',
+      oldValues: { status: before.status }, newValues: { status: after.status },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// ─── Archive / withdraw / restore / delete (feature/compliance-archive-and-
+// evidence-view) ─────────────────────────────────────────────────────────
+// ARCHIVED is a real soft delete: row kept, hidden from default lists,
+// excluded from the scheduler/reminders/escalations/configuration prompts.
+// Categories only reach ARCHIVED from RETURNED (withdraw) or REJECTED
+// (archive) in this phase -- ACTIVE has no direct archive path; retiring an
+// ACTIVE category is deferred to the future change-request/retire design.
+// "Author or admin" matches this file's existing creator-gate pattern
+// (resubmitComplianceCategory, updateComplianceCategory's creator path):
+// the literal 'admin' role, not the wider EXECUTIVE_ROLES set.
+
+const withdrawComplianceCategory = async (categoryId, reason, actorId, isAdmin) => {
+  const cleanReason = validateReason(reason, 'withdrawal');
+
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = categoryRes.rows[0];
+    if (before.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can withdraw this category.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_categories
+       SET status = 'ARCHIVED', previous_status = status, archived_reason = $1, archived_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $2 AND status = 'RETURNED'
+       RETURNING *`,
+      [cleanReason, categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error(`Category is currently ${before.status}; must be RETURNED to withdraw.`);
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'WITHDRAWN',
+      oldValues: { status: before.status }, newValues: { status: after.status, archived_reason: after.archived_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+const archiveComplianceCategory = async (categoryId, reason, actorId, isAdmin) => {
+  const cleanReason = reason && reason.trim() ? reason.trim() : null;
+
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = categoryRes.rows[0];
+    if (before.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can archive this category.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_categories
+       SET status = 'ARCHIVED', previous_status = status, archived_reason = $1, archived_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $2 AND status = 'REJECTED'
+       RETURNING *`,
+      [cleanReason, categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error(`Category is currently ${before.status}; must be REJECTED to archive.`);
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'ARCHIVED',
+      oldValues: { status: before.status }, newValues: { status: after.status, archived_reason: after.archived_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+// Admin-only, matching the spec exactly (narrower than the author-or-admin
+// gate on withdraw/archive -- restoring is treated as a more consequential
+// action than archiving, since it puts the category back in front of the
+// scheduler/lists/approval flow).
+const restoreComplianceCategory = async (categoryId, actorId) => {
+  return withTransaction(async (client) => {
+    const categoryRes = await client.query(`SELECT * FROM compliance_categories WHERE category_id = $1 FOR UPDATE`, [categoryId]);
+    if (categoryRes.rows.length === 0) {
+      const err = new Error('Compliance category not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = categoryRes.rows[0];
+    if (before.status !== 'ARCHIVED') {
+      const err = new Error(`Category is currently ${before.status}; must be ARCHIVED to restore.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_categories
+       SET status = $1, previous_status = NULL, archived_reason = NULL, archived_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE category_id = $2 AND status = 'ARCHIVED'
+       RETURNING *`,
+      [before.previous_status, categoryId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This category is no longer ARCHIVED (status changed by someone else).');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_categories', recordId: categoryId, action: 'RESTORED',
       oldValues: { status: before.status }, newValues: { status: after.status },
       userId: actorId,
     });
@@ -627,6 +769,11 @@ const createComplianceItem = async ({ category_id, issued_date, due_date, eviden
     err.statusCode = 404;
     throw err;
   }
+  if (category.status !== 'ACTIVE') {
+    const err = new Error(`This category is ${category.status}, not ACTIVE -- items can only be registered against an active category.`);
+    err.statusCode = 400;
+    throw err;
+  }
 
   let computedDueDate;
   if (category.cadence_type === 'RECURRING') {
@@ -679,12 +826,23 @@ const getComplianceItem = async (itemId) => {
 // defined (there's no "assignee" concept in this schema) -- flagging it
 // rather than assuming silently, since a different scoping rule would be
 // an easy, reasonable alternative.
-const listComplianceItems = async ({ role, userId, status, needsAcknowledgement, mine }) => {
+//
+// categoryId bypasses the created-by/NON_COMPLIANT personal-scoping above
+// entirely, for ANY role -- it's what backs the evidence-view detail page
+// (feature/compliance-archive-and-evidence-view item 3), where "the history
+// of generated items" for a category means every item under it, not just
+// the caller's own. The route deciding who may view a given category at
+// all is what actually gates this (same split of responsibility as
+// canViewItem/getComplianceItemDetail above); this function only fetches.
+const listComplianceItems = async ({ role, userId, status, needsAcknowledgement, mine, categoryId, showArchived }) => {
   const conditions = [];
   const values = [];
   let i = 1;
 
-  if (!EXECUTIVE_ROLES.includes(role)) {
+  if (categoryId) {
+    conditions.push(`ci.category_id = $${i++}`);
+    values.push(categoryId);
+  } else if (!EXECUTIVE_ROLES.includes(role)) {
     conditions.push(`(ci.created_by = $${i} OR (ci.status = 'NON_COMPLIANT' AND ca.acknowledgement_id IS NULL))`);
     values.push(userId);
     i++;
@@ -705,6 +863,8 @@ const listComplianceItems = async ({ role, userId, status, needsAcknowledgement,
     conditions.push(`ci.status = 'NON_COMPLIANT' AND ca.acknowledgement_id IS NULL`);
   }
 
+  if (!showArchived && !status) conditions.push(`ci.status != 'ARCHIVED'`);
+
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const result = await pool.query(
@@ -712,6 +872,7 @@ const listComplianceItems = async ({ role, userId, status, needsAcknowledgement,
             cc.name AS category_name, cc.regulator, cc.recurrence_type, cc.cadence_type, cc.reminder_ladder_days,
             (ci.due_date - CURRENT_DATE) AS days_until_due,
             (ca.acknowledgement_id IS NOT NULL) AS is_acknowledged,
+            approver.full_name AS approved_by_name,
             COALESCE(
               (SELECT array_agg(tier_label ORDER BY tier_label) FROM (
                  SELECT DISTINCT
@@ -723,6 +884,7 @@ const listComplianceItems = async ({ role, userId, status, needsAcknowledgement,
      FROM compliance_items ci
      JOIN compliance_categories cc ON cc.category_id = ci.category_id
      LEFT JOIN compliance_acknowledgements ca ON ca.item_id = ci.item_id
+     LEFT JOIN users approver ON approver.user_id = ci.approved_by
      ${whereClause}
      ORDER BY ci.due_date ASC`,
     values
@@ -1150,6 +1312,166 @@ const updateComplianceItem = async (itemId, updates, actorId, isAdmin) => {
   });
 };
 
+// ─── Archive / withdraw / restore / delete -- items ────────────────────────
+// Mirrors the category-side functions above exactly (same status guards,
+// same author-or-admin gate, same audit_log shape). DRAFT hard-delete has
+// no category equivalent -- categories never have a DRAFT status.
+
+const deleteComplianceItem = async (itemId, actorId, isAdmin) => {
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const item = itemRes.rows[0];
+    if (item.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can delete this item.');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (item.status !== 'DRAFT') {
+      const err = new Error(`Item is currently ${item.status}; only a DRAFT item can be deleted.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Full row logged as old_values BEFORE the delete -- a hard delete has
+    // no other record of what existed once the row is gone.
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'DELETED',
+      oldValues: item, newValues: null,
+      userId: actorId,
+    });
+    const result = await client.query(`DELETE FROM compliance_items WHERE item_id = $1 AND status = 'DRAFT'`, [itemId]);
+    if (result.rowCount === 0) {
+      const err = new Error('This item is no longer DRAFT (status changed by someone else).');
+      err.statusCode = 409;
+      throw err;
+    }
+    return { deleted: true, item_id: itemId };
+  });
+};
+
+const withdrawComplianceItem = async (itemId, reason, actorId, isAdmin) => {
+  const cleanReason = validateReason(reason, 'withdrawal');
+
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = itemRes.rows[0];
+    if (before.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can withdraw this item.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_items
+       SET status = 'ARCHIVED', previous_status = status, archived_reason = $1, archived_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $2 AND status = 'RETURNED'
+       RETURNING *`,
+      [cleanReason, itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error(`Item is currently ${before.status}; must be RETURNED to withdraw.`);
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'WITHDRAWN',
+      oldValues: { status: before.status }, newValues: { status: after.status, archived_reason: after.archived_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+const archiveComplianceItem = async (itemId, reason, actorId, isAdmin) => {
+  const cleanReason = reason && reason.trim() ? reason.trim() : null;
+
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = itemRes.rows[0];
+    if (before.created_by !== actorId && !isAdmin) {
+      const err = new Error('Only the creator or an admin can archive this item.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_items
+       SET status = 'ARCHIVED', previous_status = status, archived_reason = $1, archived_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $2 AND status = 'REJECTED'
+       RETURNING *`,
+      [cleanReason, itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error(`Item is currently ${before.status}; must be REJECTED to archive.`);
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'ARCHIVED',
+      oldValues: { status: before.status }, newValues: { status: after.status, archived_reason: after.archived_reason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
+const restoreComplianceItem = async (itemId, actorId) => {
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    if (itemRes.rows.length === 0) {
+      const err = new Error('Compliance item not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    const before = itemRes.rows[0];
+    if (before.status !== 'ARCHIVED') {
+      const err = new Error(`Item is currently ${before.status}; must be ARCHIVED to restore.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await client.query(
+      `UPDATE compliance_items
+       SET status = $1, previous_status = NULL, archived_reason = NULL, archived_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $2 AND status = 'ARCHIVED'
+       RETURNING *`,
+      [before.previous_status, itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This item is no longer ARCHIVED (status changed by someone else).');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'RESTORED',
+      oldValues: { status: before.status }, newValues: { status: after.status },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
 module.exports = {
   EXECUTIVE_ROLES,
   RECURRENCE_TYPES,
@@ -1161,11 +1483,15 @@ module.exports = {
   nextDueDateForCategory,
   createComplianceCategory,
   listComplianceCategories,
+  getComplianceCategoryDetail,
   updateComplianceCategory,
   approveComplianceCategory,
   rejectComplianceCategory,
   returnComplianceCategory,
   resubmitComplianceCategory,
+  withdrawComplianceCategory,
+  archiveComplianceCategory,
+  restoreComplianceCategory,
   createComplianceItem,
   getComplianceItem,
   getComplianceItemDetail,
@@ -1176,6 +1502,10 @@ module.exports = {
   returnComplianceItem,
   resubmitComplianceItem,
   updateComplianceItem,
+  deleteComplianceItem,
+  withdrawComplianceItem,
+  archiveComplianceItem,
+  restoreComplianceItem,
   uploadComplianceEvidence,
   getComplianceEvidence,
 };

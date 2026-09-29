@@ -99,8 +99,22 @@ router.get('/categories', authorize(['junior_accountant', 'manager', 'admin', 'c
   try {
     const activeOnly = req.query.active_only !== 'false'; // defaults to true
     const status = req.query.status || undefined;
-    const categories = await complianceService.listComplianceCategories({ activeOnly, status });
+    const showArchived = req.query.show_archived === 'true';
+    const categories = await complianceService.listComplianceCategories({ activeOnly, status, showArchived });
     res.json(categories);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// Detail view for the evidence-history screen (item 3) -- didn't exist
+// before this feature; list/patch/approve/reject/return/resubmit did, but
+// nothing returned a single category by id.
+router.get('/categories/:id', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const category = await complianceService.getComplianceCategoryDetail(req.params.id);
+    if (!category) return res.status(404).json({ message: 'Compliance category not found.' });
+    res.json(category);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }
@@ -238,19 +252,66 @@ router.post('/categories/:id/resubmit', authorize(['junior_accountant', 'manager
   }
 });
 
+// ─── Archive / withdraw / restore (feature/compliance-archive-and-evidence-
+// view) ──────────────────────────────────────────────────────────────────
+// Author-or-admin, enforced inside the service layer (not just by this
+// route's role list, same split as PATCH /categories/:id) -- the broad
+// authorize() array just gets the request past the door.
+
+router.post('/categories/:id/withdraw', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const isAdmin = req.user.role === 'admin';
+    const category = await complianceService.withdrawComplianceCategory(req.params.id, reason, req.user.user_id, isAdmin);
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/categories/:id/archive', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const isAdmin = req.user.role === 'admin';
+    const category = await complianceService.archiveComplianceCategory(req.params.id, reason, req.user.user_id, isAdmin);
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/categories/:id/restore', authorize(['admin']), async (req, res) => {
+  try {
+    const category = await complianceService.restoreComplianceCategory(req.params.id, req.user.user_id);
+    res.json(category);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
 // ─── List / detail ──────────────────────────────────────────────────────────
 
 router.get('/items', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const { status, needs_acknowledgement, mine } = req.query;
+    const { status, needs_acknowledgement, mine, category_id, show_archived } = req.query;
     const items = await complianceService.listComplianceItems({
       role: req.user.role,
       userId: req.user.user_id,
       status: status ? status.split(',') : undefined,
       needsAcknowledgement: needs_acknowledgement === 'true',
       mine: mine === 'true',
+      categoryId: category_id || undefined,
+      showArchived: show_archived === 'true',
     });
-    res.json(items);
+    // can_view_evidence lets the evidence-history UI decide up front whether
+    // to render a "View certificate" link, rather than rendering it and
+    // letting GET /items/:id/evidence 403 -- same rule as canViewItem below,
+    // computed here once per row instead of duplicated client-side.
+    const withEvidenceFlag = items.map((item) => ({
+      ...item,
+      can_view_evidence: canViewItem(item, req.user),
+    }));
+    res.json(withEvidenceFlag);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }
@@ -323,6 +384,16 @@ router.get('/items/:id/evidence', authorize(['junior_accountant', 'manager', 'ad
 
     const evidence = await complianceService.getComplianceEvidence(req.params.id);
     if (!evidence) return res.status(404).json({ message: 'No evidence file has been uploaded for this item.' });
+
+    // Logged directly (not via compliance-service's writeAuditLog, which
+    // needs a transaction client) -- same direct-insert shape the scheduler
+    // already uses for AUTO_GENERATED. A view/download is read-only, no
+    // old_values/new_values to record, just who looked at what and when.
+    pool.query(
+      `INSERT INTO audit_log (table_name, record_id, action, new_values, performed_by, user_id)
+       VALUES ('compliance_items', $1, 'EVIDENCE_VIEWED', $2, $3, $3)`,
+      [req.params.id, JSON.stringify({ filename: evidence.filename }), req.user.user_id]
+    ).catch((err) => console.error('❌ [Compliance] Failed to write EVIDENCE_VIEWED audit log:', err.message));
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${evidence.filename || 'evidence.pdf'}"`);
@@ -506,6 +577,50 @@ router.patch('/items/:id', authorize(['junior_accountant', 'manager', 'admin', '
   try {
     const isAdmin = req.user.role === 'admin';
     const item = await complianceService.updateComplianceItem(req.params.id, req.body, req.user.user_id, isAdmin);
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// ─── Archive / withdraw / restore / delete (feature/compliance-archive-and-
+// evidence-view) ──────────────────────────────────────────────────────────
+
+router.delete('/items/:id', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const isAdmin = req.user.role === 'admin';
+    const result = await complianceService.deleteComplianceItem(req.params.id, req.user.user_id, isAdmin);
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/items/:id/withdraw', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const isAdmin = req.user.role === 'admin';
+    const item = await complianceService.withdrawComplianceItem(req.params.id, reason, req.user.user_id, isAdmin);
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/items/:id/archive', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const isAdmin = req.user.role === 'admin';
+    const item = await complianceService.archiveComplianceItem(req.params.id, reason, req.user.user_id, isAdmin);
+    res.json(item);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+router.post('/items/:id/restore', authorize(['admin']), async (req, res) => {
+  try {
+    const item = await complianceService.restoreComplianceItem(req.params.id, req.user.user_id);
     res.json(item);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
