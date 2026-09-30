@@ -134,6 +134,11 @@ const navigation: NavItem[] = [
     roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
     children: [
       {
+        name: 'Compliance Register',
+        href: '/compliance',
+        roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
+      },
+      {
         name: 'My Tasks',
         href: '/compliance/my-tasks',
         roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
@@ -149,7 +154,7 @@ const navigation: NavItem[] = [
         roles: ['admin', 'cfo', 'ceo'],
       },
       {
-        name: 'Categories',
+        name: 'Setup',
         href: '/compliance/categories',
         roles: ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'],
       },
@@ -283,6 +288,7 @@ const navigation: NavItem[] = [
 ];
 
 const subIcons: Record<string, any> = {
+  '/compliance':             ClipboardCheck,
   '/compliance/my-tasks':    Inbox,
   '/compliance/register':    ClipboardList,
   '/compliance/approvals':   ListChecks,

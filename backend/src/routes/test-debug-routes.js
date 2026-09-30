@@ -15,4 +15,21 @@ router.get('/email-log', (req, res) => {
   res.json({ emails: NotificationService.getMockEmailLog() });
 });
 
+// Lets the test process confirm the SERVER it's driving over HTTP -- not
+// just its own separate DB pool -- is actually pointed at the test
+// database, not production. Returns only the host, never credentials/db
+// name; still only exists at all when MOCK_EMAIL_TRANSPORT is on, same as
+// this whole router. Closes a real gap: test-helper.js's own safety guard
+// protects its own pool.query() calls, but every HTTP-driven test action
+// (category creation, approval, etc.) runs against whatever server happens
+// to be listening on BASE_URL -- which could be a plain `npm run dev`
+// (real .env, no mock) someone forgot was still running.
+router.get('/db-host', (req, res) => {
+  try {
+    res.json({ host: new URL(process.env.DATABASE_URL).host });
+  } catch {
+    res.status(500).json({ host: null });
+  }
+});
+
 module.exports = router;

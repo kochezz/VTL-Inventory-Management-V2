@@ -16,11 +16,12 @@ const {
   authHeaders,
   signTokenForRole,
   createComplianceCategory,
+  createLegacyDraftItem,
   Cleanup,
 } = require('./helpers/test-helper');
 
 const cleanup = new Cleanup();
-let adminToken, adminHeaders;
+let adminToken, adminHeaders, adminUser;
 let jrToken, jrHeaders, jrUser;
 let cfoToken, cfoHeaders;
 let categoryId;
@@ -49,20 +50,26 @@ function nonPdfFormData() {
   return fd;
 }
 
-async function createDraftItem(headers) {
-  const res = await axios.post(
-    `${BASE_URL}/api/compliance/items`,
-    { category_id: categoryId, due_date: isoDate(30), evidence_file_ref: 'ad hoc label' },
-    headers
-  );
-  cleanup.trackItem(res.data.item_id);
-  return res.data.item_id;
+// Evidence upload/download don't care whether the item started DRAFT or
+// UPCOMING -- canViewItem's rule (own item / open-for-ack / executive)
+// isn't status-dependent -- but the submit-gate tests below specifically
+// need the legacy DRAFT -> submit path, which createComplianceItem no
+// longer produces (every new item starts UPCOMING -- feature/compliance-
+// register-ux Step 2). createLegacyDraftItem (a raw insert, same
+// convention createComplianceCategory already uses) is used uniformly
+// here so every test in this file keeps exercising the same item shape it
+// always did.
+async function createDraftItem(creatorUserId) {
+  const itemId = await createLegacyDraftItem(categoryId, creatorUserId, { dueDate: isoDate(30) });
+  cleanup.trackItem(itemId);
+  return itemId;
 }
 
 before(async () => {
   await assertServerReachable();
   adminToken = await login(process.env.TEST_ADMIN_EMAIL, process.env.TEST_ADMIN_PASSWORD);
   adminHeaders = authHeaders(adminToken);
+  ({ user: adminUser } = await signTokenForRole('admin')); // real login above; this is only for the user row
 
   ({ token: jrToken, user: jrUser } = await signTokenForRole('junior_accountant'));
   jrHeaders = authHeaders(jrToken);
@@ -81,7 +88,7 @@ after(async () => {
 // ── Submit gate ──────────────────────────────────────────────────────────────
 
 test('submit is rejected with 400 when no evidence has been uploaded', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
   await assert.rejects(
     () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/submit`, {}, jrHeaders),
     (err) => err.response?.status === 400 && /evidence/i.test(err.response.data.message)
@@ -89,7 +96,7 @@ test('submit is rejected with 400 when no evidence has been uploaded', async () 
 });
 
 test('submit succeeds once a PDF has been attached', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
 
   const uploadRes = await axios.post(
     `${BASE_URL}/api/compliance/items/${itemId}/evidence`,
@@ -107,7 +114,7 @@ test('submit succeeds once a PDF has been attached', async () => {
 // ── Upload validation ────────────────────────────────────────────────────────
 
 test('a non-PDF file is rejected with 400', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
   await assert.rejects(
     () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, nonPdfFormData(), jrHeaders),
     (err) => err.response?.status === 400
@@ -115,7 +122,7 @@ test('a non-PDF file is rejected with 400', async () => {
 });
 
 test('an oversized file (>10MB) is rejected with 400', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
   const oversized = Buffer.alloc(11 * 1024 * 1024, 'x');
   await assert.rejects(
     () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, pdfFormData('big.pdf', oversized), jrHeaders),
@@ -126,7 +133,7 @@ test('an oversized file (>10MB) is rejected with 400', async () => {
 // ── Re-upload behavior: replace, not version ────────────────────────────────
 
 test('re-uploading evidence replaces the row rather than creating a second one', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
 
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, pdfFormData('first.pdf', Buffer.from('first version')), jrHeaders);
   const secondUpload = await axios.post(
@@ -146,7 +153,7 @@ test('re-uploading evidence replaces the row rather than creating a second one',
 // ── Download: role/item-scoping matches item-visibility rules ───────────────
 
 test('the creator can download their own evidence', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, pdfFormData('mine.pdf', Buffer.from('mine')), jrHeaders);
 
   const downloadRes = await axios.get(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, { ...jrHeaders, responseType: 'arraybuffer' });
@@ -156,7 +163,7 @@ test('the creator can download their own evidence', async () => {
 });
 
 test('a non-executive with no stake in the item gets 403 downloading its evidence', async () => {
-  const itemId = await createDraftItem(adminHeaders); // admin's own DRAFT item -- not jrUser's, not open for ack
+  const itemId = await createDraftItem(adminUser.user_id); // admin's own DRAFT item -- not jrUser's, not open for ack
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, pdfFormData(), adminHeaders);
 
   await assert.rejects(
@@ -166,7 +173,7 @@ test('a non-executive with no stake in the item gets 403 downloading its evidenc
 });
 
 test('an approver (cfo) can retrieve evidence for a item pending their approval', async () => {
-  const itemId = await createDraftItem(jrHeaders);
+  const itemId = await createDraftItem(jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/evidence`, pdfFormData('for-approval.pdf', Buffer.from('approve me')), jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/submit`, {}, jrHeaders);
 

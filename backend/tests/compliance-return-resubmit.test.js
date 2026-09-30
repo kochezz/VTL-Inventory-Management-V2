@@ -18,6 +18,7 @@ const {
   authHeaders,
   signTokenForRole,
   Cleanup,
+  createLegacyDraftItem,
   uploadTestEvidence,
   waitForMockEmail,
   callScheduler,
@@ -58,20 +59,28 @@ async function createCategory(headers, overrides = {}) {
   const res = await axios.post(`${BASE_URL}/api/compliance/categories`, {
     name: `TEST SUITE - return/resubmit ${Date.now()}-${Math.random().toString(36).slice(2)}`,
     cadence_type: 'ONE_OFF',
+    obligation_kind: 'FILING',
     ...overrides,
   }, headers);
   cleanup.trackCategory(res.data.category_id);
   return res.data;
 }
 
-async function createAndSubmitItem(headers, categoryId) {
-  const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, {
-    category_id: categoryId, due_date: '2027-05-01', evidence_file_ref: 'x.pdf',
-  }, headers);
-  cleanup.trackItem(createRes.data.item_id);
-  await uploadTestEvidence(createRes.data.item_id, headers);
-  await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, headers);
-  return createRes.data.item_id;
+// This whole file is about the DRAFT -> submit -> PENDING_APPROVAL ->
+// approve/reject/return -> resubmit machinery, which is still fully live
+// in the service layer for grandfathered rows but is no longer reachable
+// through createComplianceItem for a NEW item (every new item starts
+// UPCOMING now -- feature/compliance-register-ux Step 2). createLegacyDraftItem
+// is a raw insert (same "direct DB insert for a test fixture" convention
+// createComplianceCategory already uses) that puts a fresh item at DRAFT,
+// exactly where this machinery still expects to start, so every test below
+// keeps exercising the real return/resubmit code paths unchanged.
+async function createAndSubmitItem(headers, categoryId, creatorUserId) {
+  const itemId = await createLegacyDraftItem(categoryId, creatorUserId);
+  cleanup.trackItem(itemId);
+  await uploadTestEvidence(itemId, headers);
+  await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/submit`, {}, headers);
+  return itemId;
 }
 
 // ── Categories: return ──────────────────────────────────────────────────────
@@ -197,7 +206,7 @@ test('an executive can still edit anchor_date on an ACTIVE RECURRING category re
   // flexible-cadence migration left unconfigured).
   const createRes = await axios.post(`${BASE_URL}/api/compliance/categories`, {
     name: `TEST SUITE - exec anchor edit regression ${Math.random().toString(36).slice(2)}`,
-    cadence_type: 'RECURRING', interval_months: 1, anchor_date: '2027-01-01',
+    cadence_type: 'RECURRING', interval_months: 1, anchor_date: '2027-01-01', obligation_kind: 'FILING',
   }, adminHeaders);
   cleanup.trackCategory(createRes.data.category_id);
   await axios.post(`${BASE_URL}/api/compliance/categories/${createRes.data.category_id}/approve`, {}, cfoHeaders);
@@ -252,7 +261,7 @@ test('every category decision (return/edit/resubmit/approve) writes an audit_log
 test('returning an item with a reason under 10 chars is rejected with 400', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await assert.rejects(
     () => axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'nope' }, adminHeaders),
     (err) => err.response?.status === 400
@@ -262,7 +271,7 @@ test('returning an item with a reason under 10 chars is rejected with 400', asyn
 test('admin returns a PENDING_APPROVAL item for revision -> RETURNED, creator notified', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
 
   const since = new Date();
   const res = await axios.post(
@@ -281,7 +290,7 @@ test('admin returns a PENDING_APPROVAL item for revision -> RETURNED, creator no
 test('resubmitting a RETURNED item with no evidence attached is rejected with 400', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'Evidence file is illegible, please redo.' }, adminHeaders);
 
   // No delete-evidence endpoint exists (by design -- evidence upload is an
@@ -299,7 +308,7 @@ test('resubmitting a RETURNED item with no evidence attached is rejected with 40
 test('concurrent approve attempts on the same PENDING_APPROVAL item: exactly one succeeds', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
 
   const results = await Promise.allSettled([
     axios.post(`${BASE_URL}/api/compliance/items/${itemId}/approve`, {}, adminHeaders),
@@ -316,7 +325,7 @@ test('concurrent approve attempts on the same PENDING_APPROVAL item: exactly one
 test('creator can edit due_date on a RETURNED ONE_OFF item', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'Due date entered incorrectly, please fix.' }, adminHeaders);
 
   const patchRes = await axios.patch(`${BASE_URL}/api/compliance/items/${itemId}`, { due_date: '2027-06-01' }, jrHeaders);
@@ -327,12 +336,12 @@ test('creator can edit due_date on a RETURNED ONE_OFF item', async () => {
 test('due_date cannot be edited on a RETURNED item under a RECURRING category', async () => {
   const catRes = await axios.post(`${BASE_URL}/api/compliance/categories`, {
     name: `TEST SUITE - recurring due_date edit block ${Math.random().toString(36).slice(2)}`,
-    cadence_type: 'RECURRING', interval_months: 1, anchor_date: '2027-01-15',
+    cadence_type: 'RECURRING', interval_months: 1, anchor_date: '2027-01-15', obligation_kind: 'FILING',
   }, adminHeaders);
   cleanup.trackCategory(catRes.data.category_id);
   await axios.post(`${BASE_URL}/api/compliance/categories/${catRes.data.category_id}/approve`, {}, cfoHeaders);
 
-  const itemId = await createAndSubmitItem(jrHeaders, catRes.data.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, catRes.data.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'Please review this recurring item please.' }, adminHeaders);
 
   await assert.rejects(
@@ -344,7 +353,7 @@ test('due_date cannot be edited on a RETURNED item under a RECURRING category', 
 test('editing a REJECTED item is forbidden -- can only edit while RETURNED', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/reject`, { reason: 'This item has incorrect information.' }, adminHeaders);
 
   await assert.rejects(
@@ -356,7 +365,7 @@ test('editing a REJECTED item is forbidden -- can only edit while RETURNED', asy
 test('a non-author, non-admin cannot edit a RETURNED item', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'Please attach a clearer scan please.' }, adminHeaders);
 
   // cfo is an executive but not literally "admin" -- edit access is
@@ -372,7 +381,7 @@ test('a non-author, non-admin cannot edit a RETURNED item', async () => {
 test('self-approval rules still apply after a returned item is resubmitted and self-approved', async () => {
   const cat = await createCategory(adminHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, cfoHeaders);
-  const itemId = await createAndSubmitItem(adminHeaders, cat.category_id); // admin creates + submits own item
+  const itemId = await createAndSubmitItem(adminHeaders, cat.category_id, adminUser.user_id); // admin creates + submits own item
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'Please double check the due date.' }, cfoHeaders);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/resubmit`, {}, adminHeaders);
 
@@ -395,7 +404,7 @@ test('self-approval rules still apply after a returned item is resubmitted and s
 test('a RETURNED item gets no reminder-ladder or escalation activity while RETURNED', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'Please redo this item entirely please.' }, adminHeaders);
 
   const run = await callScheduler({ dryRun: false });
@@ -407,7 +416,7 @@ test('a RETURNED item gets no reminder-ladder or escalation activity while RETUR
 test('a RETURNED item stale for 7+ days notifies Admin once per day, not on every run', async () => {
   const cat = await createCategory(jrHeaders);
   await axios.post(`${BASE_URL}/api/compliance/categories/${cat.category_id}/approve`, {}, adminHeaders);
-  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id);
+  const itemId = await createAndSubmitItem(jrHeaders, cat.category_id, jrUser.user_id);
   await axios.post(`${BASE_URL}/api/compliance/items/${itemId}/return`, { reason: 'This item needs a full rework please.' }, adminHeaders);
   await pool.query(`UPDATE compliance_items SET updated_at = CURRENT_TIMESTAMP - INTERVAL '8 days' WHERE item_id = $1`, [itemId]);
 

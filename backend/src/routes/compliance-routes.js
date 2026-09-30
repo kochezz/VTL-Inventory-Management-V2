@@ -64,6 +64,27 @@ const getUserEmail = async (userId) => {
   return result.rows[0]?.email;
 };
 
+// Backs the responsible-user picker on the Setup page. Deliberately scoped
+// here rather than widening GET /users (users-routes.js, admin-only) --
+// setting responsible_user_id itself is already executive-only
+// (updateComplianceCategory), but everyone who can SEE the Setup page
+// needs to see the current picker value rendered, hence the same broad
+// view-role set the rest of this file uses. Name/role only, no PII beyond
+// what every other compliance list already shows for created_by users.
+router.get('/users/assignable', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT user_id, full_name, role FROM users
+       WHERE role = ANY($1) AND is_active = true
+       ORDER BY full_name`,
+      [['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
 // ─── Categories ──────────────────────────────────────────────────────────────
 // junior_accountant AND manager can PROPOSE a category, but every new one
 // lands PENDING_APPROVAL regardless of who created it -- an executive still
@@ -76,9 +97,10 @@ const getUserEmail = async (userId) => {
 
 router.post('/categories', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const { name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days } = req.body;
+    const { name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days, obligation_kind, responsible_user_id } = req.body;
     const category = await complianceService.createComplianceCategory({
       name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days,
+      obligation_kind, responsible_user_id,
       created_by: req.user.user_id,
     });
     res.status(201).json(category);
@@ -138,7 +160,7 @@ router.patch('/categories/:id', authorize(['junior_accountant', 'manager', 'admi
 router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { justification } = req.body;
-    const { category, isSelfApproval } = await complianceService.approveComplianceCategory(
+    const { category, isSelfApproval, recurrenceRuleCreated, firstItemCreated } = await complianceService.approveComplianceCategory(
       req.params.id, req.user.user_id, req.user.role, justification
     );
 
@@ -173,7 +195,7 @@ router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async
       }
     }
 
-    res.json({ category, is_self_approved: isSelfApproval });
+    res.json({ category, is_self_approved: isSelfApproval, recurrence_rule_created: recurrenceRuleCreated, first_item_created: firstItemCreated });
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }
@@ -360,13 +382,33 @@ router.post('/items/:id/evidence', authorize(['junior_accountant', 'manager', 'a
     if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
 
     try {
-      const evidence = await complianceService.uploadComplianceEvidence({
+      const { evidence, movedToEvidenceSubmitted, categoryName, responsibleUserId } = await complianceService.uploadComplianceEvidence({
         itemId: req.params.id,
         fileBuffer: req.file.buffer,
         filename: req.file.originalname,
         fileSizeBytes: req.file.size,
         uploadedBy: req.user.user_id,
+        certificateExpiryDate: req.body.certificate_expiry_date || undefined,
       });
+
+      // Nobody was told a period needed verifying until now -- this closes
+      // that gap. Same EXECUTIVE_ROLES + responsible_user_id recipient set
+      // the scheduler's own reminders use.
+      if (movedToEvidenceSubmitted) {
+        const execEmails = await NotificationService.getComplianceNotificationEmails(complianceService.EXECUTIVE_ROLES);
+        const responsibleEmail = responsibleUserId ? await getUserEmail(responsibleUserId) : null;
+        const emails = responsibleEmail && !execEmails.includes(responsibleEmail) ? [...execEmails, responsibleEmail] : execEmails;
+        const html = `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+            <div style="background-color:#3b82f6;padding:20px;text-align:center;color:white;"><h2>Evidence Submitted — Verification Needed</h2></div>
+            <div style="padding:20px;color:#334155;">
+              <p>Evidence has been submitted for <strong>${categoryName}</strong> and is awaiting verification.</p>
+              <p>Please log in to the Vilagio ERP Compliance module to verify it.</p>
+            </div>
+          </div>`;
+        NotificationService.sendEmail(emails, `Action Required: Evidence Awaiting Verification — ${categoryName}`, html).catch(console.error);
+      }
+
       res.status(201).json(evidence);
     } catch (error) {
       res.status(error.statusCode || 400).json({ message: error.message });
@@ -487,6 +529,66 @@ router.post('/items/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req
     }
 
     res.json({ item, recurrence_rule_created: recurrenceRuleCreated });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// New (feature/compliance-register-ux, Step 2): the completion action for
+// the UPCOMING -> EVIDENCE_SUBMITTED -> VERIFIED model. Executive-only,
+// same as approve/reject/return -- the service layer enforces the
+// verifier-must-differ-from-uploader rule (with the same self-approval
+// exception every other approval action here has).
+router.post('/items/:id/verify', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { justification, corrected_expiry_date } = req.body;
+    const { item, isSelfVerification, nextPeriodCreated } = await complianceService.verifyComplianceItem(
+      req.params.id, req.user.user_id, req.user.role, justification, corrected_expiry_date
+    );
+
+    if (isSelfVerification) {
+      const otherExecutiveRoles = complianceService.EXECUTIVE_ROLES.filter(r => r !== req.user.role);
+      const emails = await NotificationService.getComplianceNotificationEmails(otherExecutiveRoles);
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Self-Verified — Review</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>A compliance item's own evidence was verified by the same person who uploaded it: <strong>${req.user.full_name}</strong> (${req.user.role.toUpperCase()}).</p>
+            <p><strong>Justification:</strong> ${justification}</p>
+            <p>Please log in to the Vilagio ERP Compliance module to review.</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail(emails, `Self-Verified — Review Required`, html).catch(console.error);
+    }
+
+    res.json({ item, next_period_created: nextPeriodCreated });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// Verifier's counterpart to verify -- bad evidence bounced back for a
+// fresh upload rather than forced through. Executive-only, same as verify.
+router.post('/items/:id/return-evidence', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const item = await complianceService.returnEvidence(req.params.id, reason, req.user.user_id, req.user.role);
+
+    const uploaderEmail = await getUserEmail(item.created_by);
+    if (uploaderEmail) {
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Evidence Returned</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>Evidence you submitted was returned for correction.</p>
+            <p><strong>Reason:</strong> ${item.rejection_reason}</p>
+            <p>Please upload corrected evidence in the Vilagio ERP Compliance module.</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail([uploaderEmail], `Compliance Evidence Returned for Correction`, html).catch(console.error);
+    }
+
+    res.json(item);
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }

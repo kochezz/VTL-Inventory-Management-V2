@@ -4,7 +4,24 @@
 
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+// ENV_FILE lets the test-server startup (npm run dev:test-server) point
+// this process at .env.test instead of production's .env, without any
+// other startup path (npm start / npm run dev) changing behavior --
+// require('dotenv').config({ path: undefined }) is identical to
+// require('dotenv').config() when ENV_FILE isn't set.
+require('dotenv').config({ path: process.env.ENV_FILE || undefined });
+
+// When started with ENV_FILE set (npm run dev:test-server), also refuse to
+// boot if that file turns out to point at the same DB host as production's
+// own .env -- the same guard the test suite itself runs, applied here too
+// so a misconfigured .env.test can't silently let the server under test
+// write to production even if the test process's own check were ever
+// bypassed (e.g. someone starts the server by hand and runs tests against
+// it separately).
+if (process.env.ENV_FILE) {
+  const { assertDatabaseIsNotProduction } = require('./tests/helpers/db-safety-guard');
+  assertDatabaseIsNotProduction(process.env.DATABASE_URL, require('path').join(__dirname, '.env'));
+}
 
 const authRoutes              = require('./src/routes/auth-routes');
 const productionRoutes        = require('./src/routes/production-routes');

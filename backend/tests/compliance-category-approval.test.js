@@ -54,6 +54,7 @@ async function createCategory(headers, nameSuffix) {
     {
       name: `TEST SUITE - category approval ${nameSuffix}`,
       cadence_type: 'ONE_OFF',
+      obligation_kind: 'FILING',
       reminder_ladder_days: [30, 15, 5],
     },
     headers

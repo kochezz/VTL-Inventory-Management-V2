@@ -75,7 +75,15 @@ interface ComplianceCategory {
   rejection_reason: string | null;
   previous_status: string | null;
   archived_reason: string | null;
+  obligation_kind: 'FILING' | 'RENEWAL' | null;
+  responsible_user_id: string | null;
   created_by: string;
+}
+
+interface AssignableUser {
+  user_id: string;
+  full_name: string;
+  role: string;
 }
 
 // status (has this been vetted at all) vs is_active (still in use) are
@@ -102,14 +110,27 @@ function cadenceLabel(cat: ComplianceCategory): string {
   return cat.cadence_type === 'RECURRING' && cat.due_day_of_month ? `${base} (day ${cat.due_day_of_month})` : base;
 }
 
-// Only PENDING_APPROVAL/RETURNED categories are still awaiting the cadence
-// being finished off -- REJECTED/ARCHIVED are dead ends (nothing will ever
-// be registered against them again), so the "needs configuration" prompt
-// must never fire for those, even though they can still technically have
+// PENDING_APPROVAL/RETURNED categories are still awaiting the cadence being
+// finished off; ACTIVE ones missing it are the feature/compliance-register-
+// ux Phase 1 gap itself (VAT/PAYE/NHIMA/TOT/TCC -- approved before this
+// field was required, generating nothing ever since) and need the same
+// warning so they don't sit invisible. REJECTED/ARCHIVED are dead ends
+// (nothing will ever be registered against them again), so the prompt must
+// never fire for those, even though they can still technically have
 // cadence_type === 'RECURRING' && !anchor_date.
 function needsCadenceSetup(cat: ComplianceCategory) {
   return cat.cadence_type === 'RECURRING' && !cat.anchor_date
-    && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED');
+    && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED' || cat.status === 'ACTIVE');
+}
+
+// Separate from cadence -- obligation_kind is required for every NEW
+// category (createComplianceCategory enforces it), but a handful of
+// legacy rows (LAND OCCUPIERS CERTIFICATE) predate the field and are left
+// NULL on purpose pending confirmation. NULL reads as NOT_CONFIGURED on
+// the Register (see app/compliance/page.tsx's computePeriodStatus) -- same
+// warning shown here so Setup doesn't leave it silently unconfigured.
+function needsObligationKindSetup(cat: ComplianceCategory) {
+  return !cat.obligation_kind && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED' || cat.status === 'ACTIVE');
 }
 
 // A real, standalone component -- not an inline arrow function invoked
@@ -121,12 +142,13 @@ function needsCadenceSetup(cat: ComplianceCategory) {
 // been invoked yet at that point -- confirmed by a regression test on the
 // Approvals page that initially made this exact mistake.
 function CategoryTableRow({
-  cat, isExecutive, currentUserId, isAdmin, onResubmit, onEditCadence, onToggleActive, onWithdraw, onArchive, onRestore, onOpenDetail,
+  cat, isExecutive, currentUserId, isAdmin, assignableUsers, onResubmit, onEditCadence, onToggleActive, onWithdraw, onArchive, onRestore, onOpenDetail, onOpenOwnerPicker,
 }: {
   cat: ComplianceCategory;
   isExecutive: boolean;
   currentUserId: string | undefined;
   isAdmin: boolean;
+  assignableUsers: AssignableUser[];
   onResubmit: () => void;
   onEditCadence: () => void;
   onToggleActive: () => void;
@@ -134,6 +156,7 @@ function CategoryTableRow({
   onArchive: () => void;
   onRestore: () => void;
   onOpenDetail: () => void;
+  onOpenOwnerPicker: () => void;
 }) {
   const isAuthor = cat.created_by === currentUserId;
   const archived = cat.status === 'ARCHIVED';
@@ -155,8 +178,24 @@ function CategoryTableRow({
             First due date not set -- items can't be registered yet
           </div>
         )}
+        {needsObligationKindSetup(cat) && (
+          <div className="flex items-center gap-1.5 mt-1 text-amber-400 text-xs">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            Obligation kind not set -- shows as NOT_CONFIGURED on the Register
+          </div>
+        )}
       </td>
       <td className="py-4 px-6 text-gray-300 font-mono text-sm">{cat.reminder_ladder_days.join(', ')} days</td>
+      <td className="py-4 px-6 text-gray-300 text-sm">
+        {cat.responsible_user_id
+          ? (assignableUsers.find((u) => u.user_id === cat.responsible_user_id)?.full_name || 'Unknown')
+          : <span className="text-gray-600">Unassigned</span>}
+        {isExecutive && !archived && (
+          <button onClick={onOpenOwnerPicker} className="block text-primary-400 hover:text-primary-300 text-xs mt-0.5">
+            {cat.responsible_user_id ? 'Change' : 'Assign'}
+          </button>
+        )}
+      </td>
       <td className="py-4 px-6 text-center">
         <span className={`px-3 py-1.5 rounded-lg border font-bold text-xs uppercase tracking-wider ${STATUS_STYLES[cat.status]}`}>
           {cat.status.replace('_', ' ')}
@@ -288,6 +327,7 @@ const CADENCE_FORM_DEFAULTS: CadenceFormState = {
 const CREATE_FORM_DEFAULTS = {
   name: '',
   regulator: '',
+  obligationKind: '' as '' | 'FILING' | 'RENEWAL',
   ...CADENCE_FORM_DEFAULTS,
 };
 
@@ -506,6 +546,11 @@ export default function ComplianceCategoriesPage() {
   const [resubmitError, setResubmitError] = useState('');
 
   const [showArchived, setShowArchived] = useState(false);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
+  const [ownerPickerCategory, setOwnerPickerCategory] = useState<ComplianceCategory | null>(null);
+  const [ownerPickerValue, setOwnerPickerValue] = useState('');
+  const [ownerPickerLoading, setOwnerPickerLoading] = useState(false);
+  const [ownerPickerError, setOwnerPickerError] = useState('');
 
   // One shared confirmation modal for withdraw/archive/restore -- each just
   // a status transition plus an optional/required reason, so one dialog
@@ -527,6 +572,7 @@ export default function ComplianceCategoriesPage() {
   useEffect(() => {
     if (user && CAN_VIEW_ROLES.includes(user.role)) {
       fetchCategories();
+      api.get('/compliance/users/assignable').then((res) => setAssignableUsers(res.data)).catch((err) => console.error('Failed to load assignable users', err));
     }
   }, [user, showArchived]);
 
@@ -540,6 +586,27 @@ export default function ComplianceCategoriesPage() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openOwnerPicker = (category: ComplianceCategory) => {
+    setOwnerPickerCategory(category);
+    setOwnerPickerValue(category.responsible_user_id || '');
+    setOwnerPickerError('');
+  };
+
+  const handleSetOwner = async () => {
+    if (!ownerPickerCategory) return;
+    try {
+      setOwnerPickerLoading(true);
+      setOwnerPickerError('');
+      await api.patch(`/compliance/categories/${ownerPickerCategory.category_id}`, { responsible_user_id: ownerPickerValue || null });
+      setOwnerPickerCategory(null);
+      fetchCategories();
+    } catch (err: any) {
+      setOwnerPickerError(err.response?.data?.message || 'Failed to set the responsible user.');
+    } finally {
+      setOwnerPickerLoading(false);
     }
   };
 
@@ -571,10 +638,16 @@ export default function ComplianceCategoriesPage() {
         setCreateLoading(false);
         return;
       }
+      if (!newCategory.obligationKind) {
+        setCreateError('Obligation kind (Filing or Renewal) is required.');
+        setCreateLoading(false);
+        return;
+      }
 
       await api.post('/compliance/categories', {
         name: newCategory.name,
         regulator: newCategory.regulator || undefined,
+        obligation_kind: newCategory.obligationKind,
         ...cadenceFormToApiFields(newCategory),
         reminder_ladder_days: ladder,
       });
@@ -781,6 +854,7 @@ export default function ComplianceCategoriesPage() {
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Regulator</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Cadence</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Reminder Ladder</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider">Owner</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">Approval</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-center">In Use</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
@@ -788,12 +862,12 @@ export default function ComplianceCategoriesPage() {
               </thead>
               <tbody className="divide-y divide-dark-700">
                 {loading ? (
-                  <tr><td colSpan={7} className="py-16 text-center">
+                  <tr><td colSpan={8} className="py-16 text-center">
                     <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500 mb-4"></div>
                     <p className="text-gray-400">Loading categories...</p>
                   </td></tr>
                 ) : categories.length === 0 ? (
-                  <tr><td colSpan={7} className="py-16 text-center">
+                  <tr><td colSpan={8} className="py-16 text-center">
                     <Gavel className="w-12 h-12 text-gray-600 mx-auto mb-4" />
                     <p className="text-lg font-medium text-white mb-1">No compliance categories yet</p>
                     <p className="text-gray-500 text-sm">Create one to let junior_accountant register items against it.</p>
@@ -804,7 +878,7 @@ export default function ComplianceCategoriesPage() {
                       key={cat.category_id}
                       fallback={
                         <tr>
-                          <td colSpan={7} className="py-3 px-6 text-red-400 text-xs flex items-center gap-2">
+                          <td colSpan={8} className="py-3 px-6 text-red-400 text-xs flex items-center gap-2">
                             <AlertCircle className="w-4 h-4 flex-shrink-0" />
                             This category ({cat.name || cat.category_id}) failed to render. Refresh, or contact support if this persists.
                           </td>
@@ -816,6 +890,7 @@ export default function ComplianceCategoriesPage() {
                         isExecutive={isExecutive}
                         currentUserId={user?.user_id}
                         isAdmin={user?.role === 'admin'}
+                        assignableUsers={assignableUsers}
                         onResubmit={() => openResubmitModal(cat)}
                         onEditCadence={() => openEditModal(cat)}
                         onToggleActive={() => toggleActive(cat)}
@@ -823,6 +898,7 @@ export default function ComplianceCategoriesPage() {
                         onArchive={() => openConfirm('archive', cat)}
                         onRestore={() => openConfirm('restore', cat)}
                         onOpenDetail={() => router.push(`/compliance/categories/${cat.category_id}`)}
+                        onOpenOwnerPicker={() => openOwnerPicker(cat)}
                       />
                     </RowErrorBoundary>
                   ))
@@ -872,6 +948,28 @@ export default function ComplianceCategoriesPage() {
                   placeholder="e.g. PACRA, ZRA, NAPSA"
                   className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Obligation Kind</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setNewCategory({ ...newCategory, obligationKind: 'FILING' })}
+                    className={`px-4 py-3 rounded-lg border text-sm font-bold text-left ${newCategory.obligationKind === 'FILING' ? 'border-primary-500 bg-primary-500/10 text-white' : 'border-dark-600 bg-dark-950 text-gray-400'}`}
+                  >
+                    Filing
+                    <p className="font-normal text-xs text-gray-500 mt-1">A periodic submission/receipt (e.g. VAT, PAYE)</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewCategory({ ...newCategory, obligationKind: 'RENEWAL' })}
+                    className={`px-4 py-3 rounded-lg border text-sm font-bold text-left ${newCategory.obligationKind === 'RENEWAL' ? 'border-primary-500 bg-primary-500/10 text-white' : 'border-dark-600 bg-dark-950 text-gray-400'}`}
+                  >
+                    Renewal
+                    <p className="font-normal text-xs text-gray-500 mt-1">A certificate with its own expiry (e.g. TCC, ZPPA)</p>
+                  </button>
+                </div>
               </div>
 
               <CadenceFieldsForm
@@ -1059,6 +1157,43 @@ export default function ComplianceCategoriesPage() {
                 className="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold disabled:opacity-50"
               >
                 {confirmLoading ? 'Working...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ownerPickerCategory && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white">Responsible User</h2>
+              <button onClick={() => setOwnerPickerCategory(null)} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-400">{ownerPickerCategory.name}</p>
+              <select
+                value={ownerPickerValue}
+                onChange={(e) => setOwnerPickerValue(e.target.value)}
+                className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+              >
+                <option value="">Unassigned</option>
+                {assignableUsers.map((u) => (
+                  <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.role})</option>
+                ))}
+              </select>
+              {ownerPickerError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">{ownerPickerError}</div>
+              )}
+            </div>
+            <div className="p-6 border-t border-dark-700 flex justify-end gap-3">
+              <button onClick={() => setOwnerPickerCategory(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
+              <button
+                onClick={handleSetOwner}
+                disabled={ownerPickerLoading}
+                className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold disabled:opacity-50"
+              >
+                {ownerPickerLoading ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>

@@ -11,7 +11,18 @@
 // verification script in this project's history (Phase 0 through the Phase 2
 // merge sessions) -- real writes, explicit tracked cleanup, not mocks.
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+// Loads .env.test, NOT .env -- these tests must never run against
+// production (an incident this project has already had once with the
+// return/resubmit suite). assertDatabaseIsNotProduction below is the actual
+// enforcement, not just this path choice: even if .env.test is ever
+// accidentally left pointing at the production host, the guard aborts the
+// whole run before any test executes, rather than relying on everyone
+// remembering to check.
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env.test') });
+
+const { assertDatabaseIsNotProduction, extractHost } = require('./db-safety-guard');
+assertDatabaseIsNotProduction(process.env.DATABASE_URL, path.join(__dirname, '..', '..', '.env'));
 
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
@@ -33,7 +44,33 @@ async function assertServerReachable() {
   } catch (err) {
     throw new Error(
       `Cannot reach ${BASE_URL}/health -- these tests require the backend dev server ` +
-      `already running (npm run dev, or node server.js) before "npm test". Original error: ${err.message}`
+      `already running (npm run dev:test-server) before "npm test". Original error: ${err.message}`
+    );
+  }
+
+  // This process's OWN pool is already guarded (assertDatabaseIsNotProduction
+  // above), but every HTTP-driven test action runs against whatever server
+  // is actually listening on BASE_URL -- which could be a plain `npm run
+  // dev` (real .env, no mock) left running from something else. /api/_test
+  // only exists at all when that server was started with
+  // MOCK_EMAIL_TRANSPORT on (see test-debug-routes.js) -- its absence, or a
+  // host mismatch, means the server under test isn't the test-branch one.
+  const testHost = extractHost(process.env.DATABASE_URL);
+  let serverDbRes;
+  try {
+    serverDbRes = await axios.get(`${BASE_URL}/api/_test/db-host`, { timeout: 5000 });
+  } catch (err) {
+    throw new Error(
+      `SAFETY GUARD: ${BASE_URL}/api/_test/db-host is unreachable -- the server under test was ` +
+      `not started with npm run dev:test-server (which sets MOCK_EMAIL_TRANSPORT and ENV_FILE=.env.test). ` +
+      `Refusing to run tests against a server whose database can't be confirmed. Original error: ${err.message}`
+    );
+  }
+  if (serverDbRes.data.host !== testHost) {
+    throw new Error(
+      `SAFETY GUARD: the server at ${BASE_URL} is using database host "${serverDbRes.data.host}", ` +
+      `but this test process's own DATABASE_URL (.env.test) is "${testHost}". Refusing to run tests -- ` +
+      `restart the server with npm run dev:test-server so both point at the same test branch.`
     );
   }
 }
@@ -142,9 +179,15 @@ async function uploadTestEvidence(itemId, headers) {
 // it automatically so none of those call sites need to change, while still
 // allowing a test to pass the new fields directly when it specifically
 // wants to exercise a custom interval.
+// obligation_kind defaults to FILING -- createComplianceItem/
+// approveComplianceCategory now both require it to be set (feature/
+// compliance-register-ux, Step 2), so a category created without one is
+// unusable by almost every test that used to just need "a normal
+// category." Pass obligation_kind: 'RENEWAL' explicitly for the tests that
+// specifically exercise the renewal-only-generator behavior.
 async function createComplianceCategory({
   name, regulator = 'TEST', recurrence_type = 'ONE_OFF_EXPIRY',
-  cadence_type, interval_months, due_day_of_month, anchor_date,
+  cadence_type, interval_months, due_day_of_month, anchor_date, obligation_kind = 'FILING',
 }) {
   if (cadence_type === undefined) {
     if (recurrence_type === 'ONE_OFF_EXPIRY') {
@@ -171,11 +214,32 @@ async function createComplianceCategory({
   }
 
   const result = await pool.query(
-    `INSERT INTO compliance_categories (name, regulator, recurrence_type, cadence_type, interval_months, due_day_of_month, anchor_date)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING category_id`,
-    [name, regulator, recurrence_type, cadence_type, interval_months ?? null, due_day_of_month ?? null, anchor_date ?? null]
+    `INSERT INTO compliance_categories (name, regulator, recurrence_type, cadence_type, interval_months, due_day_of_month, anchor_date, obligation_kind)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING category_id`,
+    [name, regulator, recurrence_type, cadence_type, interval_months ?? null, due_day_of_month ?? null, anchor_date ?? null, obligation_kind]
   );
   return result.rows[0].category_id;
+}
+
+// Raw insert, bypassing createComplianceItem entirely -- the only way left
+// to reach DRAFT: the real API now always creates an UPCOMING item
+// (feature/compliance-register-ux Step 2), and submitComplianceItem
+// explicitly rejects any UPCOMING/EVIDENCE_SUBMITTED/VERIFIED item
+// (assertNotNewVocabularyItem). The legacy DRAFT -> submit -> PENDING_
+// APPROVAL -> approve/reject/return -> resubmit machinery is still fully
+// live in the service layer (grandfathered rows created before this
+// feature still need it to work), so this is what exercises it -- same
+// "direct DB insert for a test fixture" convention createComplianceCategory
+// above already uses. Doesn't require the category to be ACTIVE (a raw
+// insert bypasses that check too), matching the real grandfathered rows
+// this simulates, most of which predate the ACTIVE-category requirement.
+async function createLegacyDraftItem(categoryId, createdBy, { dueDate = '2027-05-01' } = {}) {
+  const result = await pool.query(
+    `INSERT INTO compliance_items (category_id, due_date, evidence_file_ref, created_by, status)
+     VALUES ($1, $2, $3, $4, 'DRAFT') RETURNING item_id`,
+    [categoryId, dueDate, 'legacy-fixture.pdf', createdBy]
+  );
+  return result.rows[0].item_id;
 }
 
 async function getUserRow(userId) {
@@ -269,6 +333,7 @@ module.exports = {
   signTokenForRole,
   Cleanup,
   createComplianceCategory,
+  createLegacyDraftItem,
   uploadTestEvidence,
   getUserRow,
   waitForResendEmail,

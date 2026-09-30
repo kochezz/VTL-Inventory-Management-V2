@@ -8,6 +8,7 @@ import { Inbox, AlertCircle, CheckCircle2, ShieldAlert, Eye, Undo2, X, Send, Upl
 import { RowErrorBoundary } from '@/components/compliance/RowErrorBoundary';
 
 const CAN_VIEW_ROLES = ['junior_accountant', 'manager', 'admin', 'cfo', 'ceo'];
+const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
 
 interface ComplianceItem {
   item_id: string;
@@ -25,6 +26,8 @@ interface ComplianceItem {
   archived_reason: string | null;
   previous_status: string | null;
   created_by: string;
+  obligation_kind: 'FILING' | 'RENEWAL' | null;
+  filed_late?: boolean;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -46,6 +49,58 @@ const STATUS_STYLES: Record<string, string> = {
 // attributed to the parent, since the boundary hasn't been invoked yet at
 // that point -- confirmed by a regression test on the Approvals page that
 // initially made this exact mistake.
+function VerificationQueueCard({
+  item, previewingId, onPreview, onVerify, onReturnEvidence,
+}: {
+  item: ComplianceItem;
+  previewingId: string | null;
+  onPreview: () => void;
+  onVerify: () => void;
+  onReturnEvidence: () => void;
+}) {
+  return (
+    <div className="bg-dark-800 border border-blue-500/30 rounded-xl p-5 shadow-lg">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-bold text-white text-lg">{item.category_name}</p>
+            <span className="px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wider bg-blue-500/10 text-blue-400 border-blue-500/20">
+              EVIDENCE SUBMITTED
+            </span>
+            {item.obligation_kind === 'RENEWAL' && (
+              <span className="px-2 py-0.5 bg-dark-900 border border-dark-600 rounded text-xs text-gray-400">RENEWAL</span>
+            )}
+          </div>
+          {item.regulator && <p className="text-xs text-gray-500 mt-0.5">{item.regulator}</p>}
+          <p className="text-sm text-gray-400 mt-2">Due {new Date(item.due_date).toLocaleDateString()}</p>
+          <button
+            onClick={onPreview}
+            disabled={previewingId === item.item_id}
+            className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300 text-xs font-medium mt-2 disabled:opacity-50"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            {previewingId === item.item_id ? 'Opening...' : 'View evidence'}
+          </button>
+        </div>
+        <div className="flex flex-col gap-2 md:w-48">
+          <button
+            onClick={onVerify}
+            className="px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm"
+          >
+            Verify
+          </button>
+          <button
+            onClick={onReturnEvidence}
+            className="px-4 py-2 text-gray-400 hover:text-white bg-dark-900 hover:bg-red-600 rounded-lg font-bold text-xs"
+          >
+            Return Evidence
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReturnedItemCard({
   item, previewingId, onPreview, onFixAndResubmit, onWithdraw,
 }: {
@@ -248,6 +303,21 @@ export default function ComplianceMyTasksPage() {
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [confirmError, setConfirmError] = useState('');
 
+  // Verification queue -- executive-only. Evidence has been submitted and
+  // is waiting on someone other than the uploader (or the uploader
+  // themselves, with justification) to verify it.
+  const isExecutive = !!user && EXECUTIVE_ROLES.includes(user.role);
+  const [verificationItems, setVerificationItems] = useState<ComplianceItem[]>([]);
+  const [verifyTarget, setVerifyTarget] = useState<ComplianceItem | null>(null);
+  const [verifyJustification, setVerifyJustification] = useState('');
+  const [verifyCorrectedExpiry, setVerifyCorrectedExpiry] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [returnEvidenceTarget, setReturnEvidenceTarget] = useState<ComplianceItem | null>(null);
+  const [returnEvidenceReason, setReturnEvidenceReason] = useState('');
+  const [returnEvidenceError, setReturnEvidenceError] = useState('');
+  const [returnEvidenceLoading, setReturnEvidenceLoading] = useState(false);
+
   // Same authenticated-blob-fetch pattern as app/qms/documents/[id]/page.tsx
   // and the Approvals page -- a plain href/src can't carry the Bearer token.
   const previewEvidence = async (itemId: string) => {
@@ -274,8 +344,18 @@ export default function ComplianceMyTasksPage() {
   useEffect(() => {
     if (user && CAN_VIEW_ROLES.includes(user.role)) {
       fetchTasks();
+      if (isExecutive) fetchVerificationQueue();
     }
   }, [user, showArchived]);
+
+  const fetchVerificationQueue = async () => {
+    try {
+      const res = await api.get('/compliance/items?status=EVIDENCE_SUBMITTED');
+      setVerificationItems(res.data);
+    } catch (err) {
+      console.error('Failed to load the verification queue', err);
+    }
+  };
 
   // "My Tasks" combines two things worth seeing in one place: items I
   // personally created (any status, so I can track my own submissions
@@ -310,6 +390,63 @@ export default function ComplianceMyTasksPage() {
       console.error('Failed to acknowledge item', err);
     } finally {
       setAckingId(null);
+    }
+  };
+
+  const openVerify = (item: ComplianceItem) => {
+    setVerifyTarget(item);
+    setVerifyJustification('');
+    setVerifyCorrectedExpiry('');
+    setVerifyError('');
+  };
+
+  const handleVerify = async () => {
+    if (!verifyTarget) return;
+    const isSelf = verifyTarget.created_by === user?.user_id;
+    if (isSelf && !verifyJustification.trim()) {
+      setVerifyError('Justification is required to verify your own upload.');
+      return;
+    }
+    try {
+      setVerifyLoading(true);
+      setVerifyError('');
+      await api.post(`/compliance/items/${verifyTarget.item_id}/verify`, {
+        justification: verifyJustification || undefined,
+        corrected_expiry_date: verifyCorrectedExpiry || undefined,
+      });
+      setVerifyTarget(null);
+      fetchVerificationQueue();
+      fetchTasks();
+    } catch (err: any) {
+      setVerifyError(err.response?.data?.message || 'Failed to verify this item.');
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
+  const openReturnEvidence = (item: ComplianceItem) => {
+    setReturnEvidenceTarget(item);
+    setReturnEvidenceReason('');
+    setReturnEvidenceError('');
+  };
+
+  const handleReturnEvidence = async () => {
+    if (!returnEvidenceTarget) return;
+    if (returnEvidenceReason.trim().length < 10) {
+      setReturnEvidenceError('A reason of at least 10 characters is required.');
+      return;
+    }
+    try {
+      setReturnEvidenceLoading(true);
+      setReturnEvidenceError('');
+      await api.post(`/compliance/items/${returnEvidenceTarget.item_id}/return-evidence`, { reason: returnEvidenceReason });
+      setReturnEvidenceTarget(null);
+      fetchVerificationQueue();
+      fetchTasks();
+    } catch (err: any) {
+      setReturnEvidenceError(err.response?.data?.message || 'Failed to return this evidence.');
+    } finally {
+      setReturnEvidenceLoading(false);
     }
   };
 
@@ -453,6 +590,37 @@ export default function ComplianceMyTasksPage() {
           <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl flex items-center gap-3">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
             <p>{error}</p>
+          </div>
+        )}
+
+        {isExecutive && verificationItems.length > 0 && (
+          <div>
+            <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-3">
+              <ShieldAlert className="w-5 h-5 text-blue-400" />
+              Verification Queue
+              <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-xs">{verificationItems.length}</span>
+            </h2>
+            <div className="space-y-4 mb-6">
+              {verificationItems.map((item) => (
+                <RowErrorBoundary
+                  key={item.item_id}
+                  fallback={
+                    <div className="bg-dark-800 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      This item ({item.category_name || item.item_id}) failed to render.
+                    </div>
+                  }
+                >
+                  <VerificationQueueCard
+                    item={item}
+                    previewingId={previewingId}
+                    onPreview={() => previewEvidence(item.item_id)}
+                    onVerify={() => openVerify(item)}
+                    onReturnEvidence={() => openReturnEvidence(item)}
+                  />
+                </RowErrorBoundary>
+              ))}
+            </div>
           </div>
         )}
 
@@ -674,6 +842,93 @@ export default function ComplianceMyTasksPage() {
                 className="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold disabled:opacity-50"
               >
                 {confirmLoading ? 'Working...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {verifyTarget && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white">Verify Evidence — {verifyTarget.category_name}</h2>
+              <button onClick={() => setVerifyTarget(null)} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-gray-300 text-sm">Confirms the evidence on file satisfies this period. This cannot be undone.</p>
+              {verifyTarget.obligation_kind === 'RENEWAL' && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Correct the certificate expiry (optional)</label>
+                  <input
+                    type="date"
+                    value={verifyCorrectedExpiry}
+                    onChange={(e) => setVerifyCorrectedExpiry(e.target.value)}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-1.5">Leave blank to accept the expiry as uploaded. This becomes the next renewal period&apos;s due date.</p>
+                </div>
+              )}
+              {verifyTarget.created_by === user?.user_id && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Justification (required — you uploaded this evidence yourself)</label>
+                  <textarea
+                    value={verifyJustification}
+                    onChange={(e) => setVerifyJustification(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  />
+                </div>
+              )}
+              {verifyError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">{verifyError}</div>
+              )}
+            </div>
+            <div className="p-6 border-t border-dark-700 flex justify-end gap-3">
+              <button onClick={() => setVerifyTarget(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
+              <button
+                onClick={handleVerify}
+                disabled={verifyLoading}
+                className="px-8 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold disabled:opacity-50"
+              >
+                {verifyLoading ? 'Verifying...' : 'Verify'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {returnEvidenceTarget && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-dark-700 bg-dark-900/80 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-white">Return Evidence — {returnEvidenceTarget.category_name}</h2>
+              <button onClick={() => setReturnEvidenceTarget(null)} className="text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-gray-300 text-sm">Sends this back to the uploader for a fresh upload, instead of verifying it.</p>
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Reason (required)</label>
+                <textarea
+                  value={returnEvidenceReason}
+                  onChange={(e) => setReturnEvidenceReason(e.target.value)}
+                  rows={3}
+                  className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  placeholder="At least 10 characters..."
+                />
+              </div>
+              {returnEvidenceError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">{returnEvidenceError}</div>
+              )}
+            </div>
+            <div className="p-6 border-t border-dark-700 flex justify-end gap-3">
+              <button onClick={() => setReturnEvidenceTarget(null)} className="px-6 py-2.5 text-gray-400 hover:text-white font-medium bg-dark-900 rounded-lg">Cancel</button>
+              <button
+                onClick={handleReturnEvidence}
+                disabled={returnEvidenceLoading}
+                className="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold disabled:opacity-50"
+              >
+                {returnEvidenceLoading ? 'Working...' : 'Return Evidence'}
               </button>
             </div>
           </div>
