@@ -21,6 +21,20 @@ const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
 // wants more runway than a 10-day heads-up gives it.
 const RECURRENCE_GENERATION_LEAD_DAYS = 10;
 
+// Every reminder/escalation goes to EXECUTIVE_ROLES (admin/cfo/ceo) as
+// before, PLUS the category's own responsible_user_id when it's set --
+// "who actually owns filing this" now actually receives the nudge, not
+// just whoever happens to be an executive. Deduped so a responsible user
+// who's also an executive doesn't get the email twice.
+async function getReminderRecipients(responsibleUserId) {
+  const execEmails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
+  if (!responsibleUserId) return execEmails;
+  const res = await db.query(`SELECT email FROM users WHERE user_id = $1 AND is_active = true`, [responsibleUserId]);
+  const responsibleEmail = res.rows[0]?.email;
+  if (!responsibleEmail || execEmails.includes(responsibleEmail)) return execEmails;
+  return [...execEmails, responsibleEmail];
+}
+
 // ── Step 2a: reminder ladder ─────────────────────────────────────────────────
 // Unchanged in spirit from before the flexible-cadence session: reads
 // whatever reminder_ladder_days is actually stored per category (always
@@ -37,7 +51,7 @@ async function processReminderLadder(dryRun, summary) {
   const items = await db.query(`
     SELECT ci.item_id, ci.due_date, ci.category_id,
            (ci.due_date - CURRENT_DATE) AS days_until_due,
-           cc.reminder_ladder_days
+           cc.reminder_ladder_days, cc.responsible_user_id
     FROM compliance_items ci
     JOIN compliance_categories cc ON cc.category_id = ci.category_id
     WHERE ci.status IN ('APPROVED', 'UPCOMING') AND cc.status != 'ARCHIVED'
@@ -56,7 +70,7 @@ async function processReminderLadder(dryRun, summary) {
       );
       if (already.rows.length > 0) continue;
 
-      const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
+      const emails = await getReminderRecipients(item.responsible_user_id);
       summary.reminders_sent.push({ item_id: item.item_id, days_before: threshold, days_until_due: item.days_until_due, recipients: emails });
 
       if (!dryRun) {
@@ -89,12 +103,13 @@ async function processNonCompliantAndEscalations(dryRun, summary) {
   // evidence in (EVIDENCE_SUBMITTED) is handled by the escalation step
   // below instead -- it's waiting on a verifier, not on the filer.
   const newlyOverdue = await db.query(`
-    SELECT ci.item_id FROM compliance_items ci
+    SELECT ci.item_id, cc.responsible_user_id FROM compliance_items ci
+    JOIN compliance_categories cc ON cc.category_id = ci.category_id
     WHERE ci.status IN ('APPROVED', 'UPCOMING') AND ci.due_date < CURRENT_DATE
       AND NOT EXISTS (SELECT 1 FROM compliance_acknowledgements a WHERE a.item_id = ci.item_id)
   `);
 
-  const dryRunFlippedIds = [];
+  const dryRunFlipped = [];
   for (const row of newlyOverdue.rows) {
     summary.items_flipped_non_compliant.push({ item_id: row.item_id });
     if (!dryRun) {
@@ -104,21 +119,23 @@ async function processNonCompliantAndEscalations(dryRun, summary) {
         [row.item_id]
       );
     } else {
-      dryRunFlippedIds.push(row.item_id);
+      dryRunFlipped.push(row);
     }
   }
 
   const alreadyNonCompliant = await db.query(`
-    SELECT ci.item_id FROM compliance_items ci
+    SELECT ci.item_id, cc.responsible_user_id FROM compliance_items ci
+    JOIN compliance_categories cc ON cc.category_id = ci.category_id
     WHERE ci.status = 'NON_COMPLIANT'
       AND NOT EXISTS (SELECT 1 FROM compliance_acknowledgements a WHERE a.item_id = ci.item_id)
   `);
-  const escalationCandidateIds = new Set(alreadyNonCompliant.rows.map((r) => r.item_id));
-  if (dryRun) dryRunFlippedIds.forEach((id) => escalationCandidateIds.add(id));
+  // Map, not Set -- need each item's own responsible_user_id alongside its
+  // id, not just the id.
+  const escalationCandidates = new Map(alreadyNonCompliant.rows.map((r) => [r.item_id, r.responsible_user_id]));
+  if (dryRun) dryRunFlipped.forEach((r) => escalationCandidates.set(r.item_id, r.responsible_user_id));
 
-  const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
-
-  for (const itemId of escalationCandidateIds) {
+  for (const [itemId, responsibleUserId] of escalationCandidates) {
+    const emails = await getReminderRecipients(responsibleUserId);
     if (!dryRun) {
       const inserted = await db.query(
         `INSERT INTO compliance_reminder_log (item_id, tier_type) VALUES ($1, 'OVERDUE_ESCALATION')
@@ -153,14 +170,14 @@ async function processNonCompliantAndEscalations(dryRun, summary) {
 // RETURNED_STALE.
 async function processVerificationOverdueEscalations(dryRun, summary) {
   const overdue = await db.query(`
-    SELECT ci.item_id FROM compliance_items ci
+    SELECT ci.item_id, cc.responsible_user_id FROM compliance_items ci
+    JOIN compliance_categories cc ON cc.category_id = ci.category_id
     WHERE ci.status = 'EVIDENCE_SUBMITTED' AND ci.due_date < CURRENT_DATE
   `);
   if (overdue.rows.length === 0) return;
 
-  const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
-
   for (const row of overdue.rows) {
+    const emails = await getReminderRecipients(row.responsible_user_id);
     if (!dryRun) {
       const inserted = await db.query(
         `INSERT INTO compliance_reminder_log (item_id, tier_type) VALUES ($1, 'VERIFICATION_OVERDUE')
@@ -291,7 +308,7 @@ async function processRecurrence(dryRun, summary) {
 // reminder_log write shape changed.
 async function processReapprovalReminders(dryRun, summary) {
   const rules = await db.query(`
-    SELECT r.rule_id, r.category_id, r.next_reapproval_due
+    SELECT r.rule_id, r.category_id, r.next_reapproval_due, cc.responsible_user_id
     FROM compliance_recurrence_rule r
     JOIN compliance_categories cc ON cc.category_id = r.category_id
     WHERE r.is_active = true AND r.next_reapproval_due <= (CURRENT_DATE + INTERVAL '30 days')
@@ -300,9 +317,8 @@ async function processReapprovalReminders(dryRun, summary) {
 
   if (rules.rows.length === 0) return;
 
-  const emails = await NotificationService.getComplianceNotificationEmails(EXECUTIVE_ROLES);
-
   for (const rule of rules.rows) {
+    const emails = await getReminderRecipients(rule.responsible_user_id);
     if (!dryRun) {
       const inserted = await db.query(
         `INSERT INTO compliance_reminder_log (rule_id, tier_type) VALUES ($1, 'REAPPROVAL_REMINDER')

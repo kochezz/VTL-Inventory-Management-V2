@@ -80,6 +80,7 @@ function pickCurrentPeriod(items: ComplianceItem[]): ComplianceItem | null {
 }
 
 function computePeriodStatus(cat: ComplianceCategory, item: ComplianceItem | null): PeriodStatus {
+  if (!cat.obligation_kind) return 'NOT_CONFIGURED';
   if (cat.cadence_type === 'RECURRING' && !cat.anchor_date) return 'NOT_CONFIGURED';
   if (!item) return 'UPCOMING';
   if (item.status === 'NON_COMPLIANT') return 'NON_COMPLIANT';

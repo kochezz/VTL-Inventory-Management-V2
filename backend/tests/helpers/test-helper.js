@@ -179,9 +179,15 @@ async function uploadTestEvidence(itemId, headers) {
 // it automatically so none of those call sites need to change, while still
 // allowing a test to pass the new fields directly when it specifically
 // wants to exercise a custom interval.
+// obligation_kind defaults to FILING -- createComplianceItem/
+// approveComplianceCategory now both require it to be set (feature/
+// compliance-register-ux, Step 2), so a category created without one is
+// unusable by almost every test that used to just need "a normal
+// category." Pass obligation_kind: 'RENEWAL' explicitly for the tests that
+// specifically exercise the renewal-only-generator behavior.
 async function createComplianceCategory({
   name, regulator = 'TEST', recurrence_type = 'ONE_OFF_EXPIRY',
-  cadence_type, interval_months, due_day_of_month, anchor_date,
+  cadence_type, interval_months, due_day_of_month, anchor_date, obligation_kind = 'FILING',
 }) {
   if (cadence_type === undefined) {
     if (recurrence_type === 'ONE_OFF_EXPIRY') {
@@ -208,11 +214,32 @@ async function createComplianceCategory({
   }
 
   const result = await pool.query(
-    `INSERT INTO compliance_categories (name, regulator, recurrence_type, cadence_type, interval_months, due_day_of_month, anchor_date)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING category_id`,
-    [name, regulator, recurrence_type, cadence_type, interval_months ?? null, due_day_of_month ?? null, anchor_date ?? null]
+    `INSERT INTO compliance_categories (name, regulator, recurrence_type, cadence_type, interval_months, due_day_of_month, anchor_date, obligation_kind)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING category_id`,
+    [name, regulator, recurrence_type, cadence_type, interval_months ?? null, due_day_of_month ?? null, anchor_date ?? null, obligation_kind]
   );
   return result.rows[0].category_id;
+}
+
+// Raw insert, bypassing createComplianceItem entirely -- the only way left
+// to reach DRAFT: the real API now always creates an UPCOMING item
+// (feature/compliance-register-ux Step 2), and submitComplianceItem
+// explicitly rejects any UPCOMING/EVIDENCE_SUBMITTED/VERIFIED item
+// (assertNotNewVocabularyItem). The legacy DRAFT -> submit -> PENDING_
+// APPROVAL -> approve/reject/return -> resubmit machinery is still fully
+// live in the service layer (grandfathered rows created before this
+// feature still need it to work), so this is what exercises it -- same
+// "direct DB insert for a test fixture" convention createComplianceCategory
+// above already uses. Doesn't require the category to be ACTIVE (a raw
+// insert bypasses that check too), matching the real grandfathered rows
+// this simulates, most of which predate the ACTIVE-category requirement.
+async function createLegacyDraftItem(categoryId, createdBy, { dueDate = '2027-05-01' } = {}) {
+  const result = await pool.query(
+    `INSERT INTO compliance_items (category_id, due_date, evidence_file_ref, created_by, status)
+     VALUES ($1, $2, $3, $4, 'DRAFT') RETURNING item_id`,
+    [categoryId, dueDate, 'legacy-fixture.pdf', createdBy]
+  );
+  return result.rows[0].item_id;
 }
 
 async function getUserRow(userId) {
@@ -306,6 +333,7 @@ module.exports = {
   signTokenForRole,
   Cleanup,
   createComplianceCategory,
+  createLegacyDraftItem,
   uploadTestEvidence,
   getUserRow,
   waitForResendEmail,

@@ -4,6 +4,15 @@
 // (POST/GET /api/compliance/categories, PATCH /api/compliance/categories/:id)
 // and the items-list endpoints (GET /api/compliance/items[/:id]) added
 // alongside them to unblock the frontend's approval-queue/my-tasks views.
+//
+// Updated for feature/compliance-register-ux, Step 2:
+//   - obligation_kind is now required on every category-creation payload
+//     (createComplianceCategory rejects a missing/invalid one).
+//   - createComplianceItem now requires the category to be ACTIVE (a check
+//     added in feature/compliance-archive-and-evidence-view that didn't
+//     exist when most of these tests were written) -- every test that
+//     registers an item now approves its category first.
+//   - a freshly-created item starts UPCOMING, not DRAFT/APPROVED.
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -51,6 +60,24 @@ after(async () => {
   await cleanup.run();
 });
 
+// Creates a category (as junior_accountant by default -- deliberately NOT
+// adminHeaders, so the approve call below is never an accidental self-
+// approval requiring a justification none of this file's callers pass)
+// and approves it as admin, so it's immediately ACTIVE and ready for an
+// item to be registered against it. A caller that specifically wants a
+// self-approval scenario passes creatorHeaders=adminHeaders and a
+// justification explicitly.
+async function createActiveCategory(name, extra = {}, creatorHeaders = jrHeaders, justification) {
+  const created = await axios.post(
+    `${BASE_URL}/api/compliance/categories`,
+    { name, cadence_type: 'ONE_OFF', obligation_kind: 'FILING', ...extra },
+    creatorHeaders
+  );
+  cleanup.trackCategory(created.data.category_id);
+  await axios.post(`${BASE_URL}/api/compliance/categories/${created.data.category_id}/approve`, { justification }, adminHeaders);
+  return created.data.category_id;
+}
+
 // ── Category creation: role gate ─────────────────────────────────────────────
 
 // Category creation was opened to junior_accountant (see
@@ -62,7 +89,7 @@ after(async () => {
 test('junior_accountant CAN create a category, landing PENDING_APPROVAL', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - jr create', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - jr create', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     jrHeaders
   );
   cleanup.trackCategory(res.data.category_id);
@@ -75,7 +102,7 @@ test('admin can create a category with default reminder_ladder_days (also lands 
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
     {
-      name: 'TEST SUITE - admin create', regulator: 'PACRA',
+      name: 'TEST SUITE - admin create', regulator: 'PACRA', obligation_kind: 'FILING',
       cadence_type: 'RECURRING', interval_months: 12, anchor_date: '2027-03-01',
     },
     adminHeaders
@@ -98,7 +125,7 @@ test('cfo can create a category with a custom reminder_ladder_days', async () =>
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
     {
-      name: 'TEST SUITE - cfo create',
+      name: 'TEST SUITE - cfo create', obligation_kind: 'FILING',
       cadence_type: 'RECURRING', interval_months: 1, anchor_date: '2027-03-15',
       reminder_ladder_days: [14, 7, 1],
     },
@@ -114,7 +141,7 @@ test('creating a category with an invalid cadence_type is rejected with 400', as
   await assert.rejects(
     () => axios.post(
       `${BASE_URL}/api/compliance/categories`,
-      { name: 'TEST SUITE - bad cadence', cadence_type: 'WEEKLY_WHATEVER' },
+      { name: 'TEST SUITE - bad cadence', cadence_type: 'WEEKLY_WHATEVER', obligation_kind: 'FILING' },
       adminHeaders
     ),
     (err) => err.response?.status === 400
@@ -125,7 +152,7 @@ test('creating a RECURRING category without interval_months is rejected with 400
   await assert.rejects(
     () => axios.post(
       `${BASE_URL}/api/compliance/categories`,
-      { name: 'TEST SUITE - missing interval', cadence_type: 'RECURRING', anchor_date: '2027-03-01' },
+      { name: 'TEST SUITE - missing interval', cadence_type: 'RECURRING', anchor_date: '2027-03-01', obligation_kind: 'FILING' },
       adminHeaders
     ),
     (err) => err.response?.status === 400
@@ -136,7 +163,18 @@ test('creating a RECURRING category without anchor_date is rejected with 400', a
   await assert.rejects(
     () => axios.post(
       `${BASE_URL}/api/compliance/categories`,
-      { name: 'TEST SUITE - missing anchor', cadence_type: 'RECURRING', interval_months: 3 },
+      { name: 'TEST SUITE - missing anchor', cadence_type: 'RECURRING', interval_months: 3, obligation_kind: 'FILING' },
+      adminHeaders
+    ),
+    (err) => err.response?.status === 400
+  );
+});
+
+test('creating a category with no obligation_kind is rejected with 400', async () => {
+  await assert.rejects(
+    () => axios.post(
+      `${BASE_URL}/api/compliance/categories`,
+      { name: 'TEST SUITE - missing obligation kind', cadence_type: 'ONE_OFF' },
       adminHeaders
     ),
     (err) => err.response?.status === 400
@@ -152,7 +190,7 @@ test('creating a RECURRING category without anchor_date is rejected with 400', a
 test('manager CAN create a category, landing PENDING_APPROVAL', async () => {
   const res = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager create', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - manager create', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     managerHeaders
   );
   cleanup.trackCategory(res.data.category_id);
@@ -164,7 +202,7 @@ test('manager CAN create a category, landing PENDING_APPROVAL', async () => {
 test('manager CAN list categories', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager list visibility', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - manager list visibility', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -177,7 +215,7 @@ test('manager CAN list categories', async () => {
 test('manager gets 403 updating, approving, or rejecting a category (create+list only, not executive actions)', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager blocked from executive actions', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - manager blocked from executive actions', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -208,16 +246,11 @@ test('manager CAN list and create items (widened to the full initiator tier)', a
   const listRes = await axios.get(`${BASE_URL}/api/compliance/items`, managerHeaders);
   assert.equal(listRes.status, 200);
 
-  const created = await axios.post(
-    `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - manager items scope', cadence_type: 'ONE_OFF' },
-    adminHeaders
-  );
-  cleanup.trackCategory(created.data.category_id);
+  const categoryId = await createActiveCategory('TEST SUITE - manager items scope');
 
   const itemRes = await axios.post(
     `${BASE_URL}/api/compliance/items`,
-    { category_id: created.data.category_id, due_date: '2027-01-01', evidence_file_ref: 'test.pdf' },
+    { category_id: categoryId, due_date: '2027-01-01', evidence_file_ref: 'test.pdf' },
     managerHeaders
   );
   cleanup.trackItem(itemRes.data.item_id);
@@ -230,7 +263,7 @@ test('manager CAN list and create items (widened to the full initiator tier)', a
 test('junior_accountant CAN list categories (needed for the item-registration picker)', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - list visibility', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - list visibility', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -243,7 +276,7 @@ test('junior_accountant CAN list categories (needed for the item-registration pi
 test('inactive categories are excluded by default, included with active_only=false', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - inactive filter', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - inactive filter', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -261,7 +294,7 @@ test('inactive categories are excluded by default, included with active_only=fal
 test('junior_accountant gets 403 updating a category', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - jr update blocked', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - jr update blocked', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -275,7 +308,7 @@ test('junior_accountant gets 403 updating a category', async () => {
 test('attempting to change recurrence_type via PATCH is rejected with 400', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - immutable recurrence', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - immutable recurrence', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -289,7 +322,7 @@ test('attempting to change recurrence_type via PATCH is rejected with 400', asyn
 test('admin can deactivate a category', async () => {
   const created = await axios.post(
     `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - deactivate', cadence_type: 'ONE_OFF' },
+    { name: 'TEST SUITE - deactivate', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' },
     adminHeaders
   );
   cleanup.trackCategory(created.data.category_id);
@@ -302,11 +335,7 @@ test('admin can deactivate a category', async () => {
 // ── Items list: role-scoped visibility ───────────────────────────────────────
 
 test('GET /items: junior_accountant sees own item, not another junior_accountant\'s item they have no stake in', async () => {
-  const categoryId = await axios.post(
-    `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - items scoping', cadence_type: 'ONE_OFF' },
-    adminHeaders
-  ).then((r) => { cleanup.trackCategory(r.data.category_id); return r.data.category_id; });
+  const categoryId = await createActiveCategory('TEST SUITE - items scoping');
 
   const ownItem = await axios.post(
     `${BASE_URL}/api/compliance/items`,
@@ -315,7 +344,7 @@ test('GET /items: junior_accountant sees own item, not another junior_accountant
   );
   cleanup.trackItem(ownItem.data.item_id);
 
-  // admin's own item -- APPROVED status, not NON_COMPLIANT, so it's neither
+  // admin's own item -- UPCOMING status, not NON_COMPLIANT, so it's neither
   // jrUser's own item nor open for acknowledgement.
   const otherItem = await axios.post(
     `${BASE_URL}/api/compliance/items`,
@@ -327,15 +356,11 @@ test('GET /items: junior_accountant sees own item, not another junior_accountant
   const listRes = await axios.get(`${BASE_URL}/api/compliance/items`, jrHeaders);
   assert.equal(listRes.status, 200);
   assert.ok(listRes.data.some((i) => i.item_id === ownItem.data.item_id), 'own item should be visible');
-  assert.ok(!listRes.data.some((i) => i.item_id === otherItem.data.item_id), 'another user\'s DRAFT item should not be visible');
+  assert.ok(!listRes.data.some((i) => i.item_id === otherItem.data.item_id), 'another user\'s item with no stake should not be visible');
 });
 
 test('GET /items: admin/cfo/ceo see everything, including items they did not create', async () => {
-  const categoryId = await axios.post(
-    `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - executive visibility', cadence_type: 'ONE_OFF' },
-    adminHeaders
-  ).then((r) => { cleanup.trackCategory(r.data.category_id); return r.data.category_id; });
+  const categoryId = await createActiveCategory('TEST SUITE - executive visibility');
 
   const item = await axios.post(
     `${BASE_URL}/api/compliance/items`,
@@ -363,7 +388,7 @@ test('warehouse_manager (non-compliance role) gets 403 on every compliance route
 
   await t.test('POST /categories', async () => {
     await assert.rejects(
-      () => axios.post(`${BASE_URL}/api/compliance/categories`, { name: 'x', cadence_type: 'ONE_OFF' }, warehouseHeaders),
+      () => axios.post(`${BASE_URL}/api/compliance/categories`, { name: 'x', cadence_type: 'ONE_OFF', obligation_kind: 'FILING' }, warehouseHeaders),
       (err) => err.response?.status === 403
     );
   });
@@ -384,11 +409,7 @@ test('warehouse_manager (non-compliance role) gets 403 on every compliance route
 });
 
 test('GET /items/:id: 403 for a non-executive with no stake in the item', async () => {
-  const categoryId = await axios.post(
-    `${BASE_URL}/api/compliance/categories`,
-    { name: 'TEST SUITE - detail 403', cadence_type: 'ONE_OFF' },
-    adminHeaders
-  ).then((r) => { cleanup.trackCategory(r.data.category_id); return r.data.category_id; });
+  const categoryId = await createActiveCategory('TEST SUITE - detail 403');
 
   const item = await axios.post(
     `${BASE_URL}/api/compliance/items`,

@@ -63,20 +63,42 @@ after(async () => {
   await cleanup.run();
 });
 
-// Creates a real item through the real create->submit->approve flow
-// (junior_accountant creates, admin approves -- not a self-approval, so no
-// justification needed) and returns its final row. due_date only matters
-// for a ONE_OFF category -- a RECURRING category computes it server-side
-// from the category's own anchor_date/due_day_of_month and ignores this.
+// Creates a real item and returns its row -- UPCOMING, not APPROVED. The
+// old create->submit->approve (DRAFT->PENDING_APPROVAL->APPROVED) flow this
+// helper used to drive is dead for newly-created items: createComplianceItem
+// now inserts every new item straight into UPCOMING (feature/compliance-
+// register-ux Step 2), which submitComplianceItem explicitly rejects
+// (assertNotNewVocabularyItem) since it isn't DRAFT. UPCOMING is exactly
+// what the scheduler's reminder-ladder/escalation queries treat the same
+// way APPROVED used to be treated (`status IN ('APPROVED', 'UPCOMING')`),
+// so no extra step is needed to make a fresh item schedulable -- this is
+// simpler than the old flow, not just updated to match it.
+//
+// The category itself must be ACTIVE first -- createComplianceItem has
+// required that since feature/compliance-archive-and-evidence-view, and
+// createComplianceCategory's raw INSERT (test-helper.js) leaves every test
+// category at its PENDING_APPROVAL default. Approved here as admin,
+// non-self (the category's created_by is left NULL by that same raw
+// INSERT, so this is never a self-approval requiring justification) --
+// skipped if already ACTIVE, so a category shared by two items in the same
+// test (e.g. the dry-run test below) doesn't get double-approved.
+const approvedCategoryIds = new Set();
 async function createApprovedItem(categoryId, dueDateOffsetDays) {
+  if (!approvedCategoryIds.has(categoryId)) {
+    await axios.post(`${BASE_URL}/api/compliance/categories/${categoryId}/approve`, {}, adminHeaders);
+    approvedCategoryIds.add(categoryId);
+  }
+
+  // No evidence uploaded here on purpose -- these tests are about a period
+  // BEFORE anything has been filed (reminders firing, flipping to
+  // NON_COMPLIANT). Uploading would immediately move it to
+  // EVIDENCE_SUBMITTED, which is a different scenario the verification-
+  // queue tests cover instead, not this file's.
   const body = { category_id: categoryId, evidence_file_ref: 'scheduler-test.pdf' };
   if (dueDateOffsetDays !== undefined) body.due_date = isoDate(dueDateOffsetDays);
   const createRes = await axios.post(`${BASE_URL}/api/compliance/items`, body, jrHeaders);
   cleanup.trackItem(createRes.data.item_id);
-  await uploadTestEvidence(createRes.data.item_id, jrHeaders);
-  await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/submit`, {}, jrHeaders);
-  const approveRes = await axios.post(`${BASE_URL}/api/compliance/items/${createRes.data.item_id}/approve`, {}, adminHeaders);
-  return approveRes.data.item;
+  return createRes.data;
 }
 
 async function getItemRow(itemId) {
@@ -115,7 +137,7 @@ test('scheduler webhook rejects missing/wrong secret (401), runs no logic', asyn
 
   await t.test('item status untouched by either rejected call', async () => {
     const row = await getItemRow(item.item_id);
-    assert.equal(row.status, 'APPROVED');
+    assert.equal(row.status, 'UPCOMING');
   });
 });
 
@@ -231,14 +253,20 @@ test('monthly recurrence: first run generates the next item, a same-day second r
   });
   cleanup.trackCategory(categoryId);
 
-  // The approve-time rule bootstrap (Phase 2 logic) carries the category's
-  // due_day_of_month straight onto compliance_recurrence_rule.day_of_month_due,
-  // so this is a fresh, non-test-patched row exercising Phase 3's real
-  // generation logic end to end, not a row hand-fixed after the fact.
-  const anchor = await createApprovedItem(categoryId);
+  // The approve-time rule bootstrap (feature/compliance-register-ux Step 2)
+  // carries the category's due_day_of_month straight onto
+  // compliance_recurrence_rule.day_of_month_due AND creates the anchor item
+  // itself in the same transaction -- so this is a fresh, non-test-patched
+  // row exercising Phase 3's real generation logic end to end, not a row
+  // hand-fixed after the fact. No separate manual item POST: that's now
+  // blocked outright for a FILING+RECURRING category (createComplianceItem).
+  const approveRes = await axios.post(`${BASE_URL}/api/compliance/categories/${categoryId}/approve`, {}, adminHeaders);
+  approvedCategoryIds.add(categoryId);
+  const anchor = approveRes.data.first_item_created;
+  cleanup.trackItem(anchor.item_id);
 
   const ruleRes = await pool.query(`SELECT rule_id, day_of_month_due FROM compliance_recurrence_rule WHERE category_id = $1`, [categoryId]);
-  assert.equal(ruleRes.rows.length, 1, 'expected the first approval to bootstrap exactly one recurrence rule');
+  assert.equal(ruleRes.rows.length, 1, 'expected category approval to bootstrap exactly one recurrence rule');
   assert.equal(ruleRes.rows[0].day_of_month_due, dayOfMonthDue, 'day_of_month_due should already be set on the rule from creation, with no manual patch');
   const ruleId = ruleRes.rows[0].rule_id;
 
@@ -266,12 +294,18 @@ test('monthly recurrence: first run generates the next item, a same-day second r
 // ── 7d-2: 12-month re-approval reminder dedup ────────────────────────────────
 
 test('12-month re-approval reminder: two scheduler runs same day send exactly one reminder, not two', async () => {
+  // Approving a FILING+RECURRING category bootstraps its recurrence rule
+  // directly now (feature/compliance-register-ux Step 2) -- no need to
+  // separately create/approve a first item just to trigger it, the way the
+  // old first-item-approval-bootstraps-the-rule model required.
   const categoryId = await createComplianceCategory({ name: 'TEST SUITE - reapproval reminder dedup', recurrence_type: 'ANNUAL_RECURRING' });
   cleanup.trackCategory(categoryId);
-  const anchor = await createApprovedItem(categoryId, -5);
+  const approveRes = await axios.post(`${BASE_URL}/api/compliance/categories/${categoryId}/approve`, {}, adminHeaders);
+  approvedCategoryIds.add(categoryId);
+  cleanup.trackItem(approveRes.data.first_item_created.item_id);
 
   const ruleRes = await pool.query(`SELECT rule_id FROM compliance_recurrence_rule WHERE category_id = $1`, [categoryId]);
-  assert.equal(ruleRes.rows.length, 1, 'expected the first approval to bootstrap exactly one recurrence rule');
+  assert.equal(ruleRes.rows.length, 1, 'expected category approval to bootstrap exactly one recurrence rule');
   const ruleId = ruleRes.rows[0].rule_id;
 
   // Pull next_reapproval_due inside the 30-day window (bootstrap sets it
@@ -362,7 +396,7 @@ test('dry-run mode reports what would happen but writes nothing and sends nothin
     mockLogCount: (await axios.get(`${BASE_URL}/api/_test/email-log`)).data.emails.length,
   };
   assert.equal(before.reminderLogCount, 0);
-  assert.equal(before.overdueStatus, 'APPROVED');
+  assert.equal(before.overdueStatus, 'UPCOMING');
 
   const dry = await callScheduler({ dryRun: true });
   assert.equal(dry.data.dry_run, true);
@@ -376,7 +410,7 @@ test('dry-run mode reports what would happen but writes nothing and sends nothin
     mockLogCount: (await axios.get(`${BASE_URL}/api/_test/email-log`)).data.emails.length,
   };
   assert.equal(after.reminderLogCount, 0, 'dry-run must not write any reminder_log rows');
-  assert.equal(after.overdueStatus, 'APPROVED', 'dry-run must not change item status');
+  assert.equal(after.overdueStatus, 'UPCOMING', 'dry-run must not change item status');
   // Direct check against notification-service's own record, replacing the
   // old proxy reasoning ("zero new reminder_log rows implies zero sendEmail
   // calls, since both live in the same `if (!dryRun)` branches"). This

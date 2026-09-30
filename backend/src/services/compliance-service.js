@@ -45,6 +45,27 @@ const EXECUTIVE_ROLES = ['admin', 'cfo', 'ceo'];
 //              allows exactly one such registration), same as a ONE_OFF item.
 const OBLIGATION_KINDS = ['FILING', 'RENEWAL'];
 
+// New-vocabulary statuses a legacy endpoint (submit/approve/reject/return/
+// resubmit) should never see -- a period on one of these already went
+// through upload/verify, not draft/submit/approve, so hitting one of the
+// old endpoints means the caller (an old bookmark, a stale frontend build,
+// a script) is using the wrong API surface entirely, not just the wrong
+// status. Kept separate from each function's own real status guard (e.g.
+// submit still needs DRAFT specifically) so this gives a distinct,
+// actionable message instead of a generic "wrong status" one.
+const NEW_VOCABULARY_STATUSES = ['UPCOMING', 'EVIDENCE_SUBMITTED', 'VERIFIED'];
+
+function assertNotNewVocabularyItem(item, legacyActionName) {
+  if (NEW_VOCABULARY_STATUSES.includes(item.status)) {
+    const err = new Error(
+      `This item (${item.status}) uses the new evidence/verify lifecycle, not the legacy ${legacyActionName} flow. ` +
+      `Use POST /items/:id/evidence and POST /items/:id/verify instead.`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
 // Deprecated (unread by anything below) -- kept only because the column
 // itself is kept for one release per the flexible-cadence migration. New
 // code validates against CADENCE_TYPES instead.
@@ -1026,6 +1047,7 @@ const listComplianceItems = async ({ role, userId, status, needsAcknowledgement,
 const submitComplianceItem = async (itemId, userId, isAdmin) => {
   const item = await getComplianceItem(itemId);
   if (!item) throw new Error('Compliance item not found');
+  assertNotNewVocabularyItem(item, 'submit');
 
   if (item.created_by !== userId && !isAdmin) {
     const err = new Error('Only the creator or an admin can submit this item.');
@@ -1074,7 +1096,8 @@ const submitComplianceItem = async (itemId, userId, isAdmin) => {
 const uploadComplianceEvidence = async ({ itemId, fileBuffer, filename, fileSizeBytes, uploadedBy, certificateExpiryDate }) => {
   return withTransaction(async (client) => {
     const itemRes = await client.query(
-      `SELECT ci.*, cc.obligation_kind FROM compliance_items ci JOIN compliance_categories cc ON cc.category_id = ci.category_id WHERE ci.item_id = $1 FOR UPDATE`,
+      `SELECT ci.*, cc.obligation_kind, cc.responsible_user_id, cc.name AS category_name
+       FROM compliance_items ci JOIN compliance_categories cc ON cc.category_id = ci.category_id WHERE ci.item_id = $1 FOR UPDATE`,
       [itemId]
     );
     const item = itemRes.rows[0];
@@ -1103,6 +1126,7 @@ const uploadComplianceEvidence = async ({ itemId, fileBuffer, filename, fileSize
       [itemId, fileBuffer, filename, fileSizeBytes, uploadedBy, certificateExpiryDate || null]
     );
 
+    let movedToEvidenceSubmitted = false;
     if (item.status === 'UPCOMING' || item.status === 'NON_COMPLIANT') {
       await client.query(
         `UPDATE compliance_items
@@ -1115,9 +1139,15 @@ const uploadComplianceEvidence = async ({ itemId, fileBuffer, filename, fileSize
         oldValues: { status: item.status }, newValues: { status: 'EVIDENCE_SUBMITTED' },
         userId: uploadedBy,
       });
+      movedToEvidenceSubmitted = true;
     }
 
-    return evidenceRes.rows[0];
+    return {
+      evidence: evidenceRes.rows[0],
+      movedToEvidenceSubmitted,
+      categoryName: item.category_name,
+      responsibleUserId: item.responsible_user_id,
+    };
   });
 };
 
@@ -1137,7 +1167,15 @@ const getComplianceEvidence = async (itemId) => {
 // verifying creates the category's next UPCOMING period here, at the
 // expiry the uploader entered (processRecurrence explicitly skips RENEWAL
 // categories -- see compliance-scheduler-service.js).
-const verifyComplianceItem = async (itemId, verifierId, verifierRole, justification) => {
+// correctedExpiryDate lets the verifier fix a wrong expiry the uploader
+// entered, rather than rejecting the whole upload over one bad field --
+// "the verifier confirms it" (the expiry) means either accepting it as
+// uploaded or correcting it right here, both still counting as
+// verification. When given, it overwrites compliance_item_evidence's own
+// certificate_expiry_date too (so the corrected value is what the history
+// table shows from now on, not the original wrong one), and it's what the
+// next RENEWAL period gets generated at.
+const verifyComplianceItem = async (itemId, verifierId, verifierRole, justification, correctedExpiryDate) => {
   return withTransaction(async (client) => {
     const itemRes = await client.query(
       `SELECT ci.*, cc.obligation_kind, cc.category_id AS cat_id
@@ -1157,10 +1195,23 @@ const verifyComplianceItem = async (itemId, verifierId, verifierRole, justificat
       throw err;
     }
 
-    const evidenceRes = await client.query(
+    let evidenceRes = await client.query(
       `SELECT uploaded_by, certificate_expiry_date FROM compliance_item_evidence WHERE item_id = $1`,
       [itemId]
     );
+    if (correctedExpiryDate) {
+      const validated = validateDateOnly(correctedExpiryDate, 'corrected_expiry_date');
+      evidenceRes = await client.query(
+        `UPDATE compliance_item_evidence SET certificate_expiry_date = $1 WHERE item_id = $2
+         RETURNING uploaded_by, certificate_expiry_date`,
+        [validated, itemId]
+      );
+      if (evidenceRes.rows.length === 0) {
+        const err = new Error('No evidence on file for this item to correct.');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
     const evidence = evidenceRes.rows[0];
     const isSelfVerification = evidence && evidence.uploaded_by === verifierId;
     if (isSelfVerification && !EXECUTIVE_ROLES.includes(verifierRole)) {
@@ -1190,7 +1241,10 @@ const verifyComplianceItem = async (itemId, verifierId, verifierRole, justificat
     await writeAuditLog(client, {
       tableName: 'compliance_items', recordId: itemId, action: 'VERIFIED',
       oldValues: { status: 'EVIDENCE_SUBMITTED' },
-      newValues: { status: after.status, is_self_verified: isSelfVerification, filed_late: after.filed_late },
+      newValues: {
+        status: after.status, is_self_verified: isSelfVerification, filed_late: after.filed_late,
+        expiry_corrected_to: correctedExpiryDate || undefined,
+      },
       userId: verifierId,
     });
 
@@ -1213,6 +1267,57 @@ const verifyComplianceItem = async (itemId, verifierId, verifierRole, justificat
   });
 };
 
+// The verifier's counterpart to a bad upload: not "verified," bad
+// evidence (wrong document, wrong period, illegible scan) -- bounced back
+// to await a fresh upload rather than forced through as VERIFIED or left
+// stuck. Reason required, same >=10-char bar every other return action in
+// this module has. Lands back on UPCOMING unless the due date has already
+// passed, in which case NON_COMPLIANT is the honest state (no evidence
+// currently on file, past due) -- matches exactly what would have happened
+// if no evidence had ever been uploaded.
+const returnEvidence = async (itemId, reason, actorId, actorRole) => {
+  const cleanReason = validateReason(reason, 'evidence return');
+
+  return withTransaction(async (client) => {
+    const itemRes = await client.query(`SELECT * FROM compliance_items WHERE item_id = $1 FOR UPDATE`, [itemId]);
+    const before = itemRes.rows[0];
+    if (!before) {
+      const err = new Error('Compliance item not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (before.status !== 'EVIDENCE_SUBMITTED') {
+      const err = new Error(`Item is currently ${before.status}; must be EVIDENCE_SUBMITTED to return its evidence.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!EXECUTIVE_ROLES.includes(actorRole)) {
+      const err = new Error('Only an executive can return evidence for correction.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const newStatus = before.due_date < new Date().toISOString().slice(0, 10) ? 'NON_COMPLIANT' : 'UPCOMING';
+    const result = await client.query(
+      `UPDATE compliance_items SET status = $1, rejection_reason = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE item_id = $3 AND status = 'EVIDENCE_SUBMITTED' RETURNING *`,
+      [newStatus, cleanReason, itemId]
+    );
+    if (result.rows.length === 0) {
+      const err = new Error('This item is no longer EVIDENCE_SUBMITTED (verified or changed by someone else).');
+      err.statusCode = 409;
+      throw err;
+    }
+    const after = result.rows[0];
+    await writeAuditLog(client, {
+      tableName: 'compliance_items', recordId: itemId, action: 'EVIDENCE_RETURNED',
+      oldValues: { status: before.status }, newValues: { status: after.status, return_reason: cleanReason },
+      userId: actorId,
+    });
+    return after;
+  });
+};
+
 // Approve — handles both ordinary approval and self-approval (executive
 // roles only, justification required), and the "annual approval at point
 // of creation" recurrence-rule bootstrap for MONTHLY_RECURRING /
@@ -1226,6 +1331,7 @@ const approveComplianceItem = async (itemId, approverId, approverRole, justifica
       throw err;
     }
     const item = itemRes.rows[0];
+    assertNotNewVocabularyItem(item, 'approve');
 
     if (item.status !== 'PENDING_APPROVAL') {
       const err = new Error(`Item is currently ${item.status}; must be PENDING_APPROVAL to approve.`);
@@ -1362,6 +1468,7 @@ const rejectComplianceItem = async (itemId, reason, actorId) => {
       throw err;
     }
     const before = itemRes.rows[0];
+    assertNotNewVocabularyItem(before, 'reject');
     if (before.status !== 'PENDING_APPROVAL') {
       const err = new Error(`Item is currently ${before.status}; must be PENDING_APPROVAL to reject.`);
       err.statusCode = 400;
@@ -1404,6 +1511,7 @@ const returnComplianceItem = async (itemId, reason, actorId) => {
       throw err;
     }
     const before = itemRes.rows[0];
+    assertNotNewVocabularyItem(before, 'return');
     if (before.status !== 'PENDING_APPROVAL') {
       const err = new Error(`Item is currently ${before.status}; must be PENDING_APPROVAL to return.`);
       err.statusCode = 400;
@@ -1450,6 +1558,7 @@ const resubmitComplianceItem = async (itemId, actorId, isAdmin) => {
       throw err;
     }
     const before = itemRes.rows[0];
+    assertNotNewVocabularyItem(before, 'resubmit');
     if (before.created_by !== actorId && !isAdmin) {
       const err = new Error('Only the creator or an admin can resubmit this item.');
       err.statusCode = 403;
@@ -1767,4 +1876,5 @@ module.exports = {
   uploadComplianceEvidence,
   getComplianceEvidence,
   verifyComplianceItem,
+  returnEvidence,
 };
