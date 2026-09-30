@@ -36,7 +36,7 @@ async function processReminderLadder(dryRun, summary) {
            cc.reminder_ladder_days
     FROM compliance_items ci
     JOIN compliance_categories cc ON cc.category_id = ci.category_id
-    WHERE ci.status = 'APPROVED'
+    WHERE ci.status = 'APPROVED' AND cc.status != 'ARCHIVED'
   `);
 
   for (const item of items.rows) {
@@ -73,6 +73,11 @@ async function processReminderLadder(dryRun, summary) {
 // Unchanged logic -- purely status/due-date/ack based, never depended on
 // cadence. Only the reminder_log write shape changed.
 
+// Neither query below needs an explicit ARCHIVED exclusion: they match
+// exact statuses ('APPROVED', 'NON_COMPLIANT') that ARCHIVED can never be,
+// since an item only reaches ARCHIVED from DRAFT/RETURNED/REJECTED (see
+// withdrawComplianceItem/archiveComplianceItem) -- an APPROVED or
+// NON_COMPLIANT item has no archive path in this phase.
 async function processNonCompliantAndEscalations(dryRun, summary) {
   const newlyOverdue = await pool.query(`
     SELECT ci.item_id FROM compliance_items ci
@@ -141,9 +146,10 @@ async function processNonCompliantAndEscalations(dryRun, summary) {
 // duplicates (the unique index does that).
 async function processRecurrence(dryRun, summary) {
   const rules = await pool.query(`
-    SELECT rule_id, category_id, interval_months, day_of_month_due, last_reapproved_by
-    FROM compliance_recurrence_rule
-    WHERE is_active = true
+    SELECT r.rule_id, r.category_id, r.interval_months, r.day_of_month_due, r.last_reapproved_by
+    FROM compliance_recurrence_rule r
+    JOIN compliance_categories cc ON cc.category_id = r.category_id
+    WHERE r.is_active = true AND cc.status != 'ARCHIVED'
   `);
 
   const today = new Date(Date.UTC(
@@ -212,9 +218,11 @@ async function processRecurrence(dryRun, summary) {
 // reminder_log write shape changed.
 async function processReapprovalReminders(dryRun, summary) {
   const rules = await pool.query(`
-    SELECT rule_id, category_id, next_reapproval_due
-    FROM compliance_recurrence_rule
-    WHERE is_active = true AND next_reapproval_due <= (CURRENT_DATE + INTERVAL '30 days')
+    SELECT r.rule_id, r.category_id, r.next_reapproval_due
+    FROM compliance_recurrence_rule r
+    JOIN compliance_categories cc ON cc.category_id = r.category_id
+    WHERE r.is_active = true AND r.next_reapproval_due <= (CURRENT_DATE + INTERVAL '30 days')
+      AND cc.status != 'ARCHIVED'
   `);
 
   if (rules.rows.length === 0) return;
