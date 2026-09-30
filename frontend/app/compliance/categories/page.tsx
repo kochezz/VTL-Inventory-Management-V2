@@ -75,6 +75,7 @@ interface ComplianceCategory {
   rejection_reason: string | null;
   previous_status: string | null;
   archived_reason: string | null;
+  obligation_kind: 'FILING' | 'RENEWAL' | null;
   created_by: string;
 }
 
@@ -102,14 +103,17 @@ function cadenceLabel(cat: ComplianceCategory): string {
   return cat.cadence_type === 'RECURRING' && cat.due_day_of_month ? `${base} (day ${cat.due_day_of_month})` : base;
 }
 
-// Only PENDING_APPROVAL/RETURNED categories are still awaiting the cadence
-// being finished off -- REJECTED/ARCHIVED are dead ends (nothing will ever
-// be registered against them again), so the "needs configuration" prompt
-// must never fire for those, even though they can still technically have
+// PENDING_APPROVAL/RETURNED categories are still awaiting the cadence being
+// finished off; ACTIVE ones missing it are the feature/compliance-register-
+// ux Phase 1 gap itself (VAT/PAYE/NHIMA/TOT/TCC -- approved before this
+// field was required, generating nothing ever since) and need the same
+// warning so they don't sit invisible. REJECTED/ARCHIVED are dead ends
+// (nothing will ever be registered against them again), so the prompt must
+// never fire for those, even though they can still technically have
 // cadence_type === 'RECURRING' && !anchor_date.
 function needsCadenceSetup(cat: ComplianceCategory) {
   return cat.cadence_type === 'RECURRING' && !cat.anchor_date
-    && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED');
+    && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED' || cat.status === 'ACTIVE');
 }
 
 // A real, standalone component -- not an inline arrow function invoked
@@ -288,6 +292,7 @@ const CADENCE_FORM_DEFAULTS: CadenceFormState = {
 const CREATE_FORM_DEFAULTS = {
   name: '',
   regulator: '',
+  obligationKind: '' as '' | 'FILING' | 'RENEWAL',
   ...CADENCE_FORM_DEFAULTS,
 };
 
@@ -571,10 +576,16 @@ export default function ComplianceCategoriesPage() {
         setCreateLoading(false);
         return;
       }
+      if (!newCategory.obligationKind) {
+        setCreateError('Obligation kind (Filing or Renewal) is required.');
+        setCreateLoading(false);
+        return;
+      }
 
       await api.post('/compliance/categories', {
         name: newCategory.name,
         regulator: newCategory.regulator || undefined,
+        obligation_kind: newCategory.obligationKind,
         ...cadenceFormToApiFields(newCategory),
         reminder_ladder_days: ladder,
       });
@@ -872,6 +883,28 @@ export default function ComplianceCategoriesPage() {
                   placeholder="e.g. PACRA, ZRA, NAPSA"
                   className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-300 mb-2">Obligation Kind</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setNewCategory({ ...newCategory, obligationKind: 'FILING' })}
+                    className={`px-4 py-3 rounded-lg border text-sm font-bold text-left ${newCategory.obligationKind === 'FILING' ? 'border-primary-500 bg-primary-500/10 text-white' : 'border-dark-600 bg-dark-950 text-gray-400'}`}
+                  >
+                    Filing
+                    <p className="font-normal text-xs text-gray-500 mt-1">A periodic submission/receipt (e.g. VAT, PAYE)</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewCategory({ ...newCategory, obligationKind: 'RENEWAL' })}
+                    className={`px-4 py-3 rounded-lg border text-sm font-bold text-left ${newCategory.obligationKind === 'RENEWAL' ? 'border-primary-500 bg-primary-500/10 text-white' : 'border-dark-600 bg-dark-950 text-gray-400'}`}
+                  >
+                    Renewal
+                    <p className="font-normal text-xs text-gray-500 mt-1">A certificate with its own expiry (e.g. TCC, ZPPA)</p>
+                  </button>
+                </div>
               </div>
 
               <CadenceFieldsForm

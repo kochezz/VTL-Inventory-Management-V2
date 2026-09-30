@@ -76,9 +76,10 @@ const getUserEmail = async (userId) => {
 
 router.post('/categories', authorize(['junior_accountant', 'manager', 'admin', 'cfo', 'ceo']), async (req, res) => {
   try {
-    const { name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days } = req.body;
+    const { name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days, obligation_kind, responsible_user_id } = req.body;
     const category = await complianceService.createComplianceCategory({
       name, regulator, cadence_type, interval_months, due_day_of_month, anchor_date, reminder_ladder_days,
+      obligation_kind, responsible_user_id,
       created_by: req.user.user_id,
     });
     res.status(201).json(category);
@@ -138,7 +139,7 @@ router.patch('/categories/:id', authorize(['junior_accountant', 'manager', 'admi
 router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
   try {
     const { justification } = req.body;
-    const { category, isSelfApproval } = await complianceService.approveComplianceCategory(
+    const { category, isSelfApproval, recurrenceRuleCreated, firstItemCreated } = await complianceService.approveComplianceCategory(
       req.params.id, req.user.user_id, req.user.role, justification
     );
 
@@ -173,7 +174,7 @@ router.post('/categories/:id/approve', authorize(['admin', 'cfo', 'ceo']), async
       }
     }
 
-    res.json({ category, is_self_approved: isSelfApproval });
+    res.json({ category, is_self_approved: isSelfApproval, recurrence_rule_created: recurrenceRuleCreated, first_item_created: firstItemCreated });
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }
@@ -366,6 +367,7 @@ router.post('/items/:id/evidence', authorize(['junior_accountant', 'manager', 'a
         filename: req.file.originalname,
         fileSizeBytes: req.file.size,
         uploadedBy: req.user.user_id,
+        certificateExpiryDate: req.body.certificate_expiry_date || undefined,
       });
       res.status(201).json(evidence);
     } catch (error) {
@@ -487,6 +489,39 @@ router.post('/items/:id/approve', authorize(['admin', 'cfo', 'ceo']), async (req
     }
 
     res.json({ item, recurrence_rule_created: recurrenceRuleCreated });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: error.message });
+  }
+});
+
+// New (feature/compliance-register-ux, Step 2): the completion action for
+// the UPCOMING -> EVIDENCE_SUBMITTED -> VERIFIED model. Executive-only,
+// same as approve/reject/return -- the service layer enforces the
+// verifier-must-differ-from-uploader rule (with the same self-approval
+// exception every other approval action here has).
+router.post('/items/:id/verify', authorize(['admin', 'cfo', 'ceo']), async (req, res) => {
+  try {
+    const { justification } = req.body;
+    const { item, isSelfVerification, nextPeriodCreated } = await complianceService.verifyComplianceItem(
+      req.params.id, req.user.user_id, req.user.role, justification
+    );
+
+    if (isSelfVerification) {
+      const otherExecutiveRoles = complianceService.EXECUTIVE_ROLES.filter(r => r !== req.user.role);
+      const emails = await NotificationService.getComplianceNotificationEmails(otherExecutiveRoles);
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <div style="background-color:#fb923c;padding:20px;text-align:center;color:white;"><h2>Self-Verified — Review</h2></div>
+          <div style="padding:20px;color:#334155;">
+            <p>A compliance item's own evidence was verified by the same person who uploaded it: <strong>${req.user.full_name}</strong> (${req.user.role.toUpperCase()}).</p>
+            <p><strong>Justification:</strong> ${justification}</p>
+            <p>Please log in to the Vilagio ERP Compliance module to review.</p>
+          </div>
+        </div>`;
+      NotificationService.sendEmail(emails, `Self-Verified — Review Required`, html).catch(console.error);
+    }
+
+    res.json({ item, next_period_created: nextPeriodCreated });
   } catch (error) {
     res.status(error.statusCode || 400).json({ message: error.message });
   }
