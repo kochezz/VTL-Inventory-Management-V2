@@ -28,6 +28,17 @@
 -- leave WCFCB's and PACRA's new periods un-reminded (the current deployed
 -- scheduler only reminds status = 'APPROVED'). See the PR description's
 -- deploy checklist.
+--
+-- UPDATE 2026-10-01 (framework reset): every category below except ZPPA
+-- was archived in production the same day the obligation model is being
+-- redesigned (see audit_log action='ANNOTATION', record_id=
+-- 'FRAMEWORK_RESET_2026-10-01'). This file was edited after the fact to
+-- match -- the WCFCB recurrence-rule/first-period creation, PACRA's
+-- RECURRING cadence conversion, and PACRA's item-status conversion were
+-- all removed, since replaying this migration against a fresh database
+-- should not resurrect operational periods for categories that are now
+-- archived. The obligation_kind backfill for those categories is kept as
+-- harmless metadata. Schema changes and ZPPA's handling are unchanged.
 -- ============================================================================
 
 BEGIN;
@@ -54,43 +65,18 @@ ALTER TABLE compliance_reminder_log ADD CONSTRAINT compliance_reminder_log_tier_
 -- ── obligation_kind backfill (proposed, confirmed by user) ─────────────────
 
 UPDATE compliance_categories SET obligation_kind = 'FILING'
-  WHERE name IN ('VAT', 'PAYE', 'NHIMA', 'TOT', 'NAPSA', 'WORKERS COMPENSATION FUND CONTROL BOARD');
+  WHERE name IN ('VAT', 'PAYE', 'NHIMA', 'TOT', 'NAPSA', 'WORKERS COMPENSATION FUND CONTROL BOARD', 'PACRA Annual Return');
 UPDATE compliance_categories SET obligation_kind = 'RENEWAL'
   WHERE name IN ('TCC', 'ZPPA');
 -- LAND OCCUPIERS CERTIFICATE: left NULL -- pending confirmation of whether it expires.
 
--- PACRA Annual Return: FILING, cadence changed from ONE_OFF to RECURRING
--- (12 months), anchor_date proposed from the existing APPROVED item's due
--- date -- pending confirmation before this migration is applied for real.
-UPDATE compliance_categories
-  SET obligation_kind = 'FILING', cadence_type = 'RECURRING', interval_months = 12,
-      anchor_date = '2027-08-21', due_day_of_month = 21
-  WHERE name = 'PACRA Annual Return';
-
--- ── WCFCB: recurrence rule + first UPCOMING period ──────────────────────────
--- (dry-run verified in Step 1; category is FILING + RECURRING, fully
--- configured, zero items -- exactly the gap this feature exists to close.)
-
-INSERT INTO compliance_recurrence_rule (category_id, interval_months, day_of_month_due, next_reapproval_due, last_reapproved_at, last_reapproved_by)
-SELECT category_id, interval_months, due_day_of_month, (approved_at::date + INTERVAL '12 months'), approved_at, approved_by
-FROM compliance_categories
-WHERE name = 'WORKERS COMPENSATION FUND CONTROL BOARD' AND status = 'ACTIVE';
-
-INSERT INTO compliance_items (category_id, due_date, status, created_by, recurrence_rule_id)
-SELECT cc.category_id, cc.anchor_date, 'UPCOMING', cc.approved_by, r.rule_id
-FROM compliance_categories cc
-JOIN compliance_recurrence_rule r ON r.category_id = cc.category_id
-WHERE cc.name = 'WORKERS COMPENSATION FUND CONTROL BOARD' AND cc.status = 'ACTIVE';
-
--- ── PACRA: convert the evidence-less APPROVED item to UPCOMING ─────────────
--- (its real due_date, 2027-08-21, is untouched -- only status/approval
--- fields change. The malformed RETURNED sibling is NOT touched here.)
-
-UPDATE compliance_items ci
-  SET status = 'UPCOMING', approved_by = NULL, approved_at = NULL
-  FROM compliance_categories cc
-  WHERE ci.category_id = cc.category_id AND cc.name = 'PACRA Annual Return'
-    AND ci.status = 'APPROVED';
+-- PACRA Annual Return's RECURRING cadence conversion (interval_months=12,
+-- anchor_date=2027-08-21), the WCFCB recurrence-rule + first-UPCOMING-period
+-- creation, and PACRA's item-status conversion to UPCOMING were REMOVED
+-- 2026-10-01 -- both categories are now archived (framework reset); a fresh
+-- replay of this migration should not create new operational periods for
+-- them. See audit_log action='ANNOTATION', record_id=
+-- 'FRAMEWORK_RESET_2026-10-01' for the reset itself.
 
 COMMIT;
 
@@ -98,20 +84,6 @@ COMMIT;
 -- ROLLBACK (manual, not automatic).
 -- ============================================================================
 -- BEGIN;
--- UPDATE compliance_items SET status = 'APPROVED' WHERE item_id = (
---   SELECT ci.item_id FROM compliance_items ci JOIN compliance_categories cc ON cc.category_id = ci.category_id
---   WHERE cc.name = 'PACRA Annual Return' AND ci.status = 'UPCOMING'
--- ); -- approved_by/approved_at cannot be un-cleared; re-set manually if needed.
---
--- DELETE FROM compliance_items WHERE category_id = (
---   SELECT category_id FROM compliance_categories WHERE name = 'WORKERS COMPENSATION FUND CONTROL BOARD' AND status = 'ACTIVE'
--- ) AND status = 'UPCOMING';
--- DELETE FROM compliance_recurrence_rule WHERE category_id = (
---   SELECT category_id FROM compliance_categories WHERE name = 'WORKERS COMPENSATION FUND CONTROL BOARD' AND status = 'ACTIVE'
--- );
---
--- UPDATE compliance_categories SET obligation_kind = NULL, cadence_type = 'ONE_OFF', interval_months = NULL, anchor_date = NULL, due_day_of_month = NULL
---   WHERE name = 'PACRA Annual Return';
 -- UPDATE compliance_categories SET obligation_kind = NULL WHERE obligation_kind IS NOT NULL;
 --
 -- ALTER TABLE compliance_reminder_log DROP CONSTRAINT compliance_reminder_log_tier_type_check;
