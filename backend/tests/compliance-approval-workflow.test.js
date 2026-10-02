@@ -275,6 +275,54 @@ test('approving a RECURRING category whose cadence is not yet configured is reje
   );
 });
 
+// feature/compliance-renewal-register-fix: createComplianceItem now also
+// enforces issued_date <= today and due_date (the certificate's expiry)
+// strictly after issued_date for a RENEWAL category, matching the Register
+// page's own frontend validation (register/page.tsx's validateDates).
+test('registering a RENEWAL item with a future issued_date is rejected with 400', async () => {
+  const categoryId = await createComplianceCategory({
+    name: 'TEST SUITE - renewal future issued_date',
+    recurrence_type: 'ONE_OFF_EXPIRY',
+    obligation_kind: 'RENEWAL',
+  });
+  cleanup.trackCategory(categoryId);
+  await axios.post(`${BASE_URL}/api/compliance/categories/${categoryId}/approve`, {}, adminHeaders);
+
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const futureIssuedDate = tomorrow.toISOString().slice(0, 10);
+
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/items`, {
+      category_id: categoryId,
+      issued_date: futureIssuedDate,
+      due_date: '2027-12-31',
+      evidence_file_ref: 'test.pdf',
+    }, jrHeaders),
+    (err) => err.response?.status === 400
+  );
+});
+
+test('registering a RENEWAL item whose expiry is not after issued_date is rejected with 400', async () => {
+  const categoryId = await createComplianceCategory({
+    name: 'TEST SUITE - renewal expiry not after issued',
+    recurrence_type: 'ONE_OFF_EXPIRY',
+    obligation_kind: 'RENEWAL',
+  });
+  cleanup.trackCategory(categoryId);
+  await axios.post(`${BASE_URL}/api/compliance/categories/${categoryId}/approve`, {}, adminHeaders);
+
+  await assert.rejects(
+    () => axios.post(`${BASE_URL}/api/compliance/items`, {
+      category_id: categoryId,
+      issued_date: '2026-06-01',
+      due_date: '2026-06-01',
+      evidence_file_ref: 'test.pdf',
+    }, jrHeaders),
+    (err) => err.response?.status === 400
+  );
+});
+
 test('return-evidence without a reason is rejected with 400', async () => {
   const itemId = await createAndSubmitEvidence(jrHeaders, oneOffCategoryId, '2027-02-21');
   await assert.rejects(

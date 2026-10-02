@@ -17,7 +17,10 @@ interface ComplianceCategory {
   interval_months: number | null;
   due_day_of_month: number | null;
   anchor_date: string | null;
+  obligation_kind: 'FILING' | 'RENEWAL' | null;
 }
+
+const TODAY = new Date().toISOString().slice(0, 10);
 
 export default function ComplianceRegisterPage() {
   const router = useRouter();
@@ -34,6 +37,10 @@ export default function ComplianceRegisterPage() {
     issued_date: '',
     due_date: '',
   });
+  // Field-level errors for the three date rules below -- shown next to the
+  // field that's wrong, not folded into the generic API-error banner.
+  const [issuedDateError, setIssuedDateError] = useState('');
+  const [dueDateError, setDueDateError] = useState('');
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState('');
 
@@ -57,9 +64,17 @@ export default function ComplianceRegisterPage() {
       // PENDING_APPROVAL and simply cannot appear here until an executive
       // approves it -- not just hidden by convention.
       const res = await api.get('/compliance/categories?status=ACTIVE');
-      setCategories(res.data);
-      if (res.data.length > 0) {
-        setForm((prev) => ({ ...prev, category_id: prev.category_id || res.data[0].category_id }));
+      // FILING + RECURRING categories generate their own periods (approval
+      // bootstrap, then the scheduler) -- manual registration is a hard
+      // 400 on the backend for these (createComplianceItem in
+      // compliance-service.js), so they're excluded here rather than shown
+      // and left to fail on submit.
+      const registrable = res.data.filter(
+        (c: ComplianceCategory) => !(c.cadence_type === 'RECURRING' && c.obligation_kind === 'FILING')
+      );
+      setCategories(registrable);
+      if (registrable.length > 0) {
+        setForm((prev) => ({ ...prev, category_id: prev.category_id || registrable[0].category_id }));
       }
     } catch (err) {
       setError('Failed to load compliance categories.');
@@ -70,17 +85,7 @@ export default function ComplianceRegisterPage() {
   };
 
   const selectedCategory = categories.find((c) => c.category_id === form.category_id);
-  const isRecurring = selectedCategory?.cadence_type === 'RECURRING';
-  // due_date now lives on the category for a RECURRING one -- the backend
-  // computes it server-side (nextDueDateForCategory in
-  // compliance-service.js) and ignores whatever this form would have sent,
-  // so the field is simply not shown for that case. A RECURRING category
-  // with no anchor_date yet (the flexible-cadence migration left 7 of them
-  // that way, to be filled in via the Categories page) can't accept items
-  // until an executive sets one -- blocked here with the same message the
-  // backend itself would 400 with, rather than letting the request round-
-  // trip just to fail.
-  const cadenceNotConfigured = isRecurring && !selectedCategory?.anchor_date;
+  const isRenewal = selectedCategory?.obligation_kind === 'RENEWAL';
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError('');
@@ -101,19 +106,47 @@ export default function ComplianceRegisterPage() {
     setEvidenceFile(file);
   };
 
+  // Mirrors validateDateOnly in compliance-service.js (format + a sane
+  // calendar date) plus the two RENEWAL-specific rules the backend also
+  // enforces (createComplianceItem): issued_date can't be in the future,
+  // and the expiry must actually be after it. Run before every submit so
+  // the error lands on the field itself, not as a round-tripped API
+  // message -- the backend re-checks all of this independently; this is
+  // just so the common case never needs the round trip to find out.
+  const validateDates = (): boolean => {
+    setIssuedDateError('');
+    setDueDateError('');
+    let ok = true;
+
+    if (form.issued_date) {
+      if (form.issued_date > TODAY) {
+        setIssuedDateError('Issued date cannot be in the future.');
+        ok = false;
+      }
+    }
+
+    if (isRenewal) {
+      if (!form.due_date) {
+        setDueDateError("The certificate's expiry date is required.");
+        ok = false;
+      } else if (form.issued_date && form.due_date <= form.issued_date) {
+        setDueDateError('Expiry date must be after the issued date.');
+        ok = false;
+      }
+    } else if (!form.due_date) {
+      setDueDateError('Due date is required for a one-off category.');
+      ok = false;
+    }
+
+    return ok;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
 
-    if (cadenceNotConfigured) {
-      setError("This category's cadence isn't fully configured yet (missing first due date). An executive needs to set this on the Categories page before items can be registered against it.");
-      return;
-    }
-    if (!isRecurring && !form.due_date) {
-      setError('Due date is required for a one-off category.');
-      return;
-    }
+    if (!validateDates()) return;
     if (!evidenceFile) {
       setError('A PDF evidence file is required.');
       return;
@@ -125,7 +158,7 @@ export default function ComplianceRegisterPage() {
       const createRes = await api.post('/compliance/items', {
         category_id: form.category_id,
         issued_date: form.issued_date || undefined,
-        due_date: isRecurring ? undefined : form.due_date,
+        due_date: form.due_date,
         evidence_file_ref: evidenceFile.name,
       });
 
@@ -133,11 +166,19 @@ export default function ComplianceRegisterPage() {
 
       const fd = new FormData();
       fd.append('evidence', evidenceFile);
+      // RENEWAL's evidence row carries its own certificate_expiry_date
+      // (uploadComplianceEvidence requires it) -- the cert being uploaded
+      // here IS the one whose expiry was just entered above as due_date,
+      // so the same value feeds both.
+      if (isRenewal) fd.append('certificate_expiry_date', form.due_date);
       await api.post(`/compliance/items/${itemId}/evidence`, fd);
 
-      await api.post(`/compliance/items/${itemId}/submit`);
-
-      setSuccess('Item registered, evidence attached, and submitted for approval.');
+      // No separate /submit call -- uploading evidence against a new-
+      // vocabulary item (UPCOMING) already moves it straight to
+      // EVIDENCE_SUBMITTED (uploadComplianceEvidence), where it waits in
+      // the verification queue. Calling legacy /submit here would now be
+      // rejected outright (assertNotNewVocabularyItem).
+      setSuccess('Evidence submitted for verification. Someone other than you will need to verify it before this period is complete.');
       setForm({ category_id: form.category_id, issued_date: '', due_date: '' });
       setEvidenceFile(null);
     } catch (err: any) {
@@ -158,7 +199,10 @@ export default function ComplianceRegisterPage() {
             <ClipboardList className="w-8 h-8 text-primary-500" />
             Register Compliance Item
           </h1>
-          <p className="text-gray-400 mt-1">Register a new item against an existing compliance category and submit it for approval.</p>
+          <p className="text-gray-400 mt-1">
+            Register a new item against an existing compliance category. Someone other than you will verify the
+            evidence before the period counts as complete.
+          </p>
         </div>
 
         {error && (
@@ -194,7 +238,11 @@ export default function ComplianceRegisterPage() {
                   required
                   name="category_id"
                   value={form.category_id}
-                  onChange={(e) => setForm({ ...form, category_id: e.target.value, due_date: '' })}
+                  onChange={(e) => {
+                    setForm({ ...form, category_id: e.target.value, due_date: '' });
+                    setDueDateError('');
+                    setIssuedDateError('');
+                  }}
                   className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
                 >
                   {categories.map((c) => (
@@ -205,56 +253,34 @@ export default function ComplianceRegisterPage() {
                 </select>
               </div>
 
-              {cadenceNotConfigured && (
-                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400 text-sm flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                  <p>This category's first due date hasn't been set yet. Ask an admin, cfo, or ceo to configure it under Compliance &rarr; Categories before registering an item here.</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">Issued Date (optional)</label>
+                  <input
+                    type="date"
+                    name="issued_date"
+                    max={TODAY}
+                    value={form.issued_date}
+                    onChange={(e) => { setForm({ ...form, issued_date: e.target.value }); setIssuedDateError(''); }}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  />
+                  {issuedDateError && <p className="text-xs text-red-400 mt-1.5">{issuedDateError}</p>}
                 </div>
-              )}
-
-              {isRecurring ? (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-2">Issued Date (optional)</label>
-                    <input
-                      type="date"
-                      name="issued_date"
-                      value={form.issued_date}
-                      onChange={(e) => setForm({ ...form, issued_date: e.target.value })}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-2">Due Date</label>
-                    <div className="w-full px-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-gray-400 text-sm">
-                      Computed automatically{selectedCategory?.due_day_of_month ? ` (day ${selectedCategory.due_day_of_month} of the cadence's next occurrence)` : ''}
-                    </div>
-                  </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-300 mb-2">
+                    {isRenewal ? 'Certificate Expiry Date' : 'Due Date'}
+                  </label>
+                  <input
+                    type="date" required
+                    name="due_date"
+                    value={form.due_date}
+                    onChange={(e) => { setForm({ ...form, due_date: e.target.value }); setDueDateError(''); }}
+                    className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
+                  />
+                  {isRenewal && <p className="text-xs text-gray-500 mt-1.5">As printed on the certificate.</p>}
+                  {dueDateError && <p className="text-xs text-red-400 mt-1.5">{dueDateError}</p>}
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-2">Issued Date (optional)</label>
-                    <input
-                      type="date"
-                      name="issued_date"
-                      value={form.issued_date}
-                      onChange={(e) => setForm({ ...form, issued_date: e.target.value })}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-2">Due Date</label>
-                    <input
-                      type="date" required
-                      name="due_date"
-                      value={form.due_date}
-                      onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-                      className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
-                    />
-                  </div>
-                </div>
-              )}
+              </div>
 
               <div>
                 <label className="block text-sm font-bold text-gray-300 mb-2">Evidence (PDF)</label>
@@ -282,10 +308,10 @@ export default function ComplianceRegisterPage() {
               <div className="pt-4 border-t border-dark-700 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || cadenceNotConfigured}
+                  disabled={submitting}
                   className="px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-bold flex items-center gap-2 disabled:opacity-50"
                 >
-                  {submitting ? 'Submitting...' : <><Send className="w-5 h-5" /> Register &amp; Submit for Approval</>}
+                  {submitting ? 'Submitting...' : <><Send className="w-5 h-5" /> Submit Evidence for Verification</>}
                 </button>
               </div>
             </form>

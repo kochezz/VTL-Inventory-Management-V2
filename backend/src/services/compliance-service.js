@@ -237,7 +237,7 @@ function pickFields(row, keys) {
 // function, not a re-typed copy that could quietly drift from it.
 // Returns the normalized { cadenceType, intervalMonths, dueDayOfMonth,
 // anchorDate } to persist, or throws a 400.
-function validateCadenceFields({ cadence_type, interval_months, anchor_date, due_day_of_month }) {
+function validateCadenceFields({ cadence_type, interval_months, anchor_date, due_day_of_month, obligation_kind }) {
   if (!CADENCE_TYPES.includes(cadence_type)) {
     const err = new Error(`cadence_type must be one of: ${CADENCE_TYPES.join(', ')}.`);
     err.statusCode = 400;
@@ -254,17 +254,21 @@ function validateCadenceFields({ cadence_type, interval_months, anchor_date, due
     err.statusCode = 400;
     throw err;
   }
-  // anchor_date is the source of truth for "first due date" -- required
-  // at the API layer (not just the UI) so frontend and backend can never
-  // drift on this, the same standard this project's own retrospective on
-  // the junior_accountant access bug asked for. due_day_of_month is
-  // auto-derived from anchor_date's own day-of-month unless the caller
-  // explicitly overrides it (kept as its own column for the scheduler's
-  // clamping math, not because it's independently meaningful).
-  if (!anchor_date) {
+  // anchor_date is the source of truth for "first due date" -- required at
+  // the API layer (not just the UI) ONLY for FILING, whose one generator
+  // (the scheduler/approval bootstrap) needs it to create the first period
+  // itself. A RENEWAL category's due date always comes from the certificate
+  // actually held, supplied at item-registration time -- interval_months
+  // here is purely informational (how often this kind of cert typically
+  // renews), so anchor_date/due_day_of_month stay optional and are left
+  // null unless the caller supplies anchor_date anyway.
+  if (obligation_kind !== 'RENEWAL' && !anchor_date) {
     const err = new Error('anchor_date (first due date) is required for a RECURRING category.');
     err.statusCode = 400;
     throw err;
+  }
+  if (!anchor_date) {
+    return { cadenceType: 'RECURRING', intervalMonths, dueDayOfMonth: null, anchorDate: null };
   }
   const anchorDate = validateDateOnly(anchor_date, 'anchor_date');
   const anchorDay = Number(anchorDate.split('-')[2]);
@@ -297,7 +301,7 @@ const createComplianceCategory = async ({
   }
 
   const { cadenceType: cadence_type_v, intervalMonths, dueDayOfMonth, anchorDate } = validateCadenceFields({
-    cadence_type, interval_months, anchor_date, due_day_of_month,
+    cadence_type, interval_months, anchor_date, due_day_of_month, obligation_kind,
   });
   cadence_type = cadence_type_v;
 
@@ -369,12 +373,16 @@ const approveComplianceCategory = async (categoryId, approverId, approverRole, j
       err.statusCode = 400;
       throw err;
     }
-    // A RECURRING category can't generate anything without anchor_date --
-    // approving it in that state is exactly what produced VAT/PAYE/NHIMA/
-    // TOT/TCC's "ACTIVE but generates nothing forever" gap (feature/
-    // compliance-register-ux Phase 1). Blocked at approval, not just
-    // flagged after the fact.
-    if (category.cadence_type === 'RECURRING' && !category.anchor_date) {
+    // A FILING + RECURRING category can't generate anything without
+    // anchor_date -- approving it in that state is exactly what produced
+    // VAT/PAYE/NHIMA/TOT's "ACTIVE but generates nothing forever" gap
+    // (feature/compliance-register-ux Phase 1). Blocked at approval, not
+    // just flagged after the fact. RENEWAL is exempt: its cadence is
+    // informational only, and TCC/ZPPA are proof this isn't optional to
+    // get right -- TCC has sat ACTIVE with anchor_date NULL since before
+    // this check existed, and that's correct for a RENEWAL category, not
+    // a gap to close.
+    if (category.cadence_type === 'RECURRING' && category.obligation_kind === 'FILING' && !category.anchor_date) {
       const err = new Error('This RECURRING category has no first due date set -- an executive must set the cadence before it can be approved.');
       err.statusCode = 400;
       throw err;
@@ -829,6 +837,8 @@ const updateComplianceCategory = async (categoryId, updates, actorId, actorRole)
         interval_months: 'interval_months' in updates ? updates.interval_months : category.interval_months,
         anchor_date: 'anchor_date' in updates ? updates.anchor_date : category.anchor_date,
         due_day_of_month: 'due_day_of_month' in updates ? updates.due_day_of_month : category.due_day_of_month,
+        // Not editable through this function -- always the category's own.
+        obligation_kind: category.obligation_kind,
       };
       // Preserves the pre-existing guard: setting anchor_date/due_day_of_month
       // on a category that is (and remains) ONE_OFF is still rejected, not
@@ -919,6 +929,13 @@ const createComplianceItem = async ({ category_id, issued_date, due_date, eviden
     throw err;
   }
 
+  const validatedIssuedDate = issued_date ? validateDateOnly(issued_date, 'issued_date') : null;
+  if (validatedIssuedDate && validatedIssuedDate > new Date().toISOString().slice(0, 10)) {
+    const err = new Error('issued_date cannot be in the future.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   let computedDueDate;
   if (category.obligation_kind === 'RENEWAL') {
     const existing = await db.query(`SELECT 1 FROM compliance_items WHERE category_id = $1 LIMIT 1`, [category_id]);
@@ -933,6 +950,11 @@ const createComplianceItem = async ({ category_id, issued_date, due_date, eviden
       throw err;
     }
     computedDueDate = validateDateOnly(due_date, 'due_date');
+    if (validatedIssuedDate && computedDueDate <= validatedIssuedDate) {
+      const err = new Error(`due_date (the certificate's expiry) must be after issued_date.`);
+      err.statusCode = 400;
+      throw err;
+    }
   } else if (category.cadence_type === 'RECURRING') {
     const err = new Error(`Periods for this category are generated automatically (on approval and by the scheduler) -- manual registration isn't available for a FILING RECURRING category.`);
     err.statusCode = 400;
@@ -945,7 +967,6 @@ const createComplianceItem = async ({ category_id, issued_date, due_date, eviden
     }
     computedDueDate = validateDateOnly(due_date, 'due_date');
   }
-  const validatedIssuedDate = issued_date ? validateDateOnly(issued_date, 'issued_date') : null;
 
   const result = await db.query(
     `INSERT INTO compliance_items (category_id, issued_date, due_date, evidence_file_ref, created_by, status)

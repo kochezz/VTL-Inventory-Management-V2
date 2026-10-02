@@ -119,7 +119,10 @@ function cadenceLabel(cat: ComplianceCategory): string {
 // never fire for those, even though they can still technically have
 // cadence_type === 'RECURRING' && !anchor_date.
 function needsCadenceSetup(cat: ComplianceCategory) {
-  return cat.cadence_type === 'RECURRING' && !cat.anchor_date
+  // RENEWAL is exempt -- its anchor_date is optional/informational (the
+  // real due date comes from the certificate actually held, entered at
+  // registration), so a RENEWAL category missing one isn't a gap at all.
+  return cat.cadence_type === 'RECURRING' && cat.obligation_kind === 'FILING' && !cat.anchor_date
     && (cat.status === 'PENDING_APPROVAL' || cat.status === 'RETURNED' || cat.status === 'ACTIVE');
 }
 
@@ -375,14 +378,22 @@ function cadenceFormToApiFields(form: CadenceFormState) {
 // these fields; resubmitForm does too) without either needing to know the
 // other's full shape.
 function CadenceFieldsForm({
-  value, onPatch,
+  value, onPatch, obligationKind,
 }: {
   value: CadenceFormState;
   onPatch: (patch: Partial<CadenceFormState>) => void;
+  // FILING is the only obligation_kind whose first due date the backend
+  // actually needs (validateCadenceFields in compliance-service.js) -- its
+  // one generator (approval bootstrap / scheduler) has to create periods
+  // itself, with nothing else to go on. RENEWAL's due date always comes
+  // from the certificate actually held, entered at registration time, so
+  // anchor_date here is optional and purely informational for it.
+  obligationKind: '' | 'FILING' | 'RENEWAL';
 }) {
   const isCustomPreset = value.cadencePreset === 'CUSTOM';
   const isRecurring = isRecurringPreset(value);
   const interval = effectiveIntervalMonths(value);
+  const anchorDateRequired = isRecurring && obligationKind !== 'RENEWAL';
 
   // Live preview of the next 3 due dates -- purely a UI convenience so
   // whoever is creating/fixing the category can sanity-check "every 3
@@ -457,14 +468,20 @@ function CadenceFieldsForm({
       {isRecurring && (
         <>
           <div>
-            <label className="block text-sm font-bold text-gray-300 mb-2">First due date</label>
+            <label className="block text-sm font-bold text-gray-300 mb-2">
+              First due date{obligationKind === 'RENEWAL' ? ' (optional)' : ''}
+            </label>
             <input
-              type="date" required
+              type="date" required={anchorDateRequired}
               value={value.anchorDate}
               onChange={(e) => onPatch({ anchorDate: e.target.value })}
               className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
             />
-            <p className="text-xs text-gray-500 mt-1.5">Every future occurrence is calculated from this date. Required for a recurring category.</p>
+            <p className="text-xs text-gray-500 mt-1.5">
+              {obligationKind === 'RENEWAL'
+                ? "Informational only -- a renewal's real due date always comes from the certificate actually held, entered when it's registered."
+                : "Every future occurrence is calculated from this date. Required for a recurring category."}
+            </p>
           </div>
 
           <div>
@@ -633,8 +650,8 @@ export default function ComplianceCategoriesPage() {
         setCreateLoading(false);
         return;
       }
-      if (recurring && !newCategory.anchorDate) {
-        setCreateError('First due date is required for a recurring category.');
+      if (recurring && newCategory.obligationKind !== 'RENEWAL' && !newCategory.anchorDate) {
+        setCreateError('First due date is required for a recurring Filing category.');
         setCreateLoading(false);
         return;
       }
@@ -676,14 +693,14 @@ export default function ComplianceCategoriesPage() {
       setEditLoading(true);
       setEditError('');
 
-      if (!editAnchorDate) {
+      if (editingCategory.obligation_kind !== 'RENEWAL' && !editAnchorDate) {
         setEditError('First due date is required.');
         setEditLoading(false);
         return;
       }
 
       await api.patch(`/compliance/categories/${editingCategory.category_id}`, {
-        anchor_date: editAnchorDate,
+        anchor_date: editAnchorDate || undefined,
         due_day_of_month: editDueDayOfMonth ? parseInt(editDueDayOfMonth, 10) : undefined,
       });
 
@@ -734,8 +751,8 @@ export default function ComplianceCategoriesPage() {
         setResubmitLoading(false);
         return;
       }
-      if (recurring && !resubmitForm.anchorDate) {
-        setResubmitError('First due date is required for a recurring category.');
+      if (recurring && resubmitCategory.obligation_kind !== 'RENEWAL' && !resubmitForm.anchorDate) {
+        setResubmitError('First due date is required for a recurring Filing category.');
         setResubmitLoading(false);
         return;
       }
@@ -975,6 +992,7 @@ export default function ComplianceCategoriesPage() {
               <CadenceFieldsForm
                 value={newCategory}
                 onPatch={(patch) => setNewCategory({ ...newCategory, ...patch })}
+                obligationKind={newCategory.obligationKind}
               />
 
               <div className="pt-4 border-t border-dark-700 flex justify-end gap-3">
@@ -1012,9 +1030,11 @@ export default function ComplianceCategoriesPage() {
               </p>
 
               <div>
-                <label className="block text-sm font-bold text-gray-300 mb-2">First due date</label>
+                <label className="block text-sm font-bold text-gray-300 mb-2">
+                  First due date{editingCategory.obligation_kind === 'RENEWAL' ? ' (optional -- informational only)' : ''}
+                </label>
                 <input
-                  type="date" required
+                  type="date" required={editingCategory.obligation_kind !== 'RENEWAL'}
                   value={editAnchorDate}
                   onChange={(e) => setEditAnchorDate(e.target.value)}
                   className="w-full px-4 py-2 bg-dark-950 border border-dark-600 rounded-lg text-white focus:border-primary-500"
@@ -1090,6 +1110,7 @@ export default function ComplianceCategoriesPage() {
               <CadenceFieldsForm
                 value={resubmitForm}
                 onPatch={(patch) => setResubmitForm({ ...resubmitForm, ...patch })}
+                obligationKind={resubmitCategory.obligation_kind || ''}
               />
 
               <p className="text-xs text-gray-500">

@@ -81,7 +81,12 @@ function pickCurrentPeriod(items: ComplianceItem[]): ComplianceItem | null {
 
 function computePeriodStatus(cat: ComplianceCategory, item: ComplianceItem | null): PeriodStatus {
   if (!cat.obligation_kind) return 'NOT_CONFIGURED';
-  if (cat.cadence_type === 'RECURRING' && !cat.anchor_date) return 'NOT_CONFIGURED';
+  // Only a FILING category needs anchor_date -- its one generator (approval
+  // bootstrap / scheduler) creates periods from it directly. RENEWAL's
+  // anchor_date is optional/informational (TCC, ZPPA): its due date always
+  // comes from the certificate actually held, so a RENEWAL category with no
+  // anchor_date is correctly configured, not a gap.
+  if (cat.cadence_type === 'RECURRING' && cat.obligation_kind === 'FILING' && !cat.anchor_date) return 'NOT_CONFIGURED';
   if (!item) return 'UPCOMING';
   if (item.status === 'NON_COMPLIANT') return 'NON_COMPLIANT';
   if (item.status === 'EVIDENCE_SUBMITTED') return 'EVIDENCE_SUBMITTED';
