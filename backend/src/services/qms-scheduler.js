@@ -14,6 +14,7 @@
 
 const { pool } = require('../config/database');
 const notificationService = require('./notification-service');
+const qmsService = require('./qms-service');
 
 const INTERVAL_MS    = 24 * 60 * 60 * 1000; // 24 hours
 const WARN_DAYS      = 30;                    // alert when due within 30 days
@@ -155,6 +156,27 @@ async function syncTrainingTaskCompletion() {
   }
 }
 
+// ── Training requirement reconcile sweep (Session G, Step 3d) ────────────────
+// Nightly safety net on top of the per-user reconcile calls users-service.js
+// fires synchronously on user creation and role change -- catches anything
+// those miss (a qms_training_requirements row edited directly in the DB,
+// a document withdrawn or superseded since the last sweep, a server
+// restart that dropped an in-flight async call). dryRun: false -- this is
+// the one caller that actually writes.
+async function runReconcileSweep() {
+  console.log('📋 [QMS Scheduler] Running nightly training-task reconcile sweep...');
+  try {
+    const results = await qmsService.reconcileTrainingTasks({ dryRun: false });
+    const created = results.reduce((sum, r) => sum + r.to_create.length, 0);
+    const voided  = results.reduce((sum, r) => sum + r.to_void.length, 0);
+    if (created > 0 || voided > 0) {
+      console.log(`📋 [QMS Scheduler] Reconcile sweep: ${created} task(s) created, ${voided} task(s) voided, across ${results.length} active user(s).`);
+    }
+  } catch (err) {
+    console.error('❌ [QMS Scheduler] Reconcile sweep failed:', err.message);
+  }
+}
+
 // ── Scheduler start ──────────────────────────────────────────────────────────
 
 function start() {
@@ -164,13 +186,15 @@ function start() {
   setTimeout(async () => {
     await runReviewCheck();
     await syncTrainingTaskCompletion();
+    await runReconcileSweep();
   }, 10_000); // 10s delay — let the DB pool warm up first
 
   // Then repeat every 24 hours
   setInterval(async () => {
     await runReviewCheck();
     await syncTrainingTaskCompletion();
+    await runReconcileSweep();
   }, INTERVAL_MS);
 }
 
-module.exports = { start, runReviewCheck, syncTrainingTaskCompletion };
+module.exports = { start, runReviewCheck, syncTrainingTaskCompletion, runReconcileSweep };

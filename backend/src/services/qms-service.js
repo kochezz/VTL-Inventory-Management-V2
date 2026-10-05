@@ -61,17 +61,50 @@ async function writeAuditTrail(client, { doc_id, version_id, actor_id, action, f
   `, [doc_id, version_id || null, actor_id || null, action, from_status || null, to_status || null, notes || null, ip_address || null]);
 }
 
-// ── Role → doc_type training assignment logic ────────────────────────────────
-// Called inside releaseDocument() after the document is released.
-async function createTrainingTasksForRelease(client, docId, versionId, docType) {
-  // Get all roles that need training on this doc type
-  const reqRes = await client.query(
-    `SELECT role FROM qms_training_requirements WHERE doc_type = $1`,
-    [docType]
-  );
-  if (reqRes.rows.length === 0) return 0;
+// ── Training requirement resolver (Session G) ────────────────────────────────
+// Single source of truth for "which roles require this document" and "which
+// documents does this user require" -- used by BOTH
+// createTrainingTasksForRelease (below) and reconcileTrainingTasks (Session
+// G, Step 3c), so the two can never drift the way the dashboard widget and
+// the real task queue already have (see Session B2's investigation).
+// Active qms_training_requirements rows only. A row with section_id IS NULL
+// applies to every document of that doc_type regardless of section (the
+// MAN rows, left broad on purpose by the 2026-10-05 sectionize migration);
+// a row with section_id set only matches a document in that exact section
+// (the section-specific SOP/POL rows the same migration seeded).
+async function getRequiredRolesForDoc(queryable, docId) {
+  const res = await queryable.query(`
+    SELECT DISTINCT tr.role
+    FROM qms_documents d
+    JOIN qms_training_requirements tr
+      ON tr.doc_type = d.doc_type AND tr.is_active = true
+      AND (tr.section_id IS NULL OR tr.section_id = d.section_id)
+    WHERE d.doc_id = $1
+  `, [docId]);
+  return res.rows.map(r => r.role);
+}
 
-  const roles = reqRes.rows.map(r => r.role);
+async function getRequiredDocsForUser(queryable, userId) {
+  const res = await queryable.query(`
+    SELECT DISTINCT d.doc_id, d.doc_code, d.doc_type, d.current_version_id
+    FROM users u
+    JOIN qms_training_requirements tr ON tr.role = u.role AND tr.is_active = true
+    JOIN qms_documents d
+      ON d.doc_type = tr.doc_type AND d.status = 'RELEASED'
+      AND (tr.section_id IS NULL OR tr.section_id = d.section_id)
+    WHERE u.user_id = $1
+  `, [userId]);
+  return res.rows;
+}
+
+// ── Role → doc_type training assignment logic ────────────────────────────────
+// Called inside releaseDocument() after the document is released. docType is
+// no longer used directly here (kept in the signature so the one call site
+// in releaseDocument doesn't need to change) -- getRequiredRolesForDoc reads
+// it, and the document's section, straight off docId instead.
+async function createTrainingTasksForRelease(client, docId, versionId, docType) {
+  const roles = await getRequiredRolesForDoc(client, docId);
+  if (roles.length === 0) return 0;
 
   // Get all active users matching those roles who haven't already acknowledged this specific version
   const usersRes = await client.query(`
@@ -98,6 +131,120 @@ async function createTrainingTasksForRelease(client, docId, versionId, docType) 
   }
 
   return usersRes.rows.length;
+}
+
+// ── reconcileTrainingTasks (Session G, Step 3c) ──────────────────────────────
+// Idempotent. For the given user (userId) or every active user (userId
+// omitted):
+//   - creates a PENDING task for each current-version RELEASED document they
+//     now require (per the resolver above) that they have no task row for
+//     at all (any status, for that exact version_id) -- assigned_at = NOW()
+//     (the backfill date), never backdated to the document's original
+//     release date, so someone picked up by a later role/section mapping
+//     change, or a new hire, is never born overdue.
+//   - VOIDs any PENDING task that is no longer required: the document is no
+//     longer RELEASED, a newer version now exists (task.version_id !=
+//     document.current_version_id), the user's role no longer requires that
+//     doc_type/section, or the user is no longer active.
+//   - never touches a COMPLETED task; never deletes any row.
+//   - sends no email -- unlike createTrainingTasksForRelease's caller (which
+//     notifies on a fresh release), a reconcile run (user creation, role
+//     change, or the nightly sweep) is bookkeeping catching up to reality,
+//     not a new assignment event, per explicit instruction.
+//
+// KNOWN LIMITATION, not solved here (out of this session's explicit scope):
+// a VOIDED task is never reactivated back to PENDING even if the same
+// requirement becomes true again later (e.g. a role change and then a
+// revert) -- the UNIQUE(version_id, user_id) constraint means a fresh INSERT
+// for that same version is impossible once any row exists for it, and
+// nothing here flips a VOIDED row back. Rare (needs the exact same version
+// to still be current AND the requirement to lapse and un-lapse), but real.
+//
+// dryRun: true computes the same create/void sets but writes nothing, and
+// returns the sets themselves (not just counts) per user so a caller can
+// inspect exactly what would change.
+async function reconcileTrainingTasks({ userId, dryRun = false } = {}) {
+  const client = await pool.connect();
+  client.on('error', (err) => console.error('❌ Unexpected error on reconcileTrainingTasks client:', err.message));
+  try {
+    await client.query('BEGIN');
+
+    const usersRes = await client.query(
+      userId
+        ? `SELECT user_id, role, is_active FROM users WHERE user_id = $1`
+        : `SELECT user_id, role, is_active FROM users WHERE is_active = true`,
+      userId ? [userId] : []
+    );
+
+    const results = [];
+
+    for (const user of usersRes.rows) {
+      const toCreate = [];
+      const toVoid = [];
+
+      const existingRes = await client.query(
+        `SELECT task_id, version_id, status FROM qms_training_tasks WHERE user_id = $1`,
+        [user.user_id]
+      );
+
+      if (user.is_active) {
+        const required = await getRequiredDocsForUser(client, user.user_id);
+        const existingVersionIds = new Set(existingRes.rows.map(r => r.version_id));
+
+        for (const doc of required) {
+          if (!existingVersionIds.has(doc.current_version_id)) {
+            toCreate.push({ doc_id: doc.doc_id, doc_code: doc.doc_code, version_id: doc.current_version_id });
+          }
+        }
+
+        const requiredVersionIds = new Set(required.map(d => d.current_version_id));
+        for (const existing of existingRes.rows) {
+          if (existing.status === 'PENDING' && !requiredVersionIds.has(existing.version_id)) {
+            toVoid.push({ task_id: existing.task_id, version_id: existing.version_id });
+          }
+        }
+      } else {
+        // Inactive user: every PENDING task is stale -- void all of them,
+        // create nothing.
+        for (const existing of existingRes.rows) {
+          if (existing.status === 'PENDING') {
+            toVoid.push({ task_id: existing.task_id, version_id: existing.version_id });
+          }
+        }
+      }
+
+      if (!dryRun) {
+        for (const c of toCreate) {
+          await client.query(
+            `INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status, assigned_at)
+             VALUES ($1, $2, $3, 'PENDING', CURRENT_TIMESTAMP)
+             ON CONFLICT (version_id, user_id) DO NOTHING`,
+            [c.doc_id, c.version_id, user.user_id]
+          );
+        }
+        for (const v of toVoid) {
+          await client.query(
+            `UPDATE qms_training_tasks SET status = 'VOIDED' WHERE task_id = $1 AND status = 'PENDING'`,
+            [v.task_id]
+          );
+        }
+      }
+
+      results.push({ user_id: user.user_id, role: user.role, to_create: toCreate, to_void: toVoid });
+    }
+
+    if (dryRun) {
+      await client.query('ROLLBACK');
+    } else {
+      await client.query('COMMIT');
+    }
+    return results;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // ── File storage helpers ─────────────────────────────────────────────────────
@@ -1848,5 +1995,12 @@ const QmsService = {
 
 // Export the helper method for testing
 QmsService._createTrainingTasksForRelease = createTrainingTasksForRelease;
+
+// First-class export (Session G) -- called from users-service.js on user
+// creation/role change, from qms-scheduler.js's nightly sweep, and directly
+// by tests.
+QmsService.reconcileTrainingTasks = reconcileTrainingTasks;
+QmsService._getRequiredRolesForDoc = getRequiredRolesForDoc;
+QmsService._getRequiredDocsForUser = getRequiredDocsForUser;
 
 module.exports = QmsService;
