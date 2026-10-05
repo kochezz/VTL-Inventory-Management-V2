@@ -174,7 +174,7 @@ const navigation: NavItem[] = [
       {
         name: 'Compliance Dashboard',
         href: '/qms/compliance',
-        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'junior_accountant'],
+        roles: ['admin', 'manager', 'qa', 'ceo', 'cfo', 'junior_accountant', 'engineering'],
       },
       {
         name: 'Review Calendar',

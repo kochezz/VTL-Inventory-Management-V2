@@ -128,7 +128,7 @@ router.get('/my-tasks', async (req, res) => {
 
 // ── 4B — Compliance dashboard (single combined endpoint) ─────────────────────
 router.get('/compliance',
-  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant']),
+  authorize(['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant', 'engineering']),
   async (req, res) => {
     try {
       res.json(await qmsService.getComplianceDashboard());
