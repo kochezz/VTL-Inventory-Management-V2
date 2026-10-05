@@ -15,6 +15,33 @@ function redactSalary(row) {
   return r;
 }
 
+// Session E hotfix -- v_hr_employee_profile (SELECT *) was exposing NRC,
+// date of birth, home address, personal email and emergency contacts (plus
+// napsa_member_number, merged in separately on the detail view only) to
+// every HR_ACCESS_ROLES member, not just HR itself -- manager,
+// production_manager and warehouse_manager could all pull this for every
+// employee. Deliberately a WIDER set than SALARY_ROLES (adds hr_manager):
+// the instruction was explicit not to loosen the existing salary
+// redaction, but these are a different sensitivity tier, so they get their
+// own, separate gate rather than reusing canSeeSalary's.
+const HR_FULL_ACCESS_ROLES = ['admin', 'hr_admin', 'hr_manager'];
+const SENSITIVE_PII_FIELDS = [
+  'national_id', 'date_of_birth', 'home_address', 'personal_email',
+  'emergency_contacts', 'napsa_member_number',
+];
+
+function canSeeSensitivePii(role, rowUserId, requestingUserId) {
+  if (requestingUserId && rowUserId && requestingUserId === rowUserId) return true;
+  return HR_FULL_ACCESS_ROLES.includes(role);
+}
+
+function redactSensitivePii(row) {
+  if (!row || typeof row !== 'object') return row;
+  const r = { ...row };
+  for (const field of SENSITIVE_PII_FIELDS) delete r[field];
+  return r;
+}
+
 const getBaseUserById = async (userId) => {
   const result = await pool.query(
     `SELECT
@@ -53,14 +80,33 @@ const getDashboardStats = async () => {
 
 // ─── 2. getAllEmployees ──────────────────────────────────────────────────────
 
-const getAllEmployees = async (requestingUserRole) => {
+const getAllEmployees = async (requestingUserRole, requestingUserId) => {
   try {
     const result = await pool.query(
       'SELECT * FROM v_hr_employee_profile ORDER BY full_name'
     );
-    const rows = result.rows.map((row) => ({ ...row, hr_record_exists: true }));
+    let rows = result.rows.map((row) => ({ ...row, hr_record_exists: true }));
+
+    // napsa_member_number consistency fix: v_hr_employee_profile never
+    // included it (only the detail view merged it in separately, from a
+    // direct hr_employees query) -- same merge here so list and detail
+    // agree on whether the field is even present before either's
+    // redaction runs.
+    if (rows.length > 0) {
+      const napsaRes = await pool.query(
+        'SELECT user_id, napsa_member_number FROM hr_employees WHERE user_id = ANY($1)',
+        [rows.map((r) => r.user_id)]
+      );
+      const napsaByUser = new Map(napsaRes.rows.map((r) => [r.user_id, r.napsa_member_number]));
+      rows = rows.map((r) => ({ ...r, napsa_member_number: napsaByUser.get(r.user_id) ?? null }));
+    }
+
+    rows = rows.map((row) =>
+      canSeeSensitivePii(requestingUserRole, row.user_id, requestingUserId) ? row : redactSensitivePii(row)
+    );
+
     if (!canSeeSalary(requestingUserRole)) {
-      return rows.map(redactSalary);
+      rows = rows.map(redactSalary);
     }
     return rows;
   } catch (error) {
@@ -70,7 +116,7 @@ const getAllEmployees = async (requestingUserRole) => {
 
 // ─── 3. getEmployeeByUserId ──────────────────────────────────────────────────
 
-const getEmployeeByUserId = async (userId, requestingUserRole) => {
+const getEmployeeByUserId = async (userId, requestingUserRole, requestingUserId) => {
   try {
     const profileRes = await pool.query(
       'SELECT * FROM v_hr_employee_profile WHERE user_id = $1',
@@ -131,6 +177,9 @@ const getEmployeeByUserId = async (userId, requestingUserRole) => {
     // Re-apply salary redaction after merge
     if (!canSeeSalary(requestingUserRole)) {
       profile = redactSalary(profile);
+    }
+    if (!canSeeSensitivePii(requestingUserRole, profile.user_id, requestingUserId)) {
+      profile = redactSensitivePii(profile);
     }
 
     return {
@@ -811,6 +860,11 @@ module.exports = {
   getDashboardStats,
   getAllEmployees,
   getEmployeeByUserId,
+  // Exported for direct unit testing (hr-pii-redaction.test.js) -- pure
+  // functions, no DB access, same "export the helper for testing" pattern
+  // qms-service.js already uses for createTrainingTasksForRelease.
+  canSeeSensitivePii,
+  redactSensitivePii,
   getBaseUserById,
   getUsersMissingHrRecord,
   getActiveUsersForHrRecord,

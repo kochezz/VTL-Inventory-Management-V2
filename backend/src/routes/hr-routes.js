@@ -69,7 +69,7 @@ router.get('/active-users', requireHrAccess, async (req, res) => {
 
 router.get('/employees', requireHrAccess, async (req, res) => {
   try {
-    res.json(await hrService.getAllEmployees(req.user.role));
+    res.json(await hrService.getAllEmployees(req.user.role, req.user.user_id));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -83,9 +83,18 @@ router.get('/employees-missing-records', requireHrAdmin, async (req, res) => {
   }
 });
 
-router.get('/employees/:userId', requireHrAccess, async (req, res) => {
+// Self-view carve-out: viewing your OWN record bypasses requireHrAccess
+// entirely (not a change to HR_ACCESS_ROLES -- a role outside it, e.g.
+// junior_accountant or engineering, still can't look up anyone else's
+// record, only their own). Field-level redaction inside getEmployeeByUserId
+// still applies on top of this -- self-view just makes the route
+// reachable, canSeeSensitivePii is what decides what's actually visible.
+router.get('/employees/:userId', (req, res, next) => {
+  if (req.params.userId === req.user.user_id) return next();
+  return requireHrAccess(req, res, next);
+}, async (req, res) => {
   try {
-    const data = await hrService.getEmployeeByUserId(req.params.userId, req.user.role);
+    const data = await hrService.getEmployeeByUserId(req.params.userId, req.user.role, req.user.user_id);
     if (!data) return res.status(404).json({ message: 'Not found' });
     res.json(data);
   } catch (error) {
