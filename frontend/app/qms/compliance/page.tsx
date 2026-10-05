@@ -67,6 +67,15 @@ function AgeBand({ label, count, colour }: { label: string; count: number; colou
 
 // ============================================================================
 
+// Page-visibility gate -- must match the sidebar's own roles array for this
+// entry (DashboardLayout.tsx) and the backend's authorize() on
+// GET /qms/compliance exactly, or a role hidden from the sidebar could
+// still reach this page by URL and sit on a silently-failed fetch forever
+// (no client-side redirect previously existed here at all -- confirmed
+// across two prior sessions). Same CAN_VIEW_ROLES + redirect-to-/dashboard
+// pattern as pricing/page.tsx.
+const CAN_VIEW_ROLES = ['admin', 'qa', 'manager', 'ceo', 'cfo', 'junior_accountant', 'engineering'];
+
 export default function ComplianceDashboard() {
   const router = useRouter();
   const { user } = useAuth();
@@ -74,6 +83,12 @@ export default function ComplianceDashboard() {
   const [data, setData]     = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  useEffect(() => {
+    if (user && !CAN_VIEW_ROLES.includes(user.role)) {
+      router.push('/dashboard');
+    }
+  }, [user, router]);
 
   useEffect(() => { fetchData(); }, []);
 
@@ -89,6 +104,8 @@ export default function ComplianceDashboard() {
       setLoading(false);
     }
   }
+
+  if (user && !CAN_VIEW_ROLES.includes(user.role)) return null;
 
   if (loading) return (
     <DashboardLayout>
