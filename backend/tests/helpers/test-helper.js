@@ -94,8 +94,21 @@ function authHeaders(token) {
 // otherwise indistinguishable from one minted by a real login -- nothing
 // about the request pipeline, middleware, or DB is mocked.
 async function signTokenForRole(role) {
+  // Root cause of the 2026-10 customer-test leak: this query used to have
+  // neither an exclusion nor an ORDER BY, so a leftover disposable fixture
+  // from a crashed password-management.test.js run (also role=
+  // junior_accountant, also is_active=true at the time) could get picked
+  // "at random" by role-permissions.test.js's own before() hook instead of
+  // the real junior_accountant -- and whatever that test then created
+  // (2 "TEST SUITE Customer Access Check" customers) ended up permanently
+  // owned by a disposable account nobody could later delete without an FK
+  // violation. Excluding anything named like a disposable fixture, plus a
+  // stable ORDER BY, makes which real user gets signed both correct and
+  // deterministic.
   const result = await pool.query(
-    `SELECT user_id, email, role, full_name FROM users WHERE role = $1 AND is_active = true LIMIT 1`,
+    `SELECT user_id, email, role, full_name FROM users
+     WHERE role = $1 AND is_active = true AND full_name NOT ILIKE 'Test Suite%'
+     ORDER BY created_at ASC LIMIT 1`,
     [role]
   );
   if (result.rows.length === 0) {

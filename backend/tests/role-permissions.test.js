@@ -44,14 +44,27 @@ before(async () => {
 });
 
 after(async () => {
+  // Previously .catch(() => {}) on all three -- fully silent. That's how
+  // the "TEST SUITE Customer Access Check" leak went unnoticed: this
+  // file's customer/vendor fixtures are created via jrHeaders, which
+  // (before signTokenForRole's own fix) could resolve to a leftover
+  // disposable user from another file instead of the real
+  // junior_accountant -- and once created, cleanup only works if nothing
+  // else keeps referencing those rows in the meantime.
   if (disposableUserId) {
-    await axios.delete(`${BASE_URL}/api/users/${disposableUserId}`, adminHeaders).catch(() => {});
+    await axios.delete(`${BASE_URL}/api/users/${disposableUserId}`, adminHeaders).catch((e) => {
+      console.error(`⚠️  Failed to clean up disposable user ${disposableUserId}:`, e.response?.data?.message || e.message);
+    });
   }
   if (vendorId) {
-    await pool.query(`DELETE FROM vendors WHERE vendor_id = $1`, [vendorId]).catch(() => {});
+    await pool.query(`DELETE FROM vendors WHERE vendor_id = $1`, [vendorId]).catch((e) => {
+      console.error(`⚠️  Failed to clean up test vendor ${vendorId}:`, e.message);
+    });
   }
   if (customerId) {
-    await pool.query(`DELETE FROM customers WHERE customer_id = $1`, [customerId]).catch(() => {});
+    await pool.query(`DELETE FROM customers WHERE customer_id = $1`, [customerId]).catch((e) => {
+      console.error(`⚠️  Failed to clean up test customer ${customerId}:`, e.message);
+    });
   }
 });
 

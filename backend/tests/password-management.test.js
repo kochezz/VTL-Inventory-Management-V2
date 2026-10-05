@@ -10,6 +10,7 @@ const axios = require('axios');
 
 const {
   BASE_URL,
+  pool,
   assertServerReachable,
   login,
   authHeaders,
@@ -23,6 +24,23 @@ before(async () => {
   await assertServerReachable();
   adminToken = await login(process.env.TEST_ADMIN_EMAIL, process.env.TEST_ADMIN_PASSWORD);
   adminHeaders = authHeaders(adminToken);
+
+  // Sweep any disposable user this file's own after() previously failed to
+  // remove (e.g. the test process was killed before reaching after() --
+  // confirmed root cause of 2 stray "TEST SUITE Customer Access Check"
+  // customers once this account got mistaken for a real junior_accountant
+  // by signTokenForRole elsewhere; see that function's own fix). Deactivate
+  // rather than delete if anything still references it, so this sweep
+  // itself can never fail on an FK violation the way the plain DELETE did.
+  const staleRes = await pool.query(
+    `SELECT user_id FROM users WHERE full_name = 'Test Suite Password Disposable User' AND is_active = true`
+  );
+  for (const { user_id } of staleRes.rows) {
+    await pool.query(`DELETE FROM users WHERE user_id = $1`, [user_id]).catch(async () => {
+      await pool.query(`UPDATE users SET is_active = false WHERE user_id = $1`, [user_id]);
+      console.warn(`⚠️  Stale disposable user ${user_id} has live references and could not be deleted -- deactivated instead.`);
+    });
+  }
 
   // One disposable synthetic user shared across this file's tests --
   // deliberately not a real employee account, same reasoning as
@@ -47,7 +65,13 @@ before(async () => {
 
 after(async () => {
   if (disposableUserId) {
-    await axios.delete(`${BASE_URL}/api/users/${disposableUserId}`, adminHeaders).catch(() => {});
+    // Previously .catch(() => {}) -- fully silent, which is exactly how
+    // the stray-customer leak went unnoticed: a failed cleanup (FK
+    // violation from something unrelated having referenced this user in
+    // the meantime) left the row behind with no trace in the test output.
+    await axios.delete(`${BASE_URL}/api/users/${disposableUserId}`, adminHeaders).catch((e) => {
+      console.error(`⚠️  Failed to clean up disposable user ${disposableUserId}:`, e.response?.data?.message || e.message);
+    });
   }
 });
 

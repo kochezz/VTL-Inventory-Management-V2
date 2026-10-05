@@ -1512,6 +1512,10 @@ const QmsService = {
       ORDER BY v.version_number ASC, u.full_name ASC
     `, [docId]);
 
+    // is_active = true -- a deactivated employee has no one left to act on
+    // their training task; listing them as "still pending" on an external
+    // audit pack would misreport a real compliance gap that no longer
+    // exists (feature/qms-training-pending-exclude-inactive).
     const pendingRes = await pool.query(`
       SELECT tt.*,
              u.full_name  AS user_name,
@@ -1522,7 +1526,7 @@ const QmsService = {
       FROM qms_training_tasks tt
       JOIN users u ON tt.user_id = u.user_id
       JOIN qms_document_versions v ON tt.version_id = v.version_id
-      WHERE tt.doc_id = $1 AND tt.status = 'PENDING'
+      WHERE tt.doc_id = $1 AND tt.status = 'PENDING' AND u.is_active = true
       ORDER BY u.full_name ASC
     `, [docId]);
 
@@ -1571,11 +1575,16 @@ const QmsService = {
     `, [docId]);
 
     const currentVersion = versionsRes.rows.find(v => v.status === 'RELEASED');
+    // completed counts regardless of the user's current is_active status
+    // (a real historical record); total excludes a deactivated user's own
+    // PENDING row (no longer outstanding work) but keeps their COMPLETED
+    // one, so completed + still-outstanding-pending = total stays correct.
     const trainingCompletionRate = currentVersion ? await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE tt.status = 'COMPLETED') AS completed,
-        COUNT(*) AS total
+        COUNT(*) FILTER (WHERE tt.status = 'COMPLETED' OR u.is_active = true) AS total
       FROM qms_training_tasks tt
+      JOIN users u ON u.user_id = tt.user_id
       WHERE tt.version_id = $1
     `, [currentVersion.version_id]) : null;
 
