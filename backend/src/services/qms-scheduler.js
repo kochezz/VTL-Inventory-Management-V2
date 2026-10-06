@@ -188,7 +188,8 @@ async function runReconcileSweep() {
     const created = results.reduce((sum, r) => sum + r.to_create.length, 0);
     const voided  = results.reduce((sum, r) => sum + r.to_void.length, 0);
     if (created > 0 || voided > 0) {
-      console.log(`📋 [QMS Scheduler] Reconcile sweep (${dryRun ? 'DRY -- nothing written' : 'LIVE'}): ${created} task(s) to create, ${voided} task(s) to void, across ${results.length} active user(s).`);
+      const auditNote = results.audit_id ? `, audit_log ${results.audit_id}` : '';
+      console.log(`📋 [QMS Scheduler] Reconcile sweep (${dryRun ? 'DRY -- nothing written' : 'LIVE'}): ${created} task(s) to create, ${voided} task(s) to void, across ${results.length} active user(s)${auditNote}.`);
     }
   } catch (err) {
     console.error('❌ [QMS Scheduler] Reconcile sweep failed:', err.message);

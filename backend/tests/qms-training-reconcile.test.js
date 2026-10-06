@@ -217,4 +217,44 @@ test('reconcileTrainingTasks: user creation, idempotency, dry-run, COMPLETED pro
       assert.equal(row.status, 'PENDING', 'a newly-created task from a role change must start PENDING');
     }
   });
+
+  // Session L, Step 3: a live reconcile must write one audit_log entry
+  // listing every task_id it created and voided, scoped to that run --
+  // the handle scripts/undo-training-reconcile.js undoes.
+  await t.test('a live reconcile writes an audit_log entry listing every created/voided task_id; dry-run writes none', async () => {
+    const dryResults = await qmsService.reconcileTrainingTasks({ userId: disposableUserId, dryRun: true });
+    assert.equal(dryResults.audit_id, null, 'dry-run must not write an audit_log entry');
+
+    // Directly attach one throwaway PENDING task for a document genuinely
+    // NOT required by this user's current role (per the real resolver, not
+    // a guess), so a live reconcile is guaranteed to void it regardless of
+    // what role-change timing already did -- avoids racing the
+    // fire-and-forget hook from an earlier step.
+    const requiredNow = await qmsService._getRequiredDocsForUser(pool, disposableUserId);
+    const requiredVersionIds = new Set(requiredNow.map((d) => d.current_version_id));
+    const notRequiredDoc = (await pool.query(
+      `SELECT doc_id, current_version_id FROM qms_documents WHERE status = 'RELEASED' AND current_version_id IS NOT NULL
+       AND doc_id NOT IN (SELECT doc_id FROM qms_training_tasks WHERE user_id = $1)`,
+      [disposableUserId]
+    )).rows.find((d) => !requiredVersionIds.has(d.current_version_id));
+    assert.ok(notRequiredDoc, 'expected at least one RELEASED document not required by this user\'s current role, to plant a voidable task');
+    const { doc_id, current_version_id } = notRequiredDoc;
+    const insertedTask = await pool.query(
+      `INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status) VALUES ($1, $2, $3, 'PENDING') RETURNING task_id`,
+      [doc_id, current_version_id, disposableUserId]
+    );
+    const plantedTaskId = insertedTask.rows[0].task_id;
+
+    const results = await qmsService.reconcileTrainingTasks({ userId: disposableUserId, dryRun: false });
+    assert.ok(results.audit_id, 'a live run with a real change must write an audit_log entry');
+
+    const auditRow = await pool.query(`SELECT action, table_name, new_values FROM audit_log WHERE audit_id = $1`, [results.audit_id]);
+    assert.equal(auditRow.rows.length, 1);
+    assert.equal(auditRow.rows[0].action, 'RECONCILE');
+    assert.equal(auditRow.rows[0].table_name, 'qms_training_tasks');
+    const { created_task_ids, voided_task_ids } = auditRow.rows[0].new_values;
+    assert.ok(Array.isArray(created_task_ids));
+    assert.ok(Array.isArray(voided_task_ids));
+    assert.ok(voided_task_ids.includes(plantedTaskId), 'expected the planted not-required task to be in voided_task_ids');
+  });
 });

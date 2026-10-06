@@ -163,7 +163,18 @@ async function createTrainingTasksForRelease(client, docId, versionId, docType) 
 // dryRun: true computes the same create/void sets but writes nothing, and
 // returns the sets themselves (not just counts) per user so a caller can
 // inspect exactly what would change.
-async function reconcileTrainingTasks({ userId, dryRun = false } = {}) {
+//
+// Session L: a live (non-dryRun) run that actually writes now also inserts
+// one audit_log row for the whole run, listing every task_id it created and
+// every task_id it voided -- the handle an undo script scopes to. Attached
+// as a non-enumerable-breaking extra property (results.audit_id) on the
+// returned array so every existing caller that treats the return value as
+// a plain array (tests, runReconcileSweep, the reconcile endpoint) keeps
+// working unchanged; only a caller that wants the audit_id reads it.
+// performedBy is optional -- the admin endpoint passes req.user.user_id;
+// the fire-and-forget user-create/role-change hook and the nightly sweep
+// both omit it (recorded as NULL, i.e. "system").
+async function reconcileTrainingTasks({ userId, dryRun = false, performedBy = null } = {}) {
   const client = await pool.connect();
   client.on('error', (err) => console.error('❌ Unexpected error on reconcileTrainingTasks client:', err.message));
   try {
@@ -215,29 +226,55 @@ async function reconcileTrainingTasks({ userId, dryRun = false } = {}) {
 
       if (!dryRun) {
         for (const c of toCreate) {
-          await client.query(
+          // RETURNING task_id -- also doubles as "did this actually insert"
+          // given ON CONFLICT DO NOTHING: a row that lost the race (another
+          // process already created it) returns zero rows and is correctly
+          // left out of the audit trail's created list.
+          const insertRes = await client.query(
             `INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status, assigned_at)
              VALUES ($1, $2, $3, 'PENDING', CURRENT_TIMESTAMP)
-             ON CONFLICT (version_id, user_id) DO NOTHING`,
+             ON CONFLICT (version_id, user_id) DO NOTHING
+             RETURNING task_id`,
             [c.doc_id, c.version_id, user.user_id]
           );
+          if (insertRes.rows.length > 0) c.task_id = insertRes.rows[0].task_id;
         }
         for (const v of toVoid) {
-          await client.query(
-            `UPDATE qms_training_tasks SET status = 'VOIDED' WHERE task_id = $1 AND status = 'PENDING'`,
+          const updateRes = await client.query(
+            `UPDATE qms_training_tasks SET status = 'VOIDED' WHERE task_id = $1 AND status = 'PENDING' RETURNING task_id`,
             [v.task_id]
           );
+          v.voided = updateRes.rows.length > 0;
         }
       }
 
       results.push({ user_id: user.user_id, role: user.role, to_create: toCreate, to_void: toVoid });
     }
 
+    let auditId = null;
     if (dryRun) {
       await client.query('ROLLBACK');
     } else {
+      const createdTaskIds = results.flatMap((r) => r.to_create.map((c) => c.task_id).filter(Boolean));
+      const voidedTaskIds = results.flatMap((r) => r.to_void.filter((v) => v.voided).map((v) => v.task_id));
+
+      if (createdTaskIds.length > 0 || voidedTaskIds.length > 0) {
+        const auditRes = await client.query(
+          `INSERT INTO audit_log (audit_id, table_name, record_id, action, new_values, performed_by, performed_at, user_id)
+           VALUES (gen_random_uuid(), 'qms_training_tasks', $1, 'RECONCILE', $2, $3, NOW(), $3)
+           RETURNING audit_id`,
+          [
+            userId || 'all-active-users',
+            JSON.stringify({ scope: userId || 'all-active-users', created_task_ids: createdTaskIds, voided_task_ids: voidedTaskIds }),
+            performedBy,
+          ]
+        );
+        auditId = auditRes.rows[0].audit_id;
+      }
+
       await client.query('COMMIT');
     }
+    results.audit_id = auditId;
     return results;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});

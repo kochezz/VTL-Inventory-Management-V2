@@ -619,8 +619,9 @@ router.post('/training/reconcile', authorize(['admin']), async (req, res) => {
     const results = await qmsService.reconcileTrainingTasks({
       userId: userId || undefined,
       dryRun: dryRun === false ? false : true,
+      performedBy: req.user.user_id,
     });
-    res.json({ dryRun: dryRun === false ? false : true, results });
+    res.json({ dryRun: dryRun === false ? false : true, auditId: results.audit_id, results });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
