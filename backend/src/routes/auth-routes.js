@@ -25,11 +25,20 @@ router.post('/login', async (req, res) => {
 
     // Attempt login
     const result = await authService.login(email, password, ipAddress, userAgent);
-    
+
     res.json(result);
   } catch (error) {
     console.error('❌ Login route error:', error.message);
-    res.status(401).json({ message: error.message });
+    // Session I: only a genuine wrong-email/wrong-password rejection is a
+    // 401. Everything else (a DB connection drop, a Neon timeout, any other
+    // infrastructure failure inside authService.login) is a 503 -- these
+    // used to collapse into the same 401, making a transient connectivity
+    // blip indistinguishable from a real credential rejection.
+    if (error instanceof authService.InvalidCredentialsError) {
+      res.status(401).json({ message: error.message });
+    } else {
+      res.status(503).json({ message: 'Login temporarily unavailable -- please try again.', detail: error.message });
+    }
   }
 });
 

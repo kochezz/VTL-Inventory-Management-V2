@@ -2,6 +2,20 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
+// Session I: distinguishes a genuine "wrong email/password" rejection from
+// everything else (DB connection drop, timeout, any other infrastructure
+// failure) that login() might throw. auth-routes.js uses this to return 401
+// only for the former and 503 for the latter -- previously both looked
+// identical to the client (a flat 401), which made a transient Neon
+// connectivity blip during the test suite indistinguishable from a real
+// credential rejection.
+class InvalidCredentialsError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'InvalidCredentialsError';
+  }
+}
+
 // Database connection pool — Neon serverless resilience settings
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -49,9 +63,24 @@ const generateRefreshToken = (user) => {
   );
 };
 
+// Test-only seam (Session I) so the HTTP test suite -- a separate process
+// from the running server -- can force login() to throw a non-credential
+// error on its NEXT call, to verify auth-routes.js's 401/503 split against
+// the real server process rather than a mocked pool.query the server never
+// sees. Only reachable via /api/_test/force-login-error, which (like the
+// rest of test-debug-routes.js) only exists when MOCK_EMAIL_TRANSPORT is on.
+let _testForceNextLoginError = null;
+const setTestForceNextLoginError = (message) => { _testForceNextLoginError = message; };
+
 // Login function
 const login = async (email, password, ipAddress, userAgent) => {
   try {
+    if (_testForceNextLoginError) {
+      const message = _testForceNextLoginError;
+      _testForceNextLoginError = null;
+      throw new Error(message);
+    }
+
     console.log(`🔐 Login attempt for: ${email}`);
 
     // Find user by email
@@ -62,7 +91,7 @@ const login = async (email, password, ipAddress, userAgent) => {
 
     if (userResult.rows.length === 0) {
       console.log(`❌ User not found or inactive: ${email}`);
-      throw new Error('Invalid credentials');
+      throw new InvalidCredentialsError('Invalid credentials');
     }
 
     const user = userResult.rows[0];
@@ -70,10 +99,10 @@ const login = async (email, password, ipAddress, userAgent) => {
 
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    
+
     if (!isValidPassword) {
       console.log(`❌ Invalid password for: ${email}`);
-      throw new Error('Invalid credentials');
+      throw new InvalidCredentialsError('Invalid credentials');
     }
 
     console.log(`✅ Password verified for: ${email}`);
@@ -204,5 +233,7 @@ module.exports = {
   logout,
   refreshAccessToken,
   verifyToken,
-  pool // Export pool for other services
+  pool, // Export pool for other services
+  InvalidCredentialsError,
+  setTestForceNextLoginError,
 };

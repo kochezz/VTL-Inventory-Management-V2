@@ -10,6 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const NotificationService = require('../services/notification-service');
+const authService = require('../services/auth-service');
 
 router.get('/email-log', (req, res) => {
   res.json({ emails: NotificationService.getMockEmailLog() });
@@ -30,6 +31,15 @@ router.get('/db-host', (req, res) => {
   } catch {
     res.status(500).json({ host: null });
   }
+});
+
+// Session I: forces authService.login()'s NEXT call to throw a plain
+// (non-credential) error, so the test suite can verify auth-routes.js
+// returns 503 for an infrastructure failure rather than 401 -- against the
+// real running server process, not a pool.query mock the server never sees.
+router.post('/force-login-error', (req, res) => {
+  authService.setTestForceNextLoginError(req.body?.message || 'Simulated connection timeout');
+  res.json({ ok: true });
 });
 
 module.exports = router;
