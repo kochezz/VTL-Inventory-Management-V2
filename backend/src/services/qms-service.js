@@ -257,6 +257,14 @@ async function reconcileTrainingTasks({ userId, dryRun = false, performedBy = nu
     } else {
       const createdTaskIds = results.flatMap((r) => r.to_create.map((c) => c.task_id).filter(Boolean));
       const voidedTaskIds = results.flatMap((r) => r.to_void.filter((v) => v.voided).map((v) => v.task_id));
+      // Session M, Step 2: explicit user_id list (only users this run
+      // actually wrote something for), so the undo script can reliably
+      // check for a LATER reconcile run touching any of the same users,
+      // without having to re-derive it from task rows that might already
+      // be deleted by the time anyone undoes anything.
+      const affectedUserIds = results
+        .filter((r) => r.to_create.some((c) => c.task_id) || r.to_void.some((v) => v.voided))
+        .map((r) => r.user_id);
 
       if (createdTaskIds.length > 0 || voidedTaskIds.length > 0) {
         const auditRes = await client.query(
@@ -265,7 +273,7 @@ async function reconcileTrainingTasks({ userId, dryRun = false, performedBy = nu
            RETURNING audit_id`,
           [
             userId || 'all-active-users',
-            JSON.stringify({ scope: userId || 'all-active-users', created_task_ids: createdTaskIds, voided_task_ids: voidedTaskIds }),
+            JSON.stringify({ scope: userId || 'all-active-users', created_task_ids: createdTaskIds, voided_task_ids: voidedTaskIds, affected_user_ids: affectedUserIds }),
             performedBy,
           ]
         );
