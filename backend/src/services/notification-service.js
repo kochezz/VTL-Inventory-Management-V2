@@ -90,7 +90,7 @@ const sendEmail = async (to, subject, htmlContent, opts = {}) => {
 
   if (MOCK_EMAIL_TRANSPORT) {
     const id = `mock-${mockEmailLog.length + 1}-${Date.now()}`;
-    const record = { id, to, subject, timestamp: new Date().toISOString() };
+    const record = { id, to, subject, reply_to: opts.reply_to || null, timestamp: new Date().toISOString() };
     mockEmailLog.push(record);
     console.log(`📧 [MOCK] Recorded, not sent: "${subject}" → [${to.join(', ')}]`);
     // Shaped like the real success path's return value so no calling code
