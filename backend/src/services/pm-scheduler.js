@@ -93,6 +93,13 @@ async function runPMDueCheck() {
 }
 
 function start() {
+  // Session G2a: DISABLE_SCHEDULERS=true skips this scheduler entirely.
+  // Set in backend/.env.test only; must stay unset in production.
+  if (process.env.DISABLE_SCHEDULERS === 'true') {
+    console.log('🔧 [PM Scheduler] Disabled (DISABLE_SCHEDULERS=true) -- not starting.');
+    return;
+  }
+
   console.log('🔧 [PM Scheduler] Starting — will run PM due-check every 24h.');
 
   // 15s delay, not 10s (qms-scheduler's delay) — deliberately staggered so

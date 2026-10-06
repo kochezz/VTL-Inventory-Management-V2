@@ -609,6 +609,22 @@ router.post('/training/acknowledge', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Session G2a, Step 4c. Admin-only, manual trigger for the same reconcile
+// the nightly sweep runs -- dryRun defaults to true unless the caller
+// explicitly sends false, so an accidental call can never write by
+// default. userId omitted reconciles every active user.
+router.post('/training/reconcile', authorize(['admin']), async (req, res) => {
+  try {
+    const { userId, dryRun } = req.body || {};
+    const results = await qmsService.reconcileTrainingTasks({
+      userId: userId || undefined,
+      dryRun: dryRun === false ? false : true,
+      performedBy: req.user.user_id,
+    });
+    res.json({ dryRun: dryRun === false ? false : true, auditId: results.audit_id, results });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ============================================================================
 // REVIEW TASKS (Phase 2)
 // ============================================================================

@@ -61,17 +61,50 @@ async function writeAuditTrail(client, { doc_id, version_id, actor_id, action, f
   `, [doc_id, version_id || null, actor_id || null, action, from_status || null, to_status || null, notes || null, ip_address || null]);
 }
 
-// ── Role → doc_type training assignment logic ────────────────────────────────
-// Called inside releaseDocument() after the document is released.
-async function createTrainingTasksForRelease(client, docId, versionId, docType) {
-  // Get all roles that need training on this doc type
-  const reqRes = await client.query(
-    `SELECT role FROM qms_training_requirements WHERE doc_type = $1`,
-    [docType]
-  );
-  if (reqRes.rows.length === 0) return 0;
+// ── Training requirement resolver (Session G) ────────────────────────────────
+// Single source of truth for "which roles require this document" and "which
+// documents does this user require" -- used by BOTH
+// createTrainingTasksForRelease (below) and reconcileTrainingTasks (Session
+// G, Step 3c), so the two can never drift the way the dashboard widget and
+// the real task queue already have (see Session B2's investigation).
+// Active qms_training_requirements rows only. A row with section_id IS NULL
+// applies to every document of that doc_type regardless of section (the
+// MAN rows, left broad on purpose by the 2026-10-05 sectionize migration);
+// a row with section_id set only matches a document in that exact section
+// (the section-specific SOP/POL rows the same migration seeded).
+async function getRequiredRolesForDoc(queryable, docId) {
+  const res = await queryable.query(`
+    SELECT DISTINCT tr.role
+    FROM qms_documents d
+    JOIN qms_training_requirements tr
+      ON tr.doc_type = d.doc_type AND tr.is_active = true
+      AND (tr.section_id IS NULL OR tr.section_id = d.section_id)
+    WHERE d.doc_id = $1
+  `, [docId]);
+  return res.rows.map(r => r.role);
+}
 
-  const roles = reqRes.rows.map(r => r.role);
+async function getRequiredDocsForUser(queryable, userId) {
+  const res = await queryable.query(`
+    SELECT DISTINCT d.doc_id, d.doc_code, d.doc_type, d.current_version_id
+    FROM users u
+    JOIN qms_training_requirements tr ON tr.role = u.role AND tr.is_active = true
+    JOIN qms_documents d
+      ON d.doc_type = tr.doc_type AND d.status = 'RELEASED'
+      AND (tr.section_id IS NULL OR tr.section_id = d.section_id)
+    WHERE u.user_id = $1
+  `, [userId]);
+  return res.rows;
+}
+
+// ── Role → doc_type training assignment logic ────────────────────────────────
+// Called inside releaseDocument() after the document is released. docType is
+// no longer used directly here (kept in the signature so the one call site
+// in releaseDocument doesn't need to change) -- getRequiredRolesForDoc reads
+// it, and the document's section, straight off docId instead.
+async function createTrainingTasksForRelease(client, docId, versionId, docType) {
+  const roles = await getRequiredRolesForDoc(client, docId);
+  if (roles.length === 0) return 0;
 
   // Get all active users matching those roles who haven't already acknowledged this specific version
   const usersRes = await client.query(`
@@ -98,6 +131,165 @@ async function createTrainingTasksForRelease(client, docId, versionId, docType) 
   }
 
   return usersRes.rows.length;
+}
+
+// ── reconcileTrainingTasks (Session G, Step 3c) ──────────────────────────────
+// Idempotent. For the given user (userId) or every active user (userId
+// omitted):
+//   - creates a PENDING task for each current-version RELEASED document they
+//     now require (per the resolver above) that they have no task row for
+//     at all (any status, for that exact version_id) -- assigned_at = NOW()
+//     (the backfill date), never backdated to the document's original
+//     release date, so someone picked up by a later role/section mapping
+//     change, or a new hire, is never born overdue.
+//   - VOIDs any PENDING task that is no longer required: the document is no
+//     longer RELEASED, a newer version now exists (task.version_id !=
+//     document.current_version_id), the user's role no longer requires that
+//     doc_type/section, or the user is no longer active.
+//   - never touches a COMPLETED task; never deletes any row.
+//   - sends no email -- unlike createTrainingTasksForRelease's caller (which
+//     notifies on a fresh release), a reconcile run (user creation, role
+//     change, or the nightly sweep) is bookkeeping catching up to reality,
+//     not a new assignment event, per explicit instruction.
+//
+// KNOWN LIMITATION, not solved here (out of this session's explicit scope):
+// a VOIDED task is never reactivated back to PENDING even if the same
+// requirement becomes true again later (e.g. a role change and then a
+// revert) -- the UNIQUE(version_id, user_id) constraint means a fresh INSERT
+// for that same version is impossible once any row exists for it, and
+// nothing here flips a VOIDED row back. Rare (needs the exact same version
+// to still be current AND the requirement to lapse and un-lapse), but real.
+//
+// dryRun: true computes the same create/void sets but writes nothing, and
+// returns the sets themselves (not just counts) per user so a caller can
+// inspect exactly what would change.
+//
+// Session L: a live (non-dryRun) run that actually writes now also inserts
+// one audit_log row for the whole run, listing every task_id it created and
+// every task_id it voided -- the handle an undo script scopes to. Attached
+// as a non-enumerable-breaking extra property (results.audit_id) on the
+// returned array so every existing caller that treats the return value as
+// a plain array (tests, runReconcileSweep, the reconcile endpoint) keeps
+// working unchanged; only a caller that wants the audit_id reads it.
+// performedBy is optional -- the admin endpoint passes req.user.user_id;
+// the fire-and-forget user-create/role-change hook and the nightly sweep
+// both omit it (recorded as NULL, i.e. "system").
+async function reconcileTrainingTasks({ userId, dryRun = false, performedBy = null } = {}) {
+  const client = await pool.connect();
+  client.on('error', (err) => console.error('❌ Unexpected error on reconcileTrainingTasks client:', err.message));
+  try {
+    await client.query('BEGIN');
+
+    const usersRes = await client.query(
+      userId
+        ? `SELECT user_id, role, is_active FROM users WHERE user_id = $1`
+        : `SELECT user_id, role, is_active FROM users WHERE is_active = true`,
+      userId ? [userId] : []
+    );
+
+    const results = [];
+
+    for (const user of usersRes.rows) {
+      const toCreate = [];
+      const toVoid = [];
+
+      const existingRes = await client.query(
+        `SELECT task_id, version_id, status FROM qms_training_tasks WHERE user_id = $1`,
+        [user.user_id]
+      );
+
+      if (user.is_active) {
+        const required = await getRequiredDocsForUser(client, user.user_id);
+        const existingVersionIds = new Set(existingRes.rows.map(r => r.version_id));
+
+        for (const doc of required) {
+          if (!existingVersionIds.has(doc.current_version_id)) {
+            toCreate.push({ doc_id: doc.doc_id, doc_code: doc.doc_code, version_id: doc.current_version_id });
+          }
+        }
+
+        const requiredVersionIds = new Set(required.map(d => d.current_version_id));
+        for (const existing of existingRes.rows) {
+          if (existing.status === 'PENDING' && !requiredVersionIds.has(existing.version_id)) {
+            toVoid.push({ task_id: existing.task_id, version_id: existing.version_id });
+          }
+        }
+      } else {
+        // Inactive user: every PENDING task is stale -- void all of them,
+        // create nothing.
+        for (const existing of existingRes.rows) {
+          if (existing.status === 'PENDING') {
+            toVoid.push({ task_id: existing.task_id, version_id: existing.version_id });
+          }
+        }
+      }
+
+      if (!dryRun) {
+        for (const c of toCreate) {
+          // RETURNING task_id -- also doubles as "did this actually insert"
+          // given ON CONFLICT DO NOTHING: a row that lost the race (another
+          // process already created it) returns zero rows and is correctly
+          // left out of the audit trail's created list.
+          const insertRes = await client.query(
+            `INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status, assigned_at)
+             VALUES ($1, $2, $3, 'PENDING', CURRENT_TIMESTAMP)
+             ON CONFLICT (version_id, user_id) DO NOTHING
+             RETURNING task_id`,
+            [c.doc_id, c.version_id, user.user_id]
+          );
+          if (insertRes.rows.length > 0) c.task_id = insertRes.rows[0].task_id;
+        }
+        for (const v of toVoid) {
+          const updateRes = await client.query(
+            `UPDATE qms_training_tasks SET status = 'VOIDED' WHERE task_id = $1 AND status = 'PENDING' RETURNING task_id`,
+            [v.task_id]
+          );
+          v.voided = updateRes.rows.length > 0;
+        }
+      }
+
+      results.push({ user_id: user.user_id, role: user.role, to_create: toCreate, to_void: toVoid });
+    }
+
+    let auditId = null;
+    if (dryRun) {
+      await client.query('ROLLBACK');
+    } else {
+      const createdTaskIds = results.flatMap((r) => r.to_create.map((c) => c.task_id).filter(Boolean));
+      const voidedTaskIds = results.flatMap((r) => r.to_void.filter((v) => v.voided).map((v) => v.task_id));
+      // Session M, Step 2: explicit user_id list (only users this run
+      // actually wrote something for), so the undo script can reliably
+      // check for a LATER reconcile run touching any of the same users,
+      // without having to re-derive it from task rows that might already
+      // be deleted by the time anyone undoes anything.
+      const affectedUserIds = results
+        .filter((r) => r.to_create.some((c) => c.task_id) || r.to_void.some((v) => v.voided))
+        .map((r) => r.user_id);
+
+      if (createdTaskIds.length > 0 || voidedTaskIds.length > 0) {
+        const auditRes = await client.query(
+          `INSERT INTO audit_log (audit_id, table_name, record_id, action, new_values, performed_by, performed_at, user_id)
+           VALUES (gen_random_uuid(), 'qms_training_tasks', $1, 'RECONCILE', $2, $3, NOW(), $3)
+           RETURNING audit_id`,
+          [
+            userId || 'all-active-users',
+            JSON.stringify({ scope: userId || 'all-active-users', created_task_ids: createdTaskIds, voided_task_ids: voidedTaskIds, affected_user_ids: affectedUserIds }),
+            performedBy,
+          ]
+        );
+        auditId = auditRes.rows[0].audit_id;
+      }
+
+      await client.query('COMMIT');
+    }
+    results.audit_id = auditId;
+    return results;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // ── File storage helpers ─────────────────────────────────────────────────────
@@ -1579,10 +1771,14 @@ const QmsService = {
     // (a real historical record); total excludes a deactivated user's own
     // PENDING row (no longer outstanding work) but keeps their COMPLETED
     // one, so completed + still-outstanding-pending = total stays correct.
+    // VOIDED never counts (Session G2, Step 5) -- the old "OR u.is_active"
+    // clause predates VOIDED and wrongly counted a VOIDED row belonging to
+    // a still-active user, since is_active=true alone made the OR true
+    // regardless of status.
     const trainingCompletionRate = currentVersion ? await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE tt.status = 'COMPLETED') AS completed,
-        COUNT(*) FILTER (WHERE tt.status = 'COMPLETED' OR u.is_active = true) AS total
+        COUNT(*) FILTER (WHERE tt.status = 'COMPLETED' OR (tt.status = 'PENDING' AND u.is_active = true)) AS total
       FROM qms_training_tasks tt
       JOIN users u ON u.user_id = tt.user_id
       WHERE tt.version_id = $1
@@ -1848,5 +2044,12 @@ const QmsService = {
 
 // Export the helper method for testing
 QmsService._createTrainingTasksForRelease = createTrainingTasksForRelease;
+
+// First-class export (Session G) -- called from users-service.js on user
+// creation/role change, from qms-scheduler.js's nightly sweep, and directly
+// by tests.
+QmsService.reconcileTrainingTasks = reconcileTrainingTasks;
+QmsService._getRequiredRolesForDoc = getRequiredRolesForDoc;
+QmsService._getRequiredDocsForUser = getRequiredDocsForUser;
 
 module.exports = QmsService;
