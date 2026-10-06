@@ -23,6 +23,11 @@ if (process.env.ENV_FILE) {
   assertDatabaseIsNotProduction(process.env.DATABASE_URL, require('path').join(__dirname, '.env'));
 }
 
+// Refuse to boot at all (any startup path, not just npm run dev:test-server)
+// if MOCK_EMAIL_TRANSPORT=true on Render -- see startup-guards.js.
+const { assertNotMockEmailOnRender } = require('./src/config/startup-guards');
+assertNotMockEmailOnRender();
+
 const authRoutes              = require('./src/routes/auth-routes');
 const productionRoutes        = require('./src/routes/production-routes');
 const inventoryRoutes         = require('./src/routes/inventory-routes');
