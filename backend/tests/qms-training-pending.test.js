@@ -18,9 +18,12 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('./helpers/test-helper');
+const qmsService = require('../src/services/qms-service');
 
 let disposableUserId;
 let taskId;
+const extraUserIds = [];
+const extraTaskIds = [];
 
 async function getPendingTrainingCount() {
   const res = await pool.query(`SELECT pending_training FROM qms_compliance_summary`);
@@ -30,6 +33,8 @@ async function getPendingTrainingCount() {
 after(async () => {
   if (taskId) await pool.query(`DELETE FROM qms_training_tasks WHERE task_id = $1`, [taskId]);
   if (disposableUserId) await pool.query(`DELETE FROM users WHERE user_id = $1`, [disposableUserId]);
+  if (extraTaskIds.length > 0) await pool.query(`DELETE FROM qms_training_tasks WHERE task_id = ANY($1)`, [extraTaskIds]);
+  if (extraUserIds.length > 0) await pool.query(`DELETE FROM users WHERE user_id = ANY($1)`, [extraUserIds]);
 });
 
 test('a deactivated user\'s pending training task is excluded from qms_compliance_summary.pending_training', async () => {
@@ -63,5 +68,87 @@ test('a deactivated user\'s pending training task is excluded from qms_complianc
   assert.equal(
     countWhileDeactivated, countWhileActive - 1,
     `expected pending_training to drop by exactly 1 once the task's user was deactivated (was ${countWhileActive}, now ${countWhileDeactivated})`
+  );
+});
+
+// Regression test for the 2026-10-06 fix (Session G2, Step 5):
+// qms_dept_training_compliance.total_tasks used to COUNT(tt.task_id) with
+// no status filter at all, so a VOIDED row (a requirement that no longer
+// applies) inflated the denominator and deflated completion_pct. VOIDED
+// didn't exist as a real write path until Session G's reconcileTrainingTasks
+// (2026-10-05), so this view was correct when first written.
+test('a VOIDED task is excluded from qms_dept_training_compliance.total_tasks', async () => {
+  const docRes = await pool.query(
+    `SELECT doc_id, current_version_id FROM qms_documents WHERE status = 'RELEASED' AND current_version_id IS NOT NULL LIMIT 1`
+  );
+  assert.ok(docRes.rows.length > 0, 'expected at least one RELEASED qms_document to exist');
+  const { doc_id, current_version_id } = docRes.rows[0];
+
+  const dept = `TEST SUITE Dept ${Date.now()}`;
+  const userRes = await pool.query(
+    `INSERT INTO users (email, full_name, password_hash, role, is_active, department)
+     VALUES ($1, 'TEST SUITE Dept Compliance User', 'not-a-real-hash', 'viewer', true, $2)
+     RETURNING user_id`,
+    [`test-suite-dept-compliance-${Date.now()}@vilag.io`, dept]
+  );
+  const userId = userRes.rows[0].user_id;
+  extraUserIds.push(userId);
+
+  const taskRes = await pool.query(
+    `INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status)
+     VALUES ($1, $2, $3, 'VOIDED')
+     RETURNING task_id`,
+    [doc_id, current_version_id, userId]
+  );
+  extraTaskIds.push(taskRes.rows[0].task_id);
+
+  const row = await pool.query(
+    `SELECT total_tasks, completed_tasks, pending_tasks FROM qms_dept_training_compliance WHERE department = $1`,
+    [dept]
+  );
+  assert.ok(row.rows.length > 0, 'expected a row for the disposable department');
+  assert.equal(
+    parseInt(row.rows[0].total_tasks, 10), 0,
+    'a lone VOIDED task must not count toward total_tasks'
+  );
+});
+
+// Regression test for the same Step 5 finding: getInspectorPack's
+// training_summary.total used "status = 'COMPLETED' OR u.is_active = true",
+// which counted a VOIDED row for any still-active user (is_active = true
+// alone made the OR true regardless of status).
+test('a VOIDED task for an active user is excluded from getInspectorPack training_summary.total', async () => {
+  const docRes = await pool.query(
+    `SELECT doc_id, current_version_id FROM qms_documents WHERE status = 'RELEASED' AND current_version_id IS NOT NULL LIMIT 1`
+  );
+  assert.ok(docRes.rows.length > 0, 'expected at least one RELEASED qms_document to exist');
+  const { doc_id, current_version_id } = docRes.rows[0];
+
+  const userRes = await pool.query(
+    `INSERT INTO users (email, full_name, password_hash, role, is_active)
+     VALUES ($1, 'TEST SUITE Inspector Pack User', 'not-a-real-hash', 'viewer', true)
+     RETURNING user_id`,
+    [`test-suite-inspector-pack-${Date.now()}@vilag.io`]
+  );
+  const userId = userRes.rows[0].user_id;
+  extraUserIds.push(userId);
+
+  const before = await qmsService.getInspectorPack(doc_id);
+  const totalBefore = parseInt(before.training_summary.total, 10);
+
+  const taskRes = await pool.query(
+    `INSERT INTO qms_training_tasks (doc_id, version_id, user_id, status)
+     VALUES ($1, $2, $3, 'VOIDED')
+     RETURNING task_id`,
+    [doc_id, current_version_id, userId]
+  );
+  extraTaskIds.push(taskRes.rows[0].task_id);
+
+  const after = await qmsService.getInspectorPack(doc_id);
+  const totalAfter = parseInt(after.training_summary.total, 10);
+
+  assert.equal(
+    totalAfter, totalBefore,
+    `expected training_summary.total to stay unchanged after adding a VOIDED task for an active user (was ${totalBefore}, now ${totalAfter})`
   );
 });

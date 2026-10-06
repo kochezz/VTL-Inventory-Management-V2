@@ -1726,10 +1726,14 @@ const QmsService = {
     // (a real historical record); total excludes a deactivated user's own
     // PENDING row (no longer outstanding work) but keeps their COMPLETED
     // one, so completed + still-outstanding-pending = total stays correct.
+    // VOIDED never counts (Session G2, Step 5) -- the old "OR u.is_active"
+    // clause predates VOIDED and wrongly counted a VOIDED row belonging to
+    // a still-active user, since is_active=true alone made the OR true
+    // regardless of status.
     const trainingCompletionRate = currentVersion ? await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE tt.status = 'COMPLETED') AS completed,
-        COUNT(*) FILTER (WHERE tt.status = 'COMPLETED' OR u.is_active = true) AS total
+        COUNT(*) FILTER (WHERE tt.status = 'COMPLETED' OR (tt.status = 'PENDING' AND u.is_active = true)) AS total
       FROM qms_training_tasks tt
       JOIN users u ON u.user_id = tt.user_id
       WHERE tt.version_id = $1
