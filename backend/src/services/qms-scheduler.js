@@ -14,6 +14,7 @@
 
 const { pool } = require('../config/database');
 const notificationService = require('./notification-service');
+const qmsService = require('./qms-service');
 
 const INTERVAL_MS    = 24 * 60 * 60 * 1000; // 24 hours
 const WARN_DAYS      = 30;                    // alert when due within 30 days
@@ -155,12 +156,62 @@ async function syncTrainingTaskCompletion() {
   }
 }
 
+// ── Training requirement reconcile sweep (Session G, Step 3d; gated G2a) ─────
+// Nightly safety net on top of the per-user reconcile calls users-service.js
+// fires synchronously on user creation and role change -- catches anything
+// those miss (a qms_training_requirements row edited directly in the DB,
+// a document withdrawn or superseded since the last sweep, a server
+// restart that dropped an in-flight async call).
+//
+// TRAINING_RECONCILE_MODE controls it: 'off' (default, when unset) runs
+// nothing; 'dry' runs reconcileTrainingTasks({dryRun:true}) and only logs
+// what it would do; 'live' actually writes. Deliberately NOT set in any
+// .env file or Render config -- defaulting to 'off' is the point, so a
+// fresh environment (or this one, reset) never reconciles anything until
+// someone deliberately opts in.
+//
+// This only ever runs from the 24h setInterval below, never from the
+// boot-time setTimeout -- Session G2a found the old code ran a REAL
+// (dryRun:false, unconditional) sweep 10s after every single server boot,
+// which is exactly what silently drifted the test branch's real user data
+// last session. No mode makes it fire at boot.
+async function runReconcileSweep() {
+  const mode = process.env.TRAINING_RECONCILE_MODE || 'off';
+  if (mode === 'off') {
+    console.log('📋 [QMS Scheduler] Reconcile sweep skipped (TRAINING_RECONCILE_MODE=off).');
+    return;
+  }
+  const dryRun = mode !== 'live';
+  console.log(`📋 [QMS Scheduler] Running training-task reconcile sweep (mode=${mode}, dryRun=${dryRun})...`);
+  try {
+    const results = await qmsService.reconcileTrainingTasks({ dryRun });
+    const created = results.reduce((sum, r) => sum + r.to_create.length, 0);
+    const voided  = results.reduce((sum, r) => sum + r.to_void.length, 0);
+    if (created > 0 || voided > 0) {
+      console.log(`📋 [QMS Scheduler] Reconcile sweep (${dryRun ? 'DRY -- nothing written' : 'LIVE'}): ${created} task(s) to create, ${voided} task(s) to void, across ${results.length} active user(s).`);
+    }
+  } catch (err) {
+    console.error('❌ [QMS Scheduler] Reconcile sweep failed:', err.message);
+  }
+}
+
 // ── Scheduler start ──────────────────────────────────────────────────────────
 
 function start() {
+  // Session G2a: DISABLE_SCHEDULERS=true skips this scheduler entirely --
+  // no boot-time timer, no 24h interval. Set in backend/.env.test only;
+  // must stay unset in production so production behavior is unchanged.
+  if (process.env.DISABLE_SCHEDULERS === 'true') {
+    console.log('📋 [QMS Scheduler] Disabled (DISABLE_SCHEDULERS=true) -- not starting.');
+    return;
+  }
+
   console.log('📋 [QMS Scheduler] Starting — will run review check every 24h.');
 
-  // Run immediately on startup (catches anything missed while server was down)
+  // Run immediately on startup (catches anything missed while server was down).
+  // runReconcileSweep is deliberately NOT called here -- see its own
+  // comment for why boot-time firing is exactly what caused last
+  // session's real-data drift. It only runs from the 24h interval below.
   setTimeout(async () => {
     await runReviewCheck();
     await syncTrainingTaskCompletion();
@@ -170,7 +221,8 @@ function start() {
   setInterval(async () => {
     await runReviewCheck();
     await syncTrainingTaskCompletion();
+    await runReconcileSweep();
   }, INTERVAL_MS);
 }
 
-module.exports = { start, runReviewCheck, syncTrainingTaskCompletion };
+module.exports = { start, runReviewCheck, syncTrainingTaskCompletion, runReconcileSweep };

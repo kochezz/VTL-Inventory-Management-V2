@@ -1,6 +1,21 @@
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('./auth-service');
+// Session G, Step 3d: user creation and role change both need the new
+// user's/changed user's training tasks reconciled against
+// qms_training_requirements. No circular dependency -- qms-service.js
+// never requires this file.
+const qmsService = require('./qms-service');
+
+// Fires reconcileTrainingTasks for one user without letting a QMS-side
+// failure break the user create/update response -- the user row is already
+// committed by the time this runs; a training-task hiccup shouldn't be
+// reported back to the caller as "failed to create/update user."
+function reconcileTrainingTasksAsync(userId, context) {
+  qmsService.reconcileTrainingTasks({ userId }).catch((e) => {
+    console.error(`⚠️  reconcileTrainingTasks failed for user ${userId} (${context}):`, e.message);
+  });
+}
 
 // FIX: Added 'sales' to the valid roles list
 const VALID_ROLES = [
@@ -107,6 +122,7 @@ const createUser = async (userData) => {
     ]);
 
     delete result.rows[0].password_hash;
+    reconcileTrainingTasksAsync(result.rows[0].user_id, 'user created');
     return result.rows[0];
   } catch (error) {
     throw error;
@@ -161,8 +177,11 @@ const updateUser = async (userId, userData) => {
 
     const query = `UPDATE users SET ${updates.join(', ')} WHERE user_id = $${paramCount} RETURNING *`;
     const result = await pool.query(query, values);
-    
+
     delete result.rows[0].password_hash;
+    if ('role' in fieldsToUpdate) {
+      reconcileTrainingTasksAsync(userId, 'role changed');
+    }
     return result.rows[0];
   } catch (error) {
     throw error;
