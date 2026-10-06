@@ -198,15 +198,23 @@ test('rejecting an already-REJECTED category is rejected with 400', async () => 
 });
 
 // ── PACRA backfill unaffected ────────────────────────────────────────────────
+// Session J: this used to match name = 'PACRA Annual Return' (exact, title
+// case) and found zero rows -- the real category was renamed to
+// 'PACRA ANNUAL RETURN' (all caps) during an earlier archival session, which
+// also left a same-named-but-suffixed 'PACRA Annual Return (archived 2026-10)'
+// duplicate behind. ILIKE with no wildcards is case-insensitive EQUALITY, so
+// it matches the real record without also matching that archived duplicate
+// (different text, not just different case). Read-only: SELECT + GET only,
+// never writes to the real record.
 
 test('the real PACRA Annual Return category was backfilled to ACTIVE and is unaffected', async () => {
   const result = await pool.query(
-    `SELECT status, approved_by, rejection_reason FROM compliance_categories WHERE name = 'PACRA Annual Return'`
+    `SELECT status, approved_by, rejection_reason FROM compliance_categories WHERE name ILIKE 'PACRA ANNUAL RETURN'`
   );
-  assert.equal(result.rows.length, 1, 'expected exactly one PACRA Annual Return category');
+  assert.equal(result.rows.length, 1, 'expected exactly one PACRA ANNUAL RETURN category');
   assert.equal(result.rows[0].status, 'ACTIVE');
   assert.equal(result.rows[0].rejection_reason, null);
 
   const pickerView = await axios.get(`${BASE_URL}/api/compliance/categories?status=ACTIVE`, jrHeaders);
-  assert.ok(pickerView.data.some((c) => c.name === 'PACRA Annual Return'));
+  assert.ok(pickerView.data.some((c) => c.name.toUpperCase() === 'PACRA ANNUAL RETURN'));
 });
