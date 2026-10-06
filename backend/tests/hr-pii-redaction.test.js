@@ -12,11 +12,14 @@
 //     directly (no DB, no server) -- these run in any environment and
 //     were actually executed this session.
 //  2. HTTP integration tests matching this suite's usual convention
-//     (real server, real DB, role-signed tokens) -- NOT run this session,
-//     same reason as every other test added recently: the Neon test
-//     branch's credentials are still failing with a real auth error, not
-//     a cold-start timeout. Written correctly and left here for when that's
-//     fixed.
+//     (real server, real DB, role-signed tokens). Session I: now that the
+//     test branch's credentials are actually reliable, this tier finally
+//     ran for the first time -- and failed immediately with 404, not an
+//     auth or redaction problem. Every call here used `/api/hr/employees`,
+//     but hr-routes.js is mounted at `/hr`, not `/api/hr` (server.js:
+//     app.use('/hr', hrRoutes)) -- a plain wrong-URL bug in this file
+//     itself, present since it was first written, independent of the
+//     credential issue the old comment blamed. Fixed; see below.
 //
 // No real hr_admin/hr_manager account exists in this database today (the
 // live roster is admin/engineering/manager/cfo/junior_accountant/qa/
@@ -136,7 +139,7 @@ test('(setup) integration tier', async (t) => {
 });
 
 integrationTest('manager-role token: GET /hr/employees has no sensitive fields on any OTHER row', async () => {
-  const res = await axios.get(`${BASE_URL}/api/hr/employees`, managerHeaders);
+  const res = await axios.get(`${BASE_URL}/hr/employees`, managerHeaders);
   assert.equal(res.status, 200);
   const otherRows = res.data.filter((r) => r.user_id !== managerUser.user_id);
   assert.ok(otherRows.length > 0, 'expected at least one other employee row to check');
@@ -148,10 +151,10 @@ integrationTest('manager-role token: GET /hr/employees has no sensitive fields o
 });
 
 integrationTest('manager-role token: GET /hr/employees/:otherUserId has no sensitive fields', async () => {
-  const res = await axios.get(`${BASE_URL}/api/hr/employees`, managerHeaders);
+  const res = await axios.get(`${BASE_URL}/hr/employees`, managerHeaders);
   const other = res.data.find((r) => r.user_id !== managerUser.user_id);
   assert.ok(other, 'expected at least one other employee to check');
-  const detailRes = await axios.get(`${BASE_URL}/api/hr/employees/${other.user_id}`, managerHeaders);
+  const detailRes = await axios.get(`${BASE_URL}/hr/employees/${other.user_id}`, managerHeaders);
   assert.equal(detailRes.status, 200);
   for (const field of SENSITIVE_FIELDS) {
     assert.equal(field in detailRes.data.profile, false, `expected ${field} absent on detail view for manager`);
@@ -159,7 +162,7 @@ integrationTest('manager-role token: GET /hr/employees/:otherUserId has no sensi
 });
 
 integrationTest('manager-role token: self-view (own user_id) still sees own sensitive fields', async () => {
-  const res = await axios.get(`${BASE_URL}/api/hr/employees/${managerUser.user_id}`, managerHeaders);
+  const res = await axios.get(`${BASE_URL}/hr/employees/${managerUser.user_id}`, managerHeaders);
   assert.equal(res.status, 200);
   // Only asserting presence of the key, not a specific value -- a manager
   // account may legitimately have no hr_employees row / null PII yet.
@@ -167,29 +170,29 @@ integrationTest('manager-role token: self-view (own user_id) still sees own sens
 });
 
 integrationTest('admin token: GET /hr/employees/:otherUserId still has sensitive fields', async () => {
-  const res = await axios.get(`${BASE_URL}/api/hr/employees`, adminHeaders);
+  const res = await axios.get(`${BASE_URL}/hr/employees`, adminHeaders);
   const other = res.data[0];
-  const detailRes = await axios.get(`${BASE_URL}/api/hr/employees/${other.user_id}`, adminHeaders);
+  const detailRes = await axios.get(`${BASE_URL}/hr/employees/${other.user_id}`, adminHeaders);
   assert.ok('national_id' in detailRes.data.profile, 'expected admin to still see national_id');
 });
 
 integrationTest('hr_admin token: GET /hr/employees still has sensitive fields on list', async () => {
-  const res = await axios.get(`${BASE_URL}/api/hr/employees`, hrAdminHeaders);
+  const res = await axios.get(`${BASE_URL}/hr/employees`, hrAdminHeaders);
   assert.equal(res.status, 200);
   assert.ok(res.data.length > 0 && 'national_id' in res.data[0], 'expected hr_admin to still see national_id on list');
 });
 
 integrationTest('hr_manager token: GET /hr/employees still has sensitive fields on list', async () => {
-  const res = await axios.get(`${BASE_URL}/api/hr/employees`, hrManagerHeaders);
+  const res = await axios.get(`${BASE_URL}/hr/employees`, hrManagerHeaders);
   assert.equal(res.status, 200);
   assert.ok(res.data.length > 0 && 'national_id' in res.data[0], 'expected hr_manager to still see national_id on list');
 });
 
 integrationTest('napsa_member_number is present (or explicitly null) on BOTH list and detail for an hr_admin viewer -- consistency fix', async () => {
-  const listRes = await axios.get(`${BASE_URL}/api/hr/employees`, hrAdminHeaders);
+  const listRes = await axios.get(`${BASE_URL}/hr/employees`, hrAdminHeaders);
   const row = listRes.data.find((r) => r.hr_record_exists);
   assert.ok(row, 'expected at least one employee with an hr_employees record');
   assert.ok('napsa_member_number' in row, 'expected napsa_member_number key present on list view now');
-  const detailRes = await axios.get(`${BASE_URL}/api/hr/employees/${row.user_id}`, hrAdminHeaders);
+  const detailRes = await axios.get(`${BASE_URL}/hr/employees/${row.user_id}`, hrAdminHeaders);
   assert.ok('napsa_member_number' in detailRes.data.profile, 'expected napsa_member_number key present on detail view');
 });
