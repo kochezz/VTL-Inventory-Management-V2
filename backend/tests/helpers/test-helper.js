@@ -111,16 +111,49 @@ async function signTokenForRole(role) {
      ORDER BY created_at ASC LIMIT 1`,
     [role]
   );
+  let user;
+  let created = false;
   if (result.rows.length === 0) {
-    throw new Error(`No active user with role '${role}' exists in the DB -- cannot sign a test token for it.`);
+    // Session H: no active user currently holds this role (e.g. deactivated
+    // in an earlier roster cleanup) -- that used to throw here, failing
+    // every test in the calling file's before() hook. Create one tracked,
+    // disposable user for this role instead of reactivating the real
+    // (deliberately deactivated) account -- a fresh row/UUID, no relation
+    // to it. The caller gets back created: true and is responsible for
+    // deleting this row in its own after() (see cleanupRoleUser below, or
+    // Cleanup.trackUser for files already using that class).
+    const email = `test-suite-role-${role}-${Date.now()}@vilag.io`;
+    const insertRes = await pool.query(
+      `INSERT INTO users (email, full_name, password_hash, role, is_active)
+       VALUES ($1, $2, 'not-a-real-hash', $3, true)
+       RETURNING user_id, email, role, full_name`,
+      [email, `TEST SUITE Disposable ${role} User`, role]
+    );
+    user = insertRes.rows[0];
+    created = true;
+  } else {
+    user = result.rows[0];
   }
-  const user = result.rows[0];
   const token = jwt.sign(
     { user_id: user.user_id, email: user.email, role: user.role, full_name: user.full_name },
     process.env.JWT_SECRET,
     { expiresIn: '15m' }
   );
-  return { token, user };
+  return { token, user, created };
+}
+
+// FK-safe delete-or-deactivate for a disposable user signTokenForRole
+// created -- mirrors the established pattern elsewhere in this file (delete,
+// and only if something unrelated references the row, deactivate instead of
+// leaving the delete attempt silently failed). For files not already using
+// the Cleanup class below.
+async function cleanupRoleUser(userId) {
+  if (!userId) return;
+  await pool.query(`DELETE FROM qms_training_tasks WHERE user_id = $1`, [userId]);
+  await pool.query(`DELETE FROM users WHERE user_id = $1`, [userId]).catch(async () => {
+    await pool.query(`UPDATE users SET is_active = false WHERE user_id = $1`, [userId]);
+    console.warn(`⚠️  Disposable role-user ${userId} has live references and could not be deleted -- deactivated instead.`);
+  });
 }
 
 // Tracks every row a test creates so it can be deleted afterward. Pass one
@@ -130,11 +163,20 @@ class Cleanup {
   constructor() {
     this.complianceItemIds = [];
     this.complianceCategoryIds = [];
+    this.disposableUserIds = [];
   }
   trackItem(id) { if (id) this.complianceItemIds.push(id); }
   trackCategory(id) { if (id) this.complianceCategoryIds.push(id); }
+  // Session H: for a disposable user signTokenForRole created (created:
+  // true in its return value) because no active user held that role.
+  trackUser(id) { if (id) this.disposableUserIds.push(id); }
 
   async run() {
+    if (this.disposableUserIds.length) {
+      for (const userId of this.disposableUserIds) {
+        await cleanupRoleUser(userId);
+      }
+    }
     if (this.complianceItemIds.length) {
       // Child rows first -- neither compliance_reminder_log nor
       // compliance_acknowledgements nor compliance_item_evidence has ON
@@ -344,6 +386,7 @@ module.exports = {
   login,
   authHeaders,
   signTokenForRole,
+  cleanupRoleUser,
   Cleanup,
   createComplianceCategory,
   createLegacyDraftItem,

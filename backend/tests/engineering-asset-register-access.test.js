@@ -19,6 +19,7 @@ const {
   login,
   authHeaders,
   signTokenForRole,
+  cleanupRoleUser,
 } = require('./helpers/test-helper');
 
 let adminToken, adminHeaders;
@@ -27,6 +28,7 @@ let managerToken, managerHeaders;
 let cfoToken, cfoHeaders;
 let engineeringToken, engineeringHeaders;
 let warehouseToken, warehouseHeaders;
+let disposableWarehouseUserId;
 const createdEquipmentIds = [];
 
 before(async () => {
@@ -46,13 +48,18 @@ before(async () => {
   ({ token: engineeringToken } = await signTokenForRole('engineering'));
   engineeringHeaders = authHeaders(engineeringToken);
 
-  ({ token: warehouseToken } = await signTokenForRole('warehouse_manager'));
+  const warehouseResult = await signTokenForRole('warehouse_manager');
+  warehouseToken = warehouseResult.token;
   warehouseHeaders = authHeaders(warehouseToken);
+  if (warehouseResult.created) disposableWarehouseUserId = warehouseResult.user.user_id;
 });
 
 after(async () => {
   if (createdEquipmentIds.length) {
     await pool.query(`DELETE FROM equipment WHERE equipment_id = ANY($1)`, [createdEquipmentIds]);
+  }
+  if (disposableWarehouseUserId) {
+    await cleanupRoleUser(disposableWarehouseUserId);
   }
 });
 

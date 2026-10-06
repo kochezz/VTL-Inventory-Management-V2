@@ -46,8 +46,10 @@ before(async () => {
   ({ token: cfoToken } = await signTokenForRole('cfo'));
   cfoHeaders = authHeaders(cfoToken);
 
-  ({ token: warehouseToken } = await signTokenForRole('warehouse_manager'));
+  const warehouseResult = await signTokenForRole('warehouse_manager');
+  warehouseToken = warehouseResult.token;
   warehouseHeaders = authHeaders(warehouseToken);
+  if (warehouseResult.created) cleanup.trackUser(warehouseResult.user.user_id);
 
   // 'manager' -- distinct from 'warehouse_manager' above -- was extended
   // create+list access on /categories only (not the rest of the compliance
