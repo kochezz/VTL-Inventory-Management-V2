@@ -77,7 +77,12 @@ const getComplianceNotificationEmails = async (roles) => {
   return realEmails;
 };
 
-const sendEmail = async (to, subject, htmlContent) => {
+// opts.reply_to is optional -- added (Session G2a) so pos-service.js's
+// receipt email (reply_to: sales@vilag.io) can route through this shared,
+// gated function instead of its own direct Resend client, without losing
+// that behavior. No other caller passes it; omitted, Resend just uses its
+// own default (the from address).
+const sendEmail = async (to, subject, htmlContent, opts = {}) => {
   if (!to || to.length === 0) {
     console.warn('📧 sendEmail: no recipients for subject:', subject);
     return { success: false, error: 'No recipients' };
@@ -103,6 +108,7 @@ const sendEmail = async (to, subject, htmlContent) => {
       to,               // Resend accepts an array directly
       subject,
       html: htmlContent,
+      ...(opts.reply_to ? { reply_to: opts.reply_to } : {}),
     });
 
     if (error) {

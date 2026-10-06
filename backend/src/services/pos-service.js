@@ -576,9 +576,6 @@ async function sendReceiptEmail(transactionId, emailAddress, currency = 'USD', e
   const tx = await getTransactionById(transactionId);
   if (!tx) throw new Error('Transaction not found');
 
-  const { Resend } = require('resend');
-  const resend = new Resend(process.env.SMTP_PASS);
-
   // Dynamic Currency Formatter
   const rate = parseFloat(exchangeRate) || 27;
   const sym = currency === 'ZMW' ? 'K' : '$';
@@ -689,15 +686,16 @@ async function sendReceiptEmail(transactionId, emailAddress, currency = 'USD', e
       </div>
     </div>`;
 
-  const { error } = await resend.emails.send({
-    from: `Vilagio ERP <${process.env.EMAIL_FROM || 'noreply@vilag.io'}>`,
-    to: [emailAddress],
-    reply_to: 'sales@vilag.io',
-    subject: `Tax Invoice / Receipt — ${tx.receipt_number}`,
+  // Session G2a: routed through the shared, MOCK_EMAIL_TRANSPORT-gated
+  // sendEmail() -- this used to instantiate its own Resend client inline
+  // and call it directly, bypassing the mock gate entirely.
+  const result = await notificationService.sendEmail(
+    [emailAddress],
+    `Tax Invoice / Receipt — ${tx.receipt_number}`,
     html,
-  });
-
-  if (error) throw new Error(`Receipt email failed: ${error.message}`);
+    { reply_to: 'sales@vilag.io' }
+  );
+  if (!result.success) throw new Error(`Receipt email failed: ${result.error?.message || result.error}`);
 
   await query(`
     UPDATE sales_transactions

@@ -1,14 +1,11 @@
-const { Resend } = require('resend');
 const { pool } = require('./auth-service');
-
-// Resend HTTP API — matches notification-service.js's proven pattern.
-// Render blocks outbound SMTP (ETIMEDOUT on port 587); Resend uses
-// HTTPS port 443, which is always open. Do NOT revert to nodemailer.
-const resend = new Resend(process.env.SMTP_PASS);
-
-const FROM_ADDRESS = process.env.EMAIL_FROM
-  ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
-  : 'Vilagio ERP <noreply@vilag.io>';
+// Session G2a: this file used to hold its own direct Resend client and call
+// resend.emails.send() itself -- which meant MOCK_EMAIL_TRANSPORT never
+// applied to it. Every notification below now goes through
+// notification-service.js's shared, gated sendEmail() instead, same as
+// every other module's email already does. Do NOT reintroduce a direct
+// Resend client here.
+const { sendEmail } = require('./notification-service');
 
 const wrapEmail = (title, titleColor, bodyHtml) => `
   <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; background-color: #0f172a; color: #f8fafc;">
@@ -45,20 +42,11 @@ async function send({ subject, title, titleColor, bodyHtml, recipients, logLabel
     console.log(`⚠️ [Engineering Email] No active engineering/admin users to notify for ${logLabel}.`);
     return;
   }
-  try {
-    const { data, error } = await resend.emails.send({
-      from: FROM_ADDRESS,
-      to: recipients,
-      subject,
-      html: wrapEmail(title, titleColor, bodyHtml),
-    });
-    if (error) {
-      console.error(`❌ [Engineering Email] Failed to send ${logLabel}:`, error);
-    } else {
-      console.log(`✅ [Engineering Email] ${logLabel} sent to: ${recipients.join(',')} [id: ${data?.id}]`);
-    }
-  } catch (error) {
-    console.error(`❌ [Engineering Email] Failed to send ${logLabel}:`, error);
+  const result = await sendEmail(recipients, subject, wrapEmail(title, titleColor, bodyHtml));
+  if (!result.success) {
+    console.error(`❌ [Engineering Email] Failed to send ${logLabel}:`, result.error);
+  } else {
+    console.log(`✅ [Engineering Email] ${logLabel} sent to: ${recipients.join(',')} [id: ${result.id}]`);
   }
 }
 
@@ -211,17 +199,13 @@ class EngineeringEmailService {
         <p style="margin-top:16px;">Please log in to the Vilagio ERP Engineering module to review and act on these.</p>
       `;
 
-      const { data, error } = await resend.emails.send({
-        from: FROM_ADDRESS,
-        to: recipients,
-        subject: `Engineering Daily Digest — ${openResult.rows.length} open notification${openResult.rows.length !== 1 ? 's' : ''}`,
-        html: wrapEmail('Engineering Daily Digest', '#60a5fa', body),
-      });
+      const subject = `Engineering Daily Digest — ${openResult.rows.length} open notification${openResult.rows.length !== 1 ? 's' : ''}`;
+      const result = await sendEmail(recipients, subject, wrapEmail('Engineering Daily Digest', '#60a5fa', body));
 
-      if (error) {
-        console.error('❌ [Engineering Email] Failed to send daily digest:', error);
+      if (!result.success) {
+        console.error('❌ [Engineering Email] Failed to send daily digest:', result.error);
       } else {
-        console.log(`✅ [Engineering Email] Daily digest sent (${openResult.rows.length} open) to: ${recipients.join(',')} [id: ${data?.id}]`);
+        console.log(`✅ [Engineering Email] Daily digest sent (${openResult.rows.length} open) to: ${recipients.join(',')} [id: ${result.id}]`);
       }
     } catch (error) {
       console.error('❌ [Engineering Email] Failed to send daily digest:', error);

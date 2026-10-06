@@ -1,10 +1,7 @@
-const { Resend } = require('resend');
 const { pool } = require('./auth-service'); // Need DB access to look up user emails
-
-// Uses Resend HTTP API (HTTPS port 443) instead of SMTP (port 587) —
-// same pattern as notification-service.js. Render blocks outbound SMTP
-// (ETIMEDOUT on port 587); Resend's HTTP API uses port 443, always open.
-const resend = new Resend(process.env.SMTP_PASS); // Reuses existing SMTP_PASS env var (Resend API key)
+// Session G2a: routed through the shared, gated sendEmail() -- this file
+// used to hold its own direct Resend client, bypassing MOCK_EMAIL_TRANSPORT.
+const { sendEmail } = require('./notification-service');
 
 class SupplierEmailService {
   
@@ -22,13 +19,10 @@ class SupplierEmailService {
       // Extract emails into a comma-separated list
       const qaEmails = qaUsers.rows.map(u => u.email).join(',');
 
-      const { data, error } = await resend.emails.send({
-        from: process.env.EMAIL_FROM
-          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
-          : 'Vilagio ERP <noreply@vilag.io>',
-        to: qaUsers.rows.map(u => u.email),
-        subject: `Action Required: New Supplier Awaiting QA - ${vendor.legal_name}`,
-        html: `
+      const result = await sendEmail(
+        qaUsers.rows.map(u => u.email),
+        `Action Required: New Supplier Awaiting QA - ${vendor.legal_name}`,
+        `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; background-color: #0f172a; color: #f8fafc;">
             <h2 style="color: #60a5fa; border-bottom: 1px solid #334155; padding-bottom: 10px;">New Supplier Assessment Ready for Review</h2>
             <p>A new supplier registration for <strong>${vendor.legal_name}</strong> has been submitted by the Sales team and is awaiting your verification.</p>
@@ -39,12 +33,12 @@ class SupplierEmailService {
             <p style="font-size: 12px; color: #94a3b8;">This is an automated notification from the Vilagio Vendor Management System.</p>
           </div>
         `
-      });
+      );
 
-      if (error) {
-        console.error('❌ Failed to send QA notification email:', error);
+      if (!result.success) {
+        console.error('❌ Failed to send QA notification email:', result.error);
       } else {
-        console.log(`✅ QA Notification emailed successfully to: ${qaEmails} [id: ${data?.id}]`);
+        console.log(`✅ QA Notification emailed successfully to: ${qaEmails} [id: ${result.id}]`);
       }
     } catch (error) {
       console.error('❌ Failed to send QA notification email:', error);
@@ -63,13 +57,10 @@ class SupplierEmailService {
       const isApproved = action === 'APPROVED' || action === 'CONDITIONALLY_APPROVED';
       const statusColor = isApproved ? '#4ade80' : '#fb923c'; // Green or Orange
 
-      const { data, error } = await resend.emails.send({
-        from: process.env.EMAIL_FROM
-          ? `Vilagio ERP <${process.env.EMAIL_FROM}>`
-          : 'Vilagio ERP <noreply@vilag.io>',
-        to: [salesEmail],
-        subject: `Supplier Assessment ${isApproved ? 'Approved' : 'Rejected'} - ${vendor.legal_name}`,
-        html: `
+      const result = await sendEmail(
+        [salesEmail],
+        `Supplier Assessment ${isApproved ? 'Approved' : 'Rejected'} - ${vendor.legal_name}`,
+        `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; background-color: #0f172a; color: #f8fafc;">
             <h2 style="color: ${statusColor}; border-bottom: 1px solid #334155; padding-bottom: 10px;">
               Supplier Assessment Update
@@ -89,12 +80,12 @@ class SupplierEmailService {
             <p style="font-size: 12px; color: #94a3b8;">This is an automated notification from the Vilagio Vendor Management System.</p>
           </div>
         `
-      });
+      );
 
-      if (error) {
-        console.error('❌ Failed to send Sales notification email:', error);
+      if (!result.success) {
+        console.error('❌ Failed to send Sales notification email:', result.error);
       } else {
-        console.log(`✅ Sales Notification emailed successfully to: ${salesEmail} [id: ${data?.id}]`);
+        console.log(`✅ Sales Notification emailed successfully to: ${salesEmail} [id: ${result.id}]`);
       }
     } catch (error) {
       console.error('❌ Failed to send Sales notification email:', error);
