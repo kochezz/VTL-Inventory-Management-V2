@@ -183,16 +183,36 @@ test('reconcileTrainingTasks: user creation, idempotency, dry-run, COMPLETED pro
     const beforeTaskIds = new Set(beforeRes.rows.map((r) => r.task_id));
 
     await axios.put(`${BASE_URL}/api/users/${disposableUserId}`, { role: 'engineering' }, adminHeaders);
-    await new Promise((r) => setTimeout(r, 1500)); // let the async reconcile call settle either way
 
-    // Not asserting a specific count -- how many ENG-section SOP/POL docs
-    // are RELEASED can change over time (0 at the time of Session G's own
-    // investigation). What's asserted is the mechanism: nothing
-    // pre-existing was deleted (row count only grows or stays level), and
-    // any genuinely new row starts PENDING.
-    const afterRes = await pool.query(`SELECT task_id, status FROM qms_training_tasks WHERE user_id = $1`, [disposableUserId]);
-    assert.ok(afterRes.rows.length >= beforeRes.rows.length, 'reconcile must never delete rows -- count can only grow or stay level');
-    for (const row of afterRes.rows) {
+    // Step 7 (Session G2a): this used to be a fixed 1500ms sleep -- "let the
+    // async reconcile call settle either way" -- which is exactly a
+    // fire-and-forget race: reconcileTrainingTasksAsync (users-service.js)
+    // isn't awaited by the PUT response, and nothing here guaranteed it had
+    // actually landed in 1500ms (the other waitForTasks polls in this file
+    // needed up to 20s against this same DB). The role column update itself
+    // IS synchronous (already visible the instant the PUT resolves), so the
+    // expected doc set for the new role is computable immediately and
+    // deterministically -- poll against that ground truth instead of a guess.
+    const expectedDocs = await qmsService._getRequiredDocsForUser(pool, disposableUserId);
+    const expectedVersionIds = new Set(expectedDocs.map((d) => d.current_version_id));
+
+    const afterRes = await waitForTasks(
+      disposableUserId,
+      (rows) => {
+        const newRows = rows.filter((r) => !beforeTaskIds.has(r.task_id));
+        const newVersionIds = new Set(newRows.map((r) => r.version_id));
+        return expectedVersionIds.size === 0 || [...expectedVersionIds].every((v) => newVersionIds.has(v));
+      },
+      20000,
+    );
+
+    // Not asserting a specific count beyond what expectedDocs just computed
+    // -- how many ENG-section SOP/POL docs are RELEASED can change over time
+    // (0 at the time of Session G's own investigation). What's asserted is
+    // the mechanism: nothing pre-existing was deleted (row count only grows
+    // or stays level), and any genuinely new row starts PENDING.
+    assert.ok(afterRes.length >= beforeRes.rows.length, 'reconcile must never delete rows -- count can only grow or stay level');
+    for (const row of afterRes) {
       if (beforeTaskIds.has(row.task_id)) continue;
       assert.equal(row.status, 'PENDING', 'a newly-created task from a role change must start PENDING');
     }
