@@ -4,14 +4,18 @@ import React, { useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { initialize, isLoading } = useAuth();
+  const { initialize, isInitializing } = useAuth();
 
   useEffect(() => {
     // Initialize auth ONCE here
     initialize();
   }, [initialize]);
 
-  if (isLoading) {
+  // Session J: gates on isInitializing (the one-time bootstrap), not
+  // isLoading -- isLoading also flips true/false on every login() call, and
+  // gating this unmount/remount on it wiped LoginPage's local state (email,
+  // password, and any just-set error message) on every login attempt.
+  if (isInitializing) {
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center">
         <div className="text-center">

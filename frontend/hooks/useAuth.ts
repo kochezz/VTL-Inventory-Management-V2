@@ -29,6 +29,16 @@ interface AuthState {
   token: string | null;
   refreshToken: string | null;
   isAuthenticated: boolean;
+  // Session J: split from the old single `isLoading`, which AuthProvider's
+  // full-screen gate AND login()'s in-flight state both read. Submitting
+  // the login form set isLoading=true, which made AuthProvider unmount the
+  // entire page (including LoginPage itself) behind a spinner; on failure
+  // isLoading flipped back to false and AuthProvider remounted LoginPage
+  // fresh -- wiping its local state (email, password, and the just-set
+  // error message) before the user ever saw it. isInitializing now covers
+  // ONLY the one-time bootstrap read from localStorage; isLoading covers
+  // ONLY an in-flight login() call, read solely by the login form itself.
+  isInitializing: boolean;
   isLoading: boolean;
   initialize: () => void;
   login: (email: string, password: string) => Promise<void>;
@@ -108,7 +118,8 @@ export const useAuth = create<AuthState>((set) => ({
   token: null,
   refreshToken: null,
   isAuthenticated: false,
-  isLoading: true,
+  isInitializing: true,
+  isLoading: false,
 
   initialize: () => {
     const { user, token, refreshToken } = readStoredAuth();
@@ -117,7 +128,7 @@ export const useAuth = create<AuthState>((set) => ({
       token,
       refreshToken,
       isAuthenticated: Boolean(token),
-      isLoading: false,
+      isInitializing: false,
     });
     applyAuthHeader(token);
   },
@@ -283,7 +294,7 @@ export function installAuthInterceptors() {
 // Auto-install interceptors and initialize once on the client
 if (typeof window !== 'undefined') {
   installAuthInterceptors();
-  if (useAuth.getState().isLoading) {
+  if (useAuth.getState().isInitializing) {
     useAuth.getState().initialize();
   }
 }
