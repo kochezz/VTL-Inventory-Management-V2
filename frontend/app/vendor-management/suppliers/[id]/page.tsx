@@ -18,6 +18,10 @@ const CATEGORIES: Record<string, string> = {
   FAC: 'Facilities', MKT: 'Marketing', OTH: 'Other',
 };
 
+// Must match backend/src/routes/supplier-routes.js's VENDOR_INTAKE_ROLES
+// exactly -- these are the roles that can create/edit/submit a vendor.
+const VENDOR_INTAKE_ROLES = ['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager', 'junior_accountant', 'qa'];
+
 export default function VendorProfilePage() {
   const params = useParams();
   const router = useRouter();
@@ -83,10 +87,18 @@ export default function VendorProfilePage() {
     : vendor.banking_data ? [vendor.banking_data] : [];
 
   const canViewBanking = user?.role === 'admin' || user?.role === 'cfo';
-  const canReview = (user?.role === 'qa' || user?.role === 'admin') && vendor.status === 'AWAITING_QA';
-  
-  // NEW: Check if the user is allowed to edit vendor details
-  const canEdit = ['sales', 'admin', 'manager', 'ceo', 'cfo'].includes(user?.role || '');
+
+  // Four-eyes rule (matches supplier-service.js's approveVendor, which
+  // enforces this server-side regardless of what the UI shows): hide the
+  // review button for whoever created, last edited, or submitted this
+  // vendor -- no role is exempt, including admin.
+  const isInvolvedInThisVendor = Boolean(
+    user?.user_id && [vendor.created_by, vendor.submitted_by, vendor.last_edited_by].includes(user.user_id)
+  );
+  const canReview = (user?.role === 'qa' || user?.role === 'admin') && vendor.status === 'AWAITING_QA' && !isInvolvedInThisVendor;
+
+  // Check if the user is allowed to edit vendor details
+  const canEdit = VENDOR_INTAKE_ROLES.includes(user?.role || '');
 
   return (
     <DashboardLayout>
