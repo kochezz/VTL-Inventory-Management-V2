@@ -1,16 +1,23 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs'); 
-const { pool } = require('../services/auth-service'); 
+const bcrypt = require('bcryptjs');
+const { pool } = require('../services/auth-service');
 const SupplierService = require('../services/supplier-service');
 const { authenticate, authorize } = require('../middleware/auth-middleware');
 const SupplierEmailService = require('../services/supplier-email-service');
 
+// Shared by every vendor-intake route (create, edit, submit for QA) so the
+// three can never drift apart again. 'qa' added here specifically so QA can
+// register vendors -- the four-eyes rule in supplier-service.js's
+// approveVendor is what actually stops a qa user (or anyone else) approving
+// a vendor they created, edited, or submitted themselves.
+const VENDOR_INTAKE_ROLES = ['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager', 'junior_accountant', 'qa'];
+
 // ============================================================================
 // 1. CREATE VENDOR DRAFT
-// Roles Allowed: Sales, Admin, Manager, CEO, CFO
+// Roles Allowed: Sales, Admin, Manager, CEO, CFO, QA
 // ============================================================================
-router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager', 'junior_accountant']), async (req, res) => {
+router.post('/', authenticate, authorize(VENDOR_INTAKE_ROLES), async (req, res) => {
   try {
     const userId = req.user.user_id; 
     const vendorData = req.body;
@@ -25,9 +32,9 @@ router.post('/', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'c
 
 // ============================================================================
 // 1.5 UPDATE VENDOR DRAFT (EDIT)
-// Roles Allowed: Sales, Admin, Manager, CEO, CFO
+// Roles Allowed: Sales, Admin, Manager, CEO, CFO, QA
 // ============================================================================
-router.put('/:id', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager', 'junior_accountant']), async (req, res) => {
+router.put('/:id', authenticate, authorize(VENDOR_INTAKE_ROLES), async (req, res) => {
   try {
     const vendorId = req.params.id;
     const userId = req.user.user_id;
@@ -78,12 +85,12 @@ router.get('/:id', authenticate, async (req, res) => {
 
 // ============================================================================
 // 4. SUBMIT FOR QA REVIEW
-// Roles Allowed: Sales, Admin, Manager, CEO, CFO
+// Roles Allowed: Sales, Admin, Manager, CEO, CFO, QA
 // ============================================================================
-router.post('/:id/submit', authenticate, authorize(['sales', 'admin', 'manager', 'ceo', 'cfo', 'engineering', 'engineering_manager', 'junior_accountant']), async (req, res) => {
+router.post('/:id/submit', authenticate, authorize(VENDOR_INTAKE_ROLES), async (req, res) => {
   try {
     const vendorId = req.params.id;
-    const updatedVendor = await SupplierService.submitForQA(vendorId);
+    const updatedVendor = await SupplierService.submitForQA(vendorId, req.user.user_id);
     
     SupplierEmailService.notifyQAPending(updatedVendor).catch(console.error);
     
@@ -127,13 +134,19 @@ router.post('/:id/approve', authenticate, authorize(['qa', 'admin', 'ceo', 'cfo'
     
     SupplierEmailService.notifySalesResult(approvedVendor, approvedVendor.status).catch(console.error);
     
-    res.json({ 
-      message: 'Vendor approved successfully and added to AVL', 
+    res.json({
+      message: 'Vendor approved successfully and added to AVL',
       vtl_supplier_id: approvedVendor.vtl_supplier_id,
-      vendor: approvedVendor 
+      vendor: approvedVendor
     });
   } catch (error) {
     console.error('Approve Vendor Error:', error);
+    // Four-eyes violation (supplier-service.js's approveVendor) is a 403,
+    // not a 400 -- this is "you are not allowed to do this", not a bad
+    // request. Applies to every role, including admin/CEO/CFO.
+    if (error.code === 'SELF_APPROVAL') {
+      return res.status(403).json({ error: error.message });
+    }
     res.status(400).json({ error: error.message || 'Failed to approve vendor' });
   }
 });

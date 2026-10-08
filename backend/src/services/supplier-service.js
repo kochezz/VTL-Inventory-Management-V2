@@ -110,27 +110,30 @@ class SupplierService {
       const checkRes = await client.query('SELECT status FROM vendors WHERE vendor_id = $1', [vendorId]);
       if (checkRes.rows.length === 0) throw new Error('Vendor not found');
 
-      // Update Master Record and force status back to 'DRAFT'
+      // Update Master Record and force status back to 'DRAFT'. last_edited_by
+      // tracks whoever last touched the draft -- checked by approveVendor's
+      // four-eyes rule so that user can't later approve their own edit.
       await client.query(
-        `UPDATE vendors SET 
-          legal_name = $1, trading_name = $2, registered_address = $3, year_established = $4, 
-          company_reg_no = $5, vat_number = $6, primary_category = $7, all_categories = $8, 
-          compliance_data = $9, capabilities_data = $10, banking_data = $11, declaration_data = $12, 
-          status = 'DRAFT', updated_at = CURRENT_TIMESTAMP
-         WHERE vendor_id = $13`,
+        `UPDATE vendors SET
+          legal_name = $1, trading_name = $2, registered_address = $3, year_established = $4,
+          company_reg_no = $5, vat_number = $6, primary_category = $7, all_categories = $8,
+          compliance_data = $9, capabilities_data = $10, banking_data = $11, declaration_data = $12,
+          status = 'DRAFT', updated_at = CURRENT_TIMESTAMP, last_edited_by = $13
+         WHERE vendor_id = $14`,
         [
-          vendorData.legal_name, 
-          vendorData.trading_name, 
+          vendorData.legal_name,
+          vendorData.trading_name,
           vendorData.registered_address,
-          vendorData.year_established === "" ? null : vendorData.year_established, 
-          vendorData.company_reg_no, 
+          vendorData.year_established === "" ? null : vendorData.year_established,
+          vendorData.company_reg_no,
           vendorData.vat_number,
-          vendorData.primary_category, 
+          vendorData.primary_category,
           JSON.stringify(vendorData.all_categories || []),
           JSON.stringify(vendorData.compliance_data || {}),
           JSON.stringify(vendorData.capabilities_data || {}),
           JSON.stringify(vendorData.banking_data || {}),
           JSON.stringify(vendorData.declaration_data || {}),
+          userId,
           vendorId
         ]
       );
@@ -226,11 +229,13 @@ class SupplierService {
   // 4. WORKFLOW TRANSITIONS (SALES -> QA)
   // ============================================================================
   
-  static async submitForQA(vendorId) {
+  static async submitForQA(vendorId, userId) {
+    // submitted_by is checked by approveVendor's four-eyes rule -- whoever
+    // submits a vendor for QA can't later be the one who approves it.
     const result = await pool.query(
-      `UPDATE vendors SET status = 'AWAITING_QA', updated_at = CURRENT_TIMESTAMP 
+      `UPDATE vendors SET status = 'AWAITING_QA', updated_at = CURRENT_TIMESTAMP, submitted_by = $2
        WHERE vendor_id = $1 AND status IN ('DRAFT', 'REVISION_REQUIRED') RETURNING *`,
-      [vendorId]
+      [vendorId, userId]
     );
     if (result.rows.length === 0) throw new Error('Vendor cannot be submitted for QA at this stage.');
     return result.rows[0];
@@ -242,12 +247,29 @@ class SupplierService {
     try {
       await client.query('BEGIN');
 
-      const vendorRes = await client.query(`SELECT primary_category, status FROM vendors WHERE vendor_id = $1`, [vendorId]);
+      // FOR UPDATE: locks the row for the duration of this check + the
+      // later UPDATE below, so a concurrent edit/submit can't slip in
+      // between the four-eyes check and the approval itself.
+      const vendorRes = await client.query(
+        `SELECT primary_category, status, created_by, submitted_by, last_edited_by
+         FROM vendors WHERE vendor_id = $1 FOR UPDATE`,
+        [vendorId]
+      );
       if (vendorRes.rows.length === 0) throw new Error('Vendor not found');
-      
+
       const vendor = vendorRes.rows[0];
       if (vendor.status !== 'AWAITING_QA' && vendor.status !== 'QA_REVIEW') {
         throw new Error('Vendor is not pending QA approval');
+      }
+
+      // Four-eyes rule: the approver cannot be the same person who created,
+      // last edited, or submitted this vendor -- no role is exempt,
+      // including admin, CEO and CFO.
+      const involvedUserIds = [vendor.created_by, vendor.submitted_by, vendor.last_edited_by].filter(Boolean);
+      if (involvedUserIds.includes(qaUserId)) {
+        const err = new Error('You created, edited, or submitted this vendor and cannot also approve it (four-eyes rule).');
+        err.code = 'SELF_APPROVAL';
+        throw err;
       }
 
       const vtlSupplierId = await this.generateVtlSupplierId(vendor.primary_category);
