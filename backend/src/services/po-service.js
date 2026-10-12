@@ -1,6 +1,10 @@
 const { pool } = require('./auth-service'); // Reusing existing DB connection
 const NotificationService = require('./notification-service'); // <-- NEW IMPORT
 
+// Max line items per PO (raised from 20 on 2026-10-12).
+// Must match MAX_PO_LINE_ITEMS in frontend/components/po/POCreationForm.tsx
+const MAX_PO_LINE_ITEMS = 100;
+
 class PurchaseOrderService {
   
   // ============================================================================
@@ -38,6 +42,9 @@ class PurchaseOrderService {
 
     if (!poData.line_items || poData.line_items.length === 0) {
       throw new Error('Purchase Order must contain at least one line item.');
+    }
+    if (poData.line_items.length > MAX_PO_LINE_ITEMS) {
+      throw new Error(`Purchase Order cannot exceed ${MAX_PO_LINE_ITEMS} line items. Split larger orders into multiple POs.`);
     }
 
     const client = await pool.connect();
