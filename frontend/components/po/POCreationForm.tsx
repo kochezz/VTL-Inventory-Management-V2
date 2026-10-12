@@ -10,6 +10,9 @@ import {
 } from 'lucide-react';
 import RaiseNCRModal from '@/components/qms/RaiseNCRModal'; // Added NCR Modal Import
 
+// Max line items per PO. Must match MAX_PO_LINE_ITEMS in backend/src/services/po-service.js
+const MAX_PO_LINE_ITEMS = 100;
+
 interface LineItem {
   item_no: number;
   description: string;
@@ -93,7 +96,10 @@ export default function POCreationForm() {
   };
 
   const addLineItem = () => {
-    if (lineItems.length >= 20) return; // Roadmap limit
+    if (lineItems.length >= MAX_PO_LINE_ITEMS) {
+      setError(`A Purchase Order can hold at most ${MAX_PO_LINE_ITEMS} line items. Split larger orders into multiple POs.`);
+      return;
+    }
     setLineItems([...lineItems, { item_no: lineItems.length + 1, description: '', quantity: 1, unit: 'EA', unit_price: 0, line_total: 0 }]);
   };
 
@@ -268,8 +274,10 @@ export default function POCreationForm() {
             {/* LINE ITEMS TABLE */}
             <div className="space-y-4 pt-6 border-t border-dark-700">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-white">Line Items</h3>
-                <button type="button" onClick={addLineItem} className="text-sm px-3 py-1.5 bg-primary-600/20 hover:bg-primary-600/40 text-primary-400 rounded flex items-center gap-1 transition-colors">
+                <h3 className="text-lg font-semibold text-white">
+                  Line Items <span className="text-sm font-normal text-gray-500">({lineItems.length} / {MAX_PO_LINE_ITEMS})</span>
+                </h3>
+                <button type="button" onClick={addLineItem} disabled={lineItems.length >= MAX_PO_LINE_ITEMS} className="text-sm px-3 py-1.5 bg-primary-600/20 hover:bg-primary-600/40 text-primary-400 rounded flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                   <Plus className="w-4 h-4" /> Add Item
                 </button>
               </div>
@@ -306,6 +314,13 @@ export default function POCreationForm() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Second Add button so long POs don't need scrolling back to the top */}
+              {lineItems.length >= 5 && (
+                <button type="button" onClick={addLineItem} disabled={lineItems.length >= MAX_PO_LINE_ITEMS} className="w-full text-sm px-3 py-2 border border-dashed border-primary-600/40 hover:bg-primary-600/10 text-primary-400 rounded flex items-center justify-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  <Plus className="w-4 h-4" /> Add Item ({lineItems.length} / {MAX_PO_LINE_ITEMS})
+                </button>
+              )}
             </div>
 
             {/* TOTALS & ATTACHMENTS */}
